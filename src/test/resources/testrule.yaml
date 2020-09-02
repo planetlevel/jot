@@ -1,0 +1,9 @@
+- name: "get-files"
+  description: "Identifies the use of Files"
+  methods:
+  - "java.io.File.<init>"
+  captures:
+  - "#OBJ.getCanonicalPath() + \" \" + ( #OBJ.exists() ? \"EXISTS\" : \"DOES NOT EXIST\" )"
+  
+
+  

@@ -1,0 +1,83 @@
+---
+# Java Observability Toolkit (JOT)
+# https://openo11y.org
+
+sensors:
+
+- name: "get-ciphers"
+  description: "Identifies encryption ciphers"
+  methods:
+  - "javax.crypto.Cipher.getInstance"
+  captures:
+  - "#P0"
+  matchers:
+  - "!null"
+
+
+- name: "native-libraries"
+  description: "Identifies the use of native libraries"
+  methods:
+  - "java.lang.System.load"
+  - "java.lang.System.loadLibrary"
+  - "java.lang.System.mapLibraryName"
+  captures:
+  - "#P0"
+  matchers:
+  - "!null"
+  
+
+- name: "get-unsafe-queries"
+  description: "Identifies unparameterized database queries"
+  methods:
+  - "java.sql.Statement.execute"
+  - "java.sql.Statement.addBatch"
+  - "java.sql.Statement.executeQuery"
+  - "java.sql.Statement.executeUpdate"
+  excludes:
+  - "java.sql.PreparedStatement"   #these calls are harmless in PreparedStatement
+  captures:
+  - "#ARGS"
+
+
+- name: "get-safe-queries"
+  description: "Identifies parameterized database queries"
+  methods:
+  - "java.sql.Connection.prepareCall"
+  - "java.sql.Connection.prepareStatement"
+  captures:
+  - "#ARGS"
+
+
+- name: "get-files"
+  description: "Identifies the use of Files outside certain paths"
+  methods:
+  - "java.io.File.<init>"
+  captures:
+  - "#OBJ.getCanonicalPath()"
+  matchers:
+  - "!\\/apache\\-tomcat"
+  - "!sdkman"
+  - "!eclipse\\-workspace"
+
+
+- name: "get-sockets"
+  description: "Identifies the use of sockets"
+  methods:
+  - "java.net.Socket.<init>"
+  captures:
+  - "\"\"+#P0+\":\"+#P1"     # using ""+#P0 is a shorthand String conversion
+  debug: "true"
+  matchers:
+  - "!null\\:null"
+  - "!\\:8080"               # any port that's not 8080
+
+
+- name: "get-exceptions"
+  description: "Gathers information from all exceptions whether they are caught or not"
+  methods:
+  - "Exception.<init>"
+  scopes:
+  - "javax.servlet.Servlet.service"
+  captures:
+  - "#P0"
+

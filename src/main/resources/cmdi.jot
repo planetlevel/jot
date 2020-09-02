@@ -1,0 +1,32 @@
+---
+# Java Observability Toolkit (JOT)
+# https://openo11y.org
+
+sensors: 
+
+- name: "get-routes"
+  description: "Identifies the route for this HTTP request"
+  methods:
+  - "javax.servlet.Servlet.service"
+  captures:
+  - "#P0.getRequestURI()"
+
+- name: "block-native-process"
+  description: "Blocks attempts to start native processes"
+  methods:
+  - "java.lang.ProcessBuilder.<init>"
+  scopes:
+  - "javax.servlet.Servlet.service"
+  captures:
+  - "#ARGS"
+  exception: "Attempt to create ProcessBuilder from within Servlet.service() prevented 'block-native-process' JOT sensor"
+
+
+reports:
+ 
+- name: "CMDi"
+  type: "series"
+  rows: "get-routes"
+  cols: "block-native-process:13"
+
+

@@ -1,0 +1,158 @@
+---
+# Java Observability Toolkit (JOT)
+# https://openo11y.org
+
+sensors:
+
+- name: "get-routes"
+  description: "Identifies the route for this HTTP request"
+  methods:
+  - "javax.servlet.Servlet.service"
+  captures:
+  - "#P0.getRequestURI()"
+
+  
+- name: "get-users"
+  description: "Identifies user names"
+  methods:
+  - "javax.servlet.Servlet.service"
+  captures:
+  - "#P0.getRemoteUser()==null ? \"Guest\" : #P0.getRemoteUser()"
+  
+  
+- name: "get-role"
+  description: "Identifies roles"
+  methods:
+  - "javax.servlet.ServletRequest.isUserInRole"
+  captures:
+  - "#P0"
+    
+  
+- name: "get-role-membership"
+  description: "Figures out which users have which roles"
+  methods:
+  - "javax.servlet.ServletRequest.isUserInRole"
+  captures:
+  - "#RET ? #P0 : \"null\""
+  matchers:
+  - "!null"
+  debug: "true"
+
+  
+- name: "get-received-param-names"
+  description: "Identifies parameter names used in HTTP requests"
+  methods:
+  - "javax.servlet.Servlet.service"
+  captures:
+  - "#P0.getParameterNames()"
+  matchers:
+  - "!null"
+
+
+- name: "get-accessed-param-names"
+  description: "Identifies parameter names referenced by the app"
+  methods:
+  - "javax.servlet.ServletRequest.getParameter"
+  - "javax.servlet.ServletRequest.getParameterValues"
+  captures:
+  - "#P0"
+  matchers:
+  - "!null"
+
+
+- name: "get-redirects"
+  description: "Extracts any response redirects in this app"
+  methods:
+  - "javax.servlet.ServletResponse.sendRedirect"
+  captures:
+  - "#P0"
+  matchers:
+  - "!null"
+
+
+- name: "get-forwards"
+  description: "Extracts any request forwards in this app"
+  methods:
+  - "javax.servlet.ServletRequest.getRequestDispatcher"
+  - "javax.servlet.ServletContext.getRequestDispatcher"
+  captures:
+  - "#P0"
+  matchers:
+  - "!null"
+
+
+- name: "get-filters"
+  description: Extracts the filters in this app"
+  methods:
+  - "javax.servlet.ServletContext.addFilter"
+  captures:
+  - "#RET.getUrlPatternMappings()"
+  matchers:
+  - "!null"
+
+
+- name: "get-servlets"
+  description: "Identifies the servlets in this app"
+  methods:
+  - "javax.servlet.ServletContext.addServlet"
+  captures:
+  - "#RET.getMappings()"
+  matchers:
+  - "!null"
+
+
+- name: "get-cache-header"
+  description: "Identifies whether cache header is set"
+  methods:
+  - "javax.servlet.ServletResponse.setHeader"
+  captures:
+  - "#P0.equalsIgnoreCase(\"Cache-Control\")?#P1:null"
+  matchers:
+  - "!null"
+
+
+- name: "get-privacy"
+  description: "Identifies PII creation"
+  methods:
+  - "javax.servlet.ServletRequest.getParameter"
+  - "javax.servlet.ServletRequest.getParameterValues"
+  scopes:
+  - "javax.servlet.Servlet.service"
+  captures:
+  - "#P0"
+  matchers:
+  - "(?!000|666)[0-8][0-9]{2}-(?!00)[0-9]{2}-(?!0000)[0-9]{4}"
+  - "(?<visa>4[0-9]{12}(?:[0-9]{3})?)"
+  - "(?<mastercard>5[1-5][0-9]{14})"
+  - "(?<discover>6(?:011|5[0-9]{2})[0-9]{12})"
+  - "(?<amex>3[47][0-9]{13})"
+  - "(?<diners>3(?:0[0-5]|[68][0-9])?[0-9]{11})"
+  - "(?<jcb>(?:2131|1800|35[0-9]{3})[0-9]{11})"
+  
+
+##### detect attacks #####
+
+- name: "block-nasty-expressions"
+  description: "Blocks expresssions containing dangerous patterns from being evaluated"
+  methods:
+  - "javax.servlet.jsp.el.ExpressionEvaluator.evaluate"
+  - "org.springframework.expression.parseExpression"
+  captures:
+  - "#P0"
+  matchers:
+  - "\\.class"
+  exception: "Attack detected. Go away or I'm calling the FBI."
+  
+
+- name: "sandbox-expressions"
+  description: "Prevents harmful methods from being used during expresssion evaluation"
+  methods:
+  - "java.lang.ProcessBuilder.<init>"
+  - "java.io.Socket.<init>"
+  scopes:
+  - "javax.servlet.jsp.el.ExpressionEvaluator.evaluate"
+  - "org.springframework.expression.parseExpression"
+  captures:
+  - "#P0"
+  exception: "Attack detected. Go away or I'm calling the FBI."
+

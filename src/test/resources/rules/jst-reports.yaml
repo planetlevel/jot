@@ -1,0 +1,67 @@
+---
+# Java Observability Toolkit (JOT)
+# https://openo11y.org
+
+  
+reports:
+
+ - name: "Test Coverage Matrix"
+   type: "compare"
+   rows: "get-routes"
+   cols: "get-users"
+   
+ - name: "Access Control Matrix"
+   type: "compare"
+   rows: "get-routes"
+   cols: "get-role"
+   
+ - name: "Role Membership"
+   type: "compare"
+   rows: "get-users"
+   cols: "get-role-membership"   
+   
+ - name: "Cache Headers"
+   type: "table"
+   rows: "get-routes"
+   cols: "get-cache-header"
+   
+ - name: "Encryption Algorithms"
+   type: "compare"
+   rows: "get-routes"
+   cols: "get-ciphers"  
+   
+ - name: "Unauthorized Files"
+   type: "table"
+   rows: "get-routes"
+   cols: "get-files"
+   
+ - name: "Database Queries"
+   type: "table"
+   rows: "get-routes"
+   cols: "get-unsafe-queries"
+   
+ - name: "Encryption Users"
+   type: "compare"
+   rows: "get-users"
+   cols: "get-ciphers"
+      
+ - name: "HTTP Parameters"
+   type: "table"
+   rows: "get-routes"
+   cols: "get-accessed-param-names, get-received-param-names"
+   
+ - name: "Request Forwards"
+   type: "table"
+   rows: "get-routes"
+   cols: "get-forwards"
+   
+ - name: "Timeseries"
+   type: "series"
+   rows: "unused"
+   cols: "get-ciphers"
+    
+ - name: "Exceptions"
+   type: "table"
+   rows: "get-routes"
+   cols: "get-exceptions"
+   

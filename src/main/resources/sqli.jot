@@ -1,0 +1,33 @@
+---
+# Java Observability Toolkit (JOT)
+# https://openo11y.org
+
+sensors: 
+
+- name: "get-routes"
+  description: "Identifies the route for this HTTP request"
+  methods:
+  - "javax.servlet.Servlet.service"
+  captures:
+  - "#P0.getRequestURI()"
+
+- name: "get-unsafe-queries"
+  description: "Identifies unparameterized database queries"
+  methods:
+  - "java.sql.Statement.execute"
+  - "java.sql.Statement.addBatch"
+  - "java.sql.Statement.executeQuery"
+  - "java.sql.Statement.executeUpdate"
+  excludes:
+  - "java.sql.PreparedStatement"   # not vulnerable subclass
+  captures:
+  - "#ARGS"
+
+reports:
+
+ - name: "SQLi"
+   type: "series"
+   rows: "get-routes"
+   cols: "get-unsafe-queries:2"
+
+

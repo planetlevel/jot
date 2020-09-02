@@ -1,0 +1,32 @@
+---
+# Java Sensor Toolkit (JST)
+# https://openo11y.org
+
+sensors: 
+
+- name: "get-routes"
+  description: "Identifies the route for this HTTP request"
+  methods:
+  - "javax.servlet.Servlet.service"
+  captures:
+  - "#P0.getRequestURI()"
+
+- name: "sandbox-expressions"
+  description: "Prevents harmful methods from being used during expresssion evaluation"
+  methods:
+  - "java.lang.ProcessBuilder.<init>"
+  - "java.io.Socket.<init>"
+  scopes:
+  - "javax.el.ValueExpression.getValue"
+  captures:
+  - "#P0"
+  exception: "Attempt to escape expression language sandbox prevented by JST rule 'sandbox-expressions'"
+
+reports:
+ 
+- name: "Expression Language Injection Attempt Log"
+  type: "series"
+  rows: "get-routes"
+  cols: "sandbox-expressions:13"
+
+

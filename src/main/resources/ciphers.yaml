@@ -1,0 +1,16 @@
+---
+# Java Sensor Toolkit (JST)
+# https://openo11y.org
+
+sensors:
+ - name: "get-ciphers"
+   description: "Identifies encryption ciphers"
+   methods:
+   - "javax.crypto.Cipher.getInstance"
+   captures:
+   - "#P0"
+    
+reports:
+ - name: "Encryption Usage"
+   type: "list"
+   cols: "get-ciphers" 
