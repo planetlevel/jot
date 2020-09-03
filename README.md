@@ -175,9 +175,15 @@ how it will format it for you.
 
 
 
+## Building from Source
 
+Should be as simple as
+    
+        $ mvn install
+        
+Then you can use the jot-x.x.jar in the target directory.
 
-
+Contributions are welcome.  See the bugtracker to find issues to work on if you want to make JOT better.
 
 
 
