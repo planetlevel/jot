@@ -184,24 +184,24 @@ how it will format it for you.
 
 
 ## TO DO LIST
-=============================
-- Solve problem of sensors inside JOT scope
-  1) don't instrument JOT classes -- anything using shading
-  2) use global scope to check anywhere you're inside a sensor call
-	
-- Create JOT log file instead of system.out
-	
-- New rules
-  1) which routes are non-idempotent?
-
-- Sensors
-  # future features - maybe think about reporting?
-  # enabled: "false"
-  # sample: "1000" # report every 1000 times? time frequency?
-  # counter: "?"   # report 10 mins?
-  # scope: include a capture and regex to say whether to start scope (if service.P0.getParameter=foobar)
-  # exec: run this code.  before? after? during?
-
-- Reports 
-  # possible additions to cols -- caller, stack[n], trace#
+        
+        - Solve problem of sensors inside JOT scope
+          1) don't instrument JOT classes -- anything using shading
+          2) use global scope to check anywhere you're inside a sensor call
+        
+        - Create JOT log file instead of system.out
+        
+        - New rules
+          1) which routes are non-idempotent?
+        
+        - Sensors
+          # future features - maybe think about reporting?
+          # enabled: "false"
+          # sample: "1000" # report every 1000 times? time frequency?
+          # counter: "?"   # report 10 mins?
+          # scope: include a capture and regex to say whether to start scope (if service.P0.getParameter=foobar)
+          # exec: run this code.  before? after? during?
+        
+        - Reports 
+          # possible additions to cols -- caller, stack[n], trace#
 
