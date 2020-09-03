@@ -1,3 +1,7 @@
+# Project specific
+target
+dependency-reduced-pom.xml
+
 # Compiled class file
 *.class
 
