@@ -1,6 +1,7 @@
 # Java Observability Toolkit (JOT)
 
-The Java Observability Toolkit (JOT) consists of:
+The Java Observability Toolkit (JOT) is a platform for making any Java application observable
+without writing any code or even recompiling. JOT consists of...
 
 - a library that you can add to your applications
 - a set of JOTs that you can enable to make different aspects of your application observable.
