@@ -20,6 +20,8 @@ and you don't have a way to expose it to your tools.
 - You want to prevent abuse of powerful methods by attackers, but they're in libraries
 that you don't control.
 
+JOTs goal is to provide maximum instrumentation power without compromising simplicity.
+
 Let us know the cool things you do with JOT! And consider contributing them back
 to the project so that others can share in your awesomeness. The easiest way to contribute
 is to create a pull request. If you're sharing a JOT, add it to the projects' "contrib"
