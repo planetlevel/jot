@@ -3,7 +3,7 @@
 The Java Observability Toolkit (JOT) consists of:
 
 - a library that you can add to your applications
-- a set of JOTs, each of which lets you make some aspect of your application observable.
+- a set of JOTs that you can enable to make different aspects of your application observable.
 
 You can create JOTs quickly and easily without any coding. JOTs can make
 just about anything in a running Java application observable. Here are
@@ -21,7 +21,9 @@ and you don't have a way to expose it to your tools.
 that you don't control.
 
 Let us know the cool things you do with JOT! And consider contributing them back
-to the project so that others can share in your awesomeness.
+to the project so that others can share in your awesomeness. The easiest way to contribute
+is to create a pull request. If you're sharing a JOT, add it to the projects' "contrib"
+directory... and please include a comment detailing what it's intended to be used for.
 
 
 ## A Simple JOT
@@ -59,7 +61,7 @@ what algorithm is specified.
 
 The captures are actually Spring Expression Language (SpEL) expressions, so once you
 capture an object, you can call methods, compare stuff, and do operations. This helps
-you observe exactly what you want. See below for all the details of writing sensors.
+you observe exactly what you want. See below for all the details of writing your own sensors.
 
 
 ## Creating Your Own JOT Sensors
@@ -137,59 +139,69 @@ sensors to perform limited actions within an application.
 Reports let you define how JOT will collect data over time and
 how it will format it for you. 
 
-	 # Title of this report will be displayed above the results
-	 - name: "example"
+       # Title of this report that will be displayed above the results
+       - name: "example"
 	 	 
-       # Type of reports include
-       # 1. list
-       #       ROWS: caller method
-       #       COLS: one column named after the sensor defined in "cols" 
-       #       DATA: values from the sensor named in "cols" 
-       # 2. compare
-       #       ROWS: 
-       #       COLS: uses the "cols" sensor values as column headers
-       #       DATA: values from the sensor named in "cols" 
-       # 3. table
-       #       ROWS: 
-       #		 COLS: uses rule names for cols[0-n] as column headers - parses data values
-       #       DATA: values from the sensor named in "cols" 
-       # 4. series - table but each row starts with a timestamp (currently includes callers col too)
-       #       ROWS: 
-       #		 COLS: uses rule names for cols[0-n] as column headers - parses data values
-       #       DATA: values from the sensor named in "cols"
-       type: "table"
+         # Type of reports include
+         # 1. list
+         #       ROWS: caller method
+         #       COLS: one column named after the sensor defined in "cols" 
+         #       DATA: values from the sensor named in "cols" 
+         # 2. compare
+         #       ROWS: 
+         #       COLS: uses the "cols" sensor values as column headers
+         #       DATA: values from the sensor named in "cols" 
+         # 3. table
+         #       ROWS: 
+         #       COLS: uses rule names for cols[0-n] as column headers - parses data values
+         #       DATA: values from the sensor named in "cols" 
+         # 4. series - table but each row starts with a timestamp (currently includes callers col too)
+         #       ROWS: 
+         #       COLS: uses rule names for cols[0-n] as column headers - parses data values
+         #       DATA: values from the sensor named in "cols"
+         type: "table"
        
-       # Rows indicates a sensor to be used to populate row headers
-	   rows: "get-routes"
+         # Rows indicates a sensor to be used to populate row headers
+         rows: "get-routes"
 	   
-	   # Cols indicates a sensor (or list of sensors) to be used to populate column headers
-	   cols: "get-users"
+         # Cols indicates a sensor (or list of sensors) to be used to populate column headers
+         cols: "get-users"
+   
+         # Data indicates how the content of data cells should be populated. Can be a fixed string or a rule name.
+         data: "X"
 	   
-	   # Data indicates how the content of data cells should be populated. Can be a fixed string or a rule name.
-	   data: "X"
-	   
-  
+
+
+
+
+
+
+
+
+
+
+
 
 
 ## TO DO LIST
 =============================
 - Solve problem of sensors inside JOT scope
-	1) don't instrument JOT classes -- using shading
-	2) use global scope to check anywhere you're inside a sensor call
+  1) don't instrument JOT classes -- anything using shading
+  2) use global scope to check anywhere you're inside a sensor call
 	
 - Create JOT log file instead of system.out
 	
 - New rules
-	1) which routes are non-idempotent?
-		
+  1) which routes are non-idempotent?
+
 - Sensors
-	  # future features - maybe think about reporting?
-	  # enabled: "false"
-	  # sample: "1000" # report every 1000 times? time frequency?
-	  # counter: "?"   # report 10 mins?
-	  # scope: include a capture and regex to say whether to start scope (if service.P0.getParameter=foobar)
-	  # exec: run this code.  before? after? during?
+  # future features - maybe think about reporting?
+  # enabled: "false"
+  # sample: "1000" # report every 1000 times? time frequency?
+  # counter: "?"   # report 10 mins?
+  # scope: include a capture and regex to say whether to start scope (if service.P0.getParameter=foobar)
+  # exec: run this code.  before? after? during?
 
 - Reports 
-      # possible additions to cols -- caller, stack[n], trace#
+  # possible additions to cols -- caller, stack[n], trace#
 
