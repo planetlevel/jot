@@ -49,7 +49,8 @@ to capture and "reports" tell JOT how to track the data over time.
 
 Launch Java with "-javaagent:jot.jar=ciphers.jot".
 You might find using the JAVA_TOOL_OPTIONS environment variable useful.
-Like "export JAVA_TOOL_OPTIONS="-javaagent:jot.jar=ciphers.jot"
+Like "export JAVA_TOOL_OPTIONS="-javaagent:jot.jar=ciphers.jot". You can also
+put whatever collection of jots you want in a folder and use "-javaagent:jot.jar=folder"
 Then you just use your application normally and let JOT gather data for you.
 JOT will make a nice table capturing exactly where encryption is used and
 what algorithm is specified.
