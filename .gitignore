@@ -3,6 +3,7 @@ target
 dependency-reduced-pom.xml
 .classpath
 .project
+.DS_Store
 
 # Compiled class file
 *.class
