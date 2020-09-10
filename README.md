@@ -197,13 +197,13 @@ how it will format it for you.
 	   
 
 
-
 ## Building from Source
 
 Should be as simple as cloning this repo and building with maven
-        $ git clone https://github.com/planetlevel/jot.git
-        $ cd jot
-        $ mvn install
+
+         $ git clone https://github.com/planetlevel/jot.git
+         $ cd jot
+         $ mvn install
         
 Then you can use the jot-x.x.jar in the target directory.
 
