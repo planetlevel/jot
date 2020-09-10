@@ -47,10 +47,13 @@ to capture and "reports" tell JOT how to track the data over time.
       type: "list"
       cols: "get-ciphers"  
 
-Launch Java with "-javaagent:jot.jar=ciphers.jot".
-You might find using the JAVA_TOOL_OPTIONS environment variable useful.
-Like "export JAVA_TOOL_OPTIONS="-javaagent:jot.jar=ciphers.jot". You can also
-put whatever collection of jots you want in a folder and use "-javaagent:jot.jar=folder"
+## Getting Started with JOT
+
+Basically all you have to do is add JOT to the JVM
+- Download the latest jot.jar from https://github.com/planetlevel/jot/tags
+- Grab the ciphers.jot file from https://github.com/planetlevel/jot/blob/master/src/main/resources/ciphers.jot
+- Launch your app with "java -javaagent:jot.jar=ciphers.jot"
+
 Then you just use your application normally and let JOT gather data for you.
 JOT will make a nice table capturing exactly where encryption is used and
 what algorithm is specified.
@@ -63,8 +66,26 @@ what algorithm is specified.
     org.apache.jsp.accessB_jsp._jspService(accessB_jsp.java:212) DES                    
     org.apache.jsp.accessC_jsp._jspService(accessC_jsp.java:212) DES/CBC/PKCS5Padding   
 
-The captures are actually Spring Expression Language (SpEL) expressions, so once you
-capture an object, you can call methods, compare stuff, and do operations. This helps
+## Advanced Options
+You might find using the JAVA_TOOL_OPTIONS environment variable useful.
+Like "export JAVA_TOOL_OPTIONS="-javaagent:jot.jar=ciphers.jot". Then
+no matter how Java eventually gets launched, it will use JOT.
+
+If you want to use multiple JOTs at the same time, you can either put them all into one
+big .jot file, or you can put multiple .jot files in a directory and use
+"-javaagent:jot.jar=directory"
+
+Lastly, every JOT can have multiple "captures." A capture is a way to specify
+what data you want to collect from the methods you specified in the JOT.  The simple
+captures are things like:
+	#P0 - the first parameter
+	#P1 - the second parameter
+	#ARGS - all the parameters concatenated in a String
+	#OBJ - the object the method is being called on
+	#RET - the return from the method
+	
+Captures are actually Spring Expression Language (SpEL) expressions, so you can call methods
+on those basic objects, compare stuff, and do operations. This helps
 you observe exactly what you want. See below for all the details of writing your own sensors.
 
 
