@@ -52,6 +52,9 @@ public class ConfigReader {
 		if ( config.sensors != null ) {
 			for ( YAMLSensor entry : config.sensors )  {
 				if ( !entry.name.equals("example")) {
+					
+					// FIXME: Add Check and warn if sensor already exists!
+					
 					new Sensor()
 						.name( entry.name )
 						.description( entry.description )
