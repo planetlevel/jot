@@ -1,0 +1,15 @@
+---
+# Java Observability Toolkit (JOT)
+# https://openo11y.org
+
+sensors: 
+
+- name: "test-junit"
+  description: "Identifies errors detected during JUnit test cases"
+  methods:
+  - "java.util.BitSet.<init>"
+  - "java.util.BitSet.valueOf"
+  scopes:
+  - "org.junit.platform.commons.util.ReflectionUtils.invokeMethod"
+  exception: "BitSet use is prohibited by Security Directive 27B/6"
+  

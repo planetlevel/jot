@@ -1,5 +1,6 @@
 package org.openolly;
 
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -37,10 +38,14 @@ class TraceTest {
 	void testTrace2() throws Exception {
 		for ( int i=0; i<100; i++ ) {
 			Thread t = new Thread(new Runnable() {
+				SecureRandom rng = new SecureRandom();
 				@Override public void run() {
 					int tid = Trace.getCurrentTrace().getId();
 					for (int b=0; b<10; b++ ) {
-						Assertions.assertEquals(tid, Trace.getCurrentTrace().getId() );
+						try {
+							Thread.sleep( rng.nextInt() * 100 );
+							Assertions.assertEquals(tid, Trace.getCurrentTrace().getId() );
+						} catch( Exception e ) {}
 					}
 				}
 			});

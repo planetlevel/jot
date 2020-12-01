@@ -8,12 +8,12 @@ import org.openolly.reporting.Reporter;
 public class JOTAgent {
 
 	public static void premain(String args, Instrumentation inst) {
-		System.out.println("[SENSOR] In JOTAgent premain method");
+		//System.out.println("[SENSOR] In JOTAgent premain method");
 		transform( args, inst );
 	}
 
 	public static void agentmain(String args, Instrumentation inst) {
-		System.out.println("[SENSOR] In JOTAgent agentmain method");
+		//System.out.println("[SENSOR] In JOTAgent agentmain method");
 		transform( args, inst );
 	}
 
@@ -25,6 +25,6 @@ public class JOTAgent {
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
-		System.out.println("[SENSOR] Java Observability Toolkit Installed");
+		System.err.println("[SENSOR] Java Observability Toolkit Installed");
 	}
 }

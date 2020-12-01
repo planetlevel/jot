@@ -4,8 +4,6 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.openolly.SafeString;
-import org.openolly.Sensor;
 import org.openolly.advice.SensorException;
 
 class SensorTest {

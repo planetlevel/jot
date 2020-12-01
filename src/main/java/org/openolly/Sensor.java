@@ -4,6 +4,7 @@ import static net.bytebuddy.matcher.ElementMatchers.failSafe;
 import static net.bytebuddy.matcher.ElementMatchers.hasGenericSuperType;
 import static net.bytebuddy.matcher.ElementMatchers.isConstructor;
 import static net.bytebuddy.matcher.ElementMatchers.nameStartsWith;
+import static net.bytebuddy.matcher.ElementMatchers.nameContains;
 import static net.bytebuddy.matcher.ElementMatchers.named;
 
 import java.util.ArrayList;
@@ -63,6 +64,15 @@ public class Sensor {
 		sensors.add( this );
 		this.index = sensors.indexOf(this);
 	}
+	
+	public static boolean exists(String name) {
+		for ( Sensor s : sensors ) {
+			if ( s.getName().equals( name ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
 
 	public static Sensor getSensor(int sensorIndex) {
 		return sensors.get( sensorIndex );
@@ -85,7 +95,7 @@ public class Sensor {
 			logger.atWarning().log( "[JOT %s] Skipping sensor - already in scope %s", this, globalScope.value() );
 			return new ArrayList<Object>();
 		}
-		
+
 		// return results for making tests easier
 		List<Object> results = new ArrayList<Object>();
 		try {
@@ -133,11 +143,15 @@ public class Sensor {
 					e.printStackTrace();
 				}
 			}
-			if ( getException() != null && !results.isEmpty() ) {
-				String details = SafeString.format( results, false );
-				SensorException e = new SensorException( getException() );
-				logger.atInfo().log( "[JOT %s] %s: %s", this, getException(), details );
-				throw e;
+
+			// if there are either results or zero captures, generate exceptions if any
+			if ( getException() != null ) {
+				if ( captures.isEmpty() || !results.isEmpty() ) {
+					String details = SafeString.format( results, false );
+					SensorException e = new SensorException( getException() );
+					logger.atInfo().log( "[JOT %s] %s: %s", this, getException(), details );
+					throw e;
+				}
 			}			
 		} finally {
 			globalScope.leaveScope();
@@ -455,8 +469,10 @@ public class Sensor {
 				
 		// global class ignores
 		builder = builder
-				.ignore(nameStartsWith("shaded"))
-				.ignore(nameStartsWith("org.eclipse.osgi"));
+		.ignore(nameContains("maven"))
+		.ignore(nameContains("codehaus"))
+		.ignore(nameStartsWith("shaded"))
+		.ignore(nameStartsWith("org.eclipse.osgi"));
 		
 		// add advice to "methods"
 		for ( MethodLocator method : this.getMethods() ) {

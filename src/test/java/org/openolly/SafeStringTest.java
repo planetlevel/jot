@@ -8,7 +8,6 @@ import java.util.Vector;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.openolly.SafeString;
 
 class SafeStringTest {
 

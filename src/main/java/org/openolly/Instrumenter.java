@@ -36,21 +36,20 @@ public class Instrumenter {
 		try {
 			AgentBuilder builder = new AgentBuilder.Default()
 			//	.with(AgentBuilder.Listener.StreamWriting.toSystemError())
-				.with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
+			//	.with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
 			//	.with(AgentBuilder.Listener.StreamWriting.toSystemError().withTransformationsOnly())
 				.with(InstallationListener.ErrorSuppressing.INSTANCE)  // prevent errors from breaking app
 				.with(LocationStrategy.ForClassLoader.STRONG.withFallbackTo(ClassFileLocator.ForClassLoader.ofBootLoader()))
-				.with(RedefinitionStrategy.RETRANSFORMATION) // for redefine, for java. classes too?
-				.with(InitializationStrategy.NoOp.INSTANCE) // for redefine
-				.with(TypeStrategy.Default.REDEFINE) // for redefine
+			//	.with(RedefinitionStrategy.RETRANSFORMATION) // for redefine, for java. classes too?
+			//	.with(InitializationStrategy.NoOp.INSTANCE) // for redefine
+			//	.with(TypeStrategy.Default.REDEFINE) // for redefine
 				.disableClassFormatChanges().ignore(none());
 
-			// add in special trace advice
-			// FIXME: put this in the config
 			builder = builder
+				// add a sensor for every service method to start and stop a trace
 				.type(hasGenericSuperType(named("javax.servlet.Servlet")))
-				.transform((b, td, cl, m) -> b.visit(Advice.to(TraceAdvice.class).on(named("service").and(isMethod()))));	
-			
+				.transform((b, td, cl, m) -> b.visit(Advice.to(TraceAdvice.class).on(named("service").and(isMethod()))));
+
 			for (Sensor sensor : sensors ) {
 				System.err.println( "[SENSOR] processing " + sensor );
 				builder = sensor.instrument( builder );

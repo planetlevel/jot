@@ -24,7 +24,12 @@ public class ConfigReader {
 	}
 	
 	public static void init(String filename) throws IOException {
-		Sensor.clearSensors();
+		if ( filename == null ) {
+			System.err.println( "[JOT] Error: no JOT file or directory provided");
+			System.err.println( "[JOT] Try using -javaagent:jot-x.x.jar=JOTFILE" );
+			return;
+		}
+		System.err.println( "[JOT] Loading JOTs from " + filename );
 		yaml = new File( filename );
 		if ( yaml.isDirectory() ) {
 			for ( File f : yaml.listFiles() ) {
@@ -51,10 +56,15 @@ public class ConfigReader {
 				
 		if ( config.sensors != null ) {
 			for ( YAMLSensor entry : config.sensors )  {
-				if ( !entry.name.equals("example")) {
-					
-					// FIXME: Add Check and warn if sensor already exists!
-					
+				if ( Sensor.exists( entry.name ) ) {
+					System.err.println( "[JOT] WARNING: " + entry.name + " from " + yaml + " already loaded. Skipping." );
+				}
+
+				else if ( entry.name.equals("example")) {					
+					System.err.println( "[JOT] WARNING: Found 'example' JOT in " + yaml + ". Skipping." );
+				}
+
+				else {
 					new Sensor()
 						.name( entry.name )
 						.description( entry.description )

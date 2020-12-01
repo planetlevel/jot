@@ -6,7 +6,7 @@ import org.junit.runner.RunWith;
 
 
 @RunWith(JUnitPlatform.class)
-@SelectPackages("com.contrastsecurity")
+@SelectPackages("org.openolly")
 
 public class AllTests 
 {
