@@ -4,12 +4,10 @@
 
 sensors: 
 
-- name: "test-junit"
-  description: "Identifies errors detected during JUnit test cases"
+- name: "banned-methods"
+  description: "Fails any JUnit tests that cause banned methods to be invoked"
   methods:
-  - "java.util.BitSet.<init>"
-  - "java.util.BitSet.valueOf"
+  - "java.lang.ProcessBuilder.<init>"
   scopes:
   - "org.junit.platform.commons.util.ReflectionUtils.invokeMethod"
-  exception: "BitSet use is prohibited by Security Directive 27B/6"
-  
+  exception: "Banned methods are prohibited by Security Directive 27B/6" 

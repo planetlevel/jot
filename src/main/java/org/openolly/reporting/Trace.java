@@ -41,6 +41,7 @@ public class Trace {
 		if ( events.isEmpty() ) return;
 		printTrace();
 		Reporter.update( this );
+		RouteGraph.update( this );
 	}
 	
 	public void printTrace() {
@@ -50,6 +51,10 @@ public class Trace {
 			System.out.println( "  " + event );
 		}
 		System.out.println();
+	}
+
+	public List<Event> getEvents() {
+		return events;
 	}
 
 	public List<Event> getEventsForRule(String rulename) {

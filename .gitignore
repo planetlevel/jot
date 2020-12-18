@@ -1,5 +1,6 @@
 # Project specific
 target
+graphviz
 dependency-reduced-pom.xml
 .classpath
 .project

@@ -54,10 +54,10 @@ public class Report {
 
 	private void updateCompare(Trace t) {
 		for (Event rowEvent : t.getEventsForRule( rows ) ) {
-			String rowName = rowEvent.getName(); 
+			String rowName = rowEvent.getNameFromCapture(); 
 			for( Event colEvent : t.getEventsForRule( cols[0] ) ) {
-				String colName = colEvent.getName(); 
-				String data = colEvent.getValue();    // FIXME: get rid of getValue() use getCapture()
+				String colName = colEvent.getNameFromCapture(); 
+				String data = colEvent.getValueFromCapture();    // FIXME: get rid of getValue() use getCapture()
 				String shortened = StringUtils.abbreviateMiddle(data, "...", 50 );
 				set( rowName, colName, shortened );
 			}
@@ -66,7 +66,7 @@ public class Report {
 
 	private void updateTable(Trace t) {
 		for (Event rowEvent : t.getEventsForRule( rows ) ) {
-			String r = rowEvent.getName(); 
+			String r = rowEvent.getNameFromCapture(); 
 			for ( String col : cols ) {
 				for (Event event : t.getEventsForRule( col ) ) {
 					String data = event.getCapture();
@@ -85,7 +85,7 @@ public class Report {
 	private void updateSeries(Trace t) {
 		String time = dateFormat.format(new Date());
 		for (Event rowEvent : t.getEventsForRule( rows ) ) {
-			String r = rowEvent.getName(); 
+			String r = rowEvent.getNameFromCapture(); 
 			for ( String col : cols ) {
 				String[] parts = col.split(":");
 				int frame = -1;
