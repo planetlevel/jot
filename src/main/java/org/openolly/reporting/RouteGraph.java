@@ -5,6 +5,7 @@ import java.util.Set;
 import java.util.TreeSet;
 
 import com.google.common.graph.EndpointPair;
+import com.google.common.graph.Graph;
 import com.google.common.graph.GraphBuilder;
 import com.google.common.graph.Graphs;
 import com.google.common.graph.MutableGraph;
@@ -42,7 +43,7 @@ public class RouteGraph {
 					}
 				}
 			}
-			dump();
+			dump( graph );
 		} catch( Exception e ) {
 			e.printStackTrace();
 		}
@@ -71,7 +72,7 @@ public class RouteGraph {
 
 	// FIXME: HTML Encode specials
 	private static String style = "shape=box, style=\"rounded,filled\",fillcolor=blue,fontcolor=white,fontname=Helvetica,fontsize=10";
-	public static void dump() {
+	public static void dump( Graph<Event> g ) {
 		System.err.println( "====" );
 		System.err.println( "digraph {" );
 		// System.err.println( "\trankdir=LR" );

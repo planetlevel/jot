@@ -237,3 +237,27 @@ Contributions are welcome.  See the bugtracker to find issues to work on if you 
         - Reports 
           # possible additions to cols -- caller, stack[n], trace#
 
+        - Query Language
+          # investigate using query language instead of yaml jots.
+          # Perhaps two types of "queries" -- one to create sensors, another to pull reports.
+          
+          #    SELECT #P0.toUpperCase()
+               FROM java.lang.Runtime.getRuntime.exec
+               WITHIN javax.servlet.Servlet.service
+               WHERE pattern
+
+          #    SELECT [capture, capture]
+               FROM [method, method]
+               EXCLUDE [class, class]
+               WITHIN [scope, scope]
+               WHERE [pattern, pattern]
+               THROWS [msg]
+
+          #   SELECT #P0 FROM javax.crypto.Cipher.getInstance
+
+          #   SELECT #P0 FROM javax.crypto.Cipher.getInstance
+              WHERE "DES|DESEDE"
+              THROWS "Weak encryption algorithm detected"
+
+
+
