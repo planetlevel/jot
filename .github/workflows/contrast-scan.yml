@@ -48,7 +48,7 @@ jobs:
     - name: Contrast Scan Action
       uses: Contrast-Security-OSS/contrastscan-action@7352a45d9678ec8a434cf061b07ffb51c1e351a1
       with:
-        artifact: target/myartifact.jar # replace this path with the path to your built artifact
+        artifact: target/jot-0.9.1.jar # replace this path with the path to your built artifact
         apiKey: ${{ secrets.CONTRAST_API_KEY }}
         orgId: ${{ env.CONTRAST_ORGANIZATION_ID }}
         authHeader: ${{ env.CONTRAST_AUTH_HEADER }}
