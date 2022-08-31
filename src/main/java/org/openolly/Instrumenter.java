@@ -5,8 +5,6 @@ import static net.bytebuddy.matcher.ElementMatchers.isMethod;
 import static net.bytebuddy.matcher.ElementMatchers.named;
 import static net.bytebuddy.matcher.ElementMatchers.none;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.lang.instrument.Instrumentation;
 import java.util.ArrayList;
 import java.util.List;
