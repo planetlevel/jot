@@ -242,7 +242,7 @@ Contributions are welcome.  See the bugtracker to find issues to work on if you 
           1) don't instrument JOT classes -- anything using shading
           2) use global scope to check anywhere you're inside a sensor call
         
-        - Create JOT separate log file instead of using java.util.logging
+        - Create separate JOT log file instead of using java.util.logging
         
         - New rules
           1) which routes are non-idempotent?
