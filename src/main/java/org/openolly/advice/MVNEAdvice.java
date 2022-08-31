@@ -1,13 +1,16 @@
 package org.openolly.advice;
 
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.openolly.MethodIndexValue;
 import org.openolly.Sensor;
 import org.openolly.SensorIndexValue;
 
+import com.google.common.flogger.FluentLogger;
+
 import net.bytebuddy.asm.Advice;
 
 public class MVNEAdvice {
-
+	private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 	@Advice.OnMethodEnter()
 	public static void enter(@SensorIndexValue(value = -1) int sensorIndex,
 			@MethodIndexValue(value = -1) int methodIndex, @Advice.Origin("#t") String className,
@@ -22,7 +25,8 @@ public class MVNEAdvice {
 				sensor.execute("MVNEAdvice", sig, obj, args, null, trace);
 			}
 		} catch (Throwable t) {
-			t.printStackTrace();
+			//t.printStackTrace();
+			logger.atWarning().log( ExceptionUtils.getStackTrace(t) );
 		}
 	}
 

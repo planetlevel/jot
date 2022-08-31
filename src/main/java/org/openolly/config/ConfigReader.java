@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.google.common.flogger.FluentLogger;
 
 
 public class ConfigReader {
@@ -19,21 +20,27 @@ public class ConfigReader {
 	private static File yaml = null;
 	private static long lastModified = 0;
 	
+	private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+	
 	public static boolean isChanged() {
 		return lastModified != yaml.lastModified();
 	}
 	
 	public static void init(String filename) throws IOException {
 		if ( filename == null ) {
-			System.err.println( "[JOT] Error: no JOT file or directory provided");
-			System.err.println( "[JOT] Try using -javaagent:jot-x.x.jar=JOTFILE" );
+			//System.err.println( "[JOT] Error: no JOT file or directory provided");
+			logger.atSevere().log( "[JOT] Error: no JOT file or directory provided");
+			//System.err.println( "[JOT] Try using -javaagent:jot-x.x.jar=JOTFILE" );
+			logger.atSevere().log( "[JOT] Try using -javaagent:jot-x.x.jar=JOTFILE" );
 			return;
 		}
-		System.err.println( "[JOT] Loading JOTs from " + filename );
+		//System.err.println( "[JOT] Loading JOTs from " + filename );
+		logger.atWarning().log("[JOT] Loading JOTs from " + filename );
 		yaml = new File( filename );
 		if ( yaml.isDirectory() ) {
 			for ( File f : yaml.listFiles() ) {
-				System.out.println( "Loading JOTs from " + f );
+				//System.out.println( "Loading JOTs from " + f );
+				logger.atInfo().log("Loading JOTs from " + f );
 				load( f );
 			}
 		}
@@ -57,11 +64,13 @@ public class ConfigReader {
 		if ( config.sensors != null ) {
 			for ( YAMLSensor entry : config.sensors )  {
 				if ( Sensor.exists( entry.name ) ) {
-					System.err.println( "[JOT] WARNING: " + entry.name + " from " + yaml + " already loaded. Skipping." );
+					//System.err.println( "[JOT] WARNING: " + entry.name + " from " + yaml + " already loaded. Skipping." );
+					logger.atWarning().log("[JOT] WARNING: " + entry.name + " from " + yaml + " already loaded. Skipping." );
 				}
 
 				else if ( entry.name.equals("example")) {					
-					System.err.println( "[JOT] WARNING: Found 'example' JOT in " + yaml + ". Skipping." );
+					//System.err.println( "[JOT] WARNING: Found 'example' JOT in " + yaml + ". Skipping." );
+					logger.atWarning().log("[JOT] WARNING: Found 'example' JOT in " + yaml + ". Skipping." );
 				}
 
 				else {
