@@ -88,6 +88,27 @@ Captures are actually Spring Expression Language (SpEL) expressions, so you can 
 on those basic objects, compare stuff, and do operations. This helps
 you observe exactly what you want. See below for all the details of writing your own sensors.
 
+## Logging with JOT
+
+JOT uses FluentLogger which takes configuration from `java.util.logging` and can be configured by the JVM with `-Djava.util.logging.config.file`
+
+This sample config will log JOT to stdout as well as to /tmp/jot.log
+
+	handlers = java.util.logging.ConsoleHandler, java.util.logging.FileHandler
+	
+	java.util.logging.ConsoleHandler.level = ALL
+	java.util.logging.ConsoleHandler.formatter = java.util.logging.SimpleFormatter
+	java.util.logging.SimpleFormatter.format = %1$tF %1$tT %4$-7s [%2$s] - %5$s %n
+	
+	java.util.logging.FileHandler.level=ALL
+	java.util.logging.FileHandler.pattern=/tmp/jot.log
+	java.util.logging.FileHandler.formatter=java.util.logging.SimpleFormatter
+	java.util.logging.FileHandler.append=true
+
+using:
+
+	java -javaagent:jot.jar=ciphers.jot -Djava.util.logging.config.file=/root/jul.properties
+
 
 ## Creating Your Own JOT Sensors
 
@@ -221,7 +242,7 @@ Contributions are welcome.  See the bugtracker to find issues to work on if you 
           1) don't instrument JOT classes -- anything using shading
           2) use global scope to check anywhere you're inside a sensor call
         
-        - Create JOT log file instead of system.out
+        - Create JOT separate log file instead of using java.util.logging
         
         - New rules
           1) which routes are non-idempotent?
