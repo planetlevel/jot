@@ -1,6 +1,5 @@
 ---
 # Java Observability Toolkit (JOT)
-# https://openo11y.org
 
 sensors:
  - name: "get-ciphers"

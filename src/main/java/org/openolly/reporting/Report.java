@@ -7,10 +7,13 @@ import java.util.Set;
 import java.util.TreeSet;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import com.google.common.collect.TreeBasedTable;
+import com.google.common.flogger.FluentLogger;
 
 public class Report {
+	private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
 	private int rowNameColWidth = 10;
 	
@@ -38,7 +41,8 @@ public class Report {
 			case SERIES: updateSeries( t ); break;
 			}
 		}catch( Exception e ) {
-			e.printStackTrace();
+			//e.printStackTrace();
+			logger.atWarning().log( ExceptionUtils.getStackTrace(e) );
 		}
 	}
 	
@@ -112,9 +116,12 @@ public class Report {
 
 
 	private void dumpStack(StackTraceElement[] stack) {
+		String out = "";
 		for ( StackTraceElement frame : stack ) {
-			System.out.println( "    " + frame );
+			//System.out.println( "    " + frame );
+			out += "    " + frame +"\n";
 		}
+		logger.atInfo().log(out);
 	}
 
 //====================================	
@@ -176,7 +183,8 @@ public class Report {
 			current.add( v );
 			rowNameColWidth = Math.max( rowNameColWidth, r.length() );
 		} else {
-			System.err.println( "Failed attempt to set " + r + ", " + c + ", " + v );
+			//System.err.println( "Failed attempt to set " + r + ", " + c + ", " + v );
+			logger.atWarning().log("Failed attempt to set " + r + ", " + c + ", " + v );
 		}
 	}
 	
@@ -211,37 +219,50 @@ public class Report {
 	
 	public synchronized void dump() {
 		
+		String out = "";
 		// print headers
-		System.err.print( StringUtils.rightPad(name, rowNameColWidth) );
-		System.err.print( " " );
+		//System.err.print( StringUtils.rightPad(name, rowNameColWidth) );
+		out += StringUtils.rightPad(name, rowNameColWidth) ;
+		//System.err.print( " " );
+		out += " ";
 		for ( String col : table.columnKeySet() )  {
 			if ( !col.contentEquals( "|||" ) ) {
 				int colWidth = getMaxWidth( col );
-				System.err.print( StringUtils.rightPad(col, colWidth, " ") );
-				System.err.print( " " );
+				//System.err.print( StringUtils.rightPad(col, colWidth, " ") );
+				out += StringUtils.rightPad(col, colWidth, " ");
+				//System.err.print( " " );
+				out += " ";
 			}
 		}		
 		
 		// print ---- 
-		System.err.println();
+		//System.err.println();
+		out += "\n";
 		String under1 = StringUtils.repeat( "-", rowNameColWidth );
-		System.err.print( under1 );
-		System.err.print( " " );
+		//System.err.print( under1 );
+		out += under1;
+		//System.err.print( " " );
+		out += " ";
 		for ( String col : table.columnKeySet() ) {
 			if ( !col.equals("|||" ) ) {
 				int colWidth = getMaxWidth( col );
 				String under2 = StringUtils.repeat( "-", colWidth );
-				System.err.print( under2 );
-				System.err.print( " " );
+				//System.err.print( under2 );
+				out += under2;
+				//System.err.print( " " );
+				out += " ";
 			}
 		}
-		System.err.println();
+		//System.err.println();
+		out += "\n";
 		
 		// print data
 		for ( String row : table.rowKeySet() ) {
 			if ( !row.equals( "|||" ) ) {
-				System.err.print( StringUtils.rightPad(row,rowNameColWidth," " ).substring(0,rowNameColWidth));
-				System.err.print( " " );
+				//System.err.print( StringUtils.rightPad(row,rowNameColWidth," " ).substring(0,rowNameColWidth));
+				out += StringUtils.rightPad(row,rowNameColWidth," " ).substring(0,rowNameColWidth);
+				//System.err.print( " " );
+				out += " ";
 				for ( String col : table.columnKeySet() ) {
 					if ( !col.contentEquals( "|||" ) ) {
 						int colWidth = getMaxWidth( col );
@@ -250,14 +271,19 @@ public class Report {
 						if ( values != null ) {
 							value = String.join(",", values );
 						}
-						System.err.print( StringUtils.rightPad(value,colWidth," " ).substring(0,colWidth));
-						System.err.print( " " );
+						//System.err.print( StringUtils.rightPad(value,colWidth," " ).substring(0,colWidth));
+						out += StringUtils.rightPad(value,colWidth," " ).substring(0,colWidth);
+						//System.err.print( " " );
+						out += " ";
 					}
 				}
-				System.err.println();
+				//System.err.println();
+				out += "\n";
 			}
 		}
-		System.err.println();
+		//System.err.println();
+		out+= "\n";
+		logger.atWarning().log(out);
 	}
 
 	private int getMaxWidth( String col ) {

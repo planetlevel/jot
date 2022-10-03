@@ -4,7 +4,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.google.common.flogger.FluentLogger;
+
 public class Trace {
+	private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
 	private static AtomicInteger counter = new AtomicInteger(10000);
     
@@ -45,12 +48,17 @@ public class Trace {
 	}
 	
 	public void printTrace() {
+		String out = "";
 		if ( events.isEmpty() ) return;
-		System.out.println( "\n"+toString());
+		//System.out.println( "\n"+toString());
+		out += "\n"+toString();
 		for ( Event event : events ) {
-			System.out.println( "  " + event );
+			//System.out.println( "  " + event );
+			out += "  " + event+"\n";
 		}
-		System.out.println();
+		//System.out.println();
+		out += "\n";
+		logger.atInfo().log(out);
 	}
 
 	public List<Event> getEvents() {

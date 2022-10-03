@@ -3,12 +3,15 @@ package org.openolly.config;
 import java.util.Timer;
 import java.util.TimerTask;
 
-public class ConfigMonitor extends TimerTask {
+import com.google.common.flogger.FluentLogger;
 
+public class ConfigMonitor extends TimerTask {
+	private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 	public void start() {
 		// FIXME: look into WatchService
 		new Timer().scheduleAtFixedRate( this, 10*1000, 10*1000);
-		System.out.println( "[SENSOR] Monitoring yaml configuration for changes" );
+		//System.out.println( "[SENSOR] Monitoring yaml configuration for changes" );
+		logger.atInfo().log("[SENSOR] Monitoring yaml configuration for changes" );
 	}
 	
 	public void run() {

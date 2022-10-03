@@ -3,7 +3,12 @@ package org.openolly.reporting;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.commons.lang3.exception.ExceptionUtils;
+
+import com.google.common.flogger.FluentLogger;
+
 public class Reporter {
+	private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 	
 	private static List<Report> reports = new ArrayList<Report>();
 
@@ -18,7 +23,8 @@ public class Reporter {
 				table.update( t );
 				table.dump();
 			} catch( Exception e ) {
-				e.printStackTrace();
+				//e.printStackTrace();
+				logger.atWarning().log( ExceptionUtils.getStackTrace(e) );
 			}
 		}
 	}

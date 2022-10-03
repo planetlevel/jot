@@ -9,6 +9,7 @@ import java.lang.instrument.Instrumentation;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.openolly.advice.TraceAdvice;
 
 import net.bytebuddy.agent.builder.AgentBuilder;
@@ -20,7 +21,11 @@ import net.bytebuddy.agent.builder.AgentBuilder.TypeStrategy;
 import net.bytebuddy.asm.Advice;
 import net.bytebuddy.dynamic.ClassFileLocator;
 
+import com.google.common.flogger.FluentLogger;
+
 public class Instrumenter {
+	
+	private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
 	private static Instrumentation inst = null;
 
@@ -51,13 +56,15 @@ public class Instrumenter {
 				.transform((b, td, cl, m) -> b.visit(Advice.to(TraceAdvice.class).on(named("service").and(isMethod()))));
 
 			for (Sensor sensor : sensors ) {
-				System.err.println( "[SENSOR] processing " + sensor );
+				//System.err.println( "[SENSOR] processing " + sensor );
+				logger.atWarning().log("[SENSOR] processing " + sensor);
 				builder = sensor.instrument( builder );
 			}
 			
 			builder.installOn(inst);
 		} catch (Exception e) {
-			e.printStackTrace();
+			//e.printStackTrace();
+			logger.atWarning().log( ExceptionUtils.getStackTrace(e) );
 		}
 	}
 
