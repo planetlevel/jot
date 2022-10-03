@@ -12,25 +12,38 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.Vector;
 
+import com.google.common.flogger.FluentLogger;
+
 public class SafeString {
+	
+	private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 	
 	public static void main( String[] args ) {
 		Object[] arr = {"foo","bar",new String[]{"blue","red"}};
-		System.out.println( "CT: " + arr.getClass().getComponentType() );
-		System.out.println( "ASS: " + arr.getClass().getComponentType().isPrimitive());
-		System.out.println( "A: " + SafeString.format(arr, false));
+		//System.out.println( "CT: " + arr.getClass().getComponentType() );
+		logger.atInfo().log( "CT: " + arr.getClass().getComponentType() );
+		//System.out.println( "ASS: " + arr.getClass().getComponentType().isPrimitive());
+		logger.atInfo().log("ASS: " + arr.getClass().getComponentType().isPrimitive());
+		//System.out.println( "A: " + SafeString.format(arr, false));
+		logger.atInfo().log("A: " + SafeString.format(arr, false));
 		int[] arr1 = {1,2};
-		System.out.println( "CT: " + arr1.getClass().getComponentType() );
-		System.out.println( "ASS: " + arr1.getClass().getComponentType().isPrimitive());
-		System.out.println( "A: " + SafeString.format(arr1, false));
+		//System.out.println( "CT: " + arr1.getClass().getComponentType() );
+		logger.atInfo().log("CT: " + arr1.getClass().getComponentType() );
+		//System.out.println( "ASS: " + arr1.getClass().getComponentType().isPrimitive());
+		logger.atInfo().log("ASS: " + arr1.getClass().getComponentType().isPrimitive());
+		//System.out.println( "A: " + SafeString.format(arr1, false));
+		logger.atInfo().log("A: " + SafeString.format(arr1, false));
 		Vector<Integer> v = new Vector();
 		v.add( 1 );
 		v.add( 2);
-		System.out.println( "V: " + SafeString.format(v.elements(), false));
+		//System.out.println( "V: " + SafeString.format(v.elements(), false));
+		logger.atInfo().log( "V: " + SafeString.format(v.elements(), false));
 		Object[] arr3 = {"foo","bar",null};
-		System.out.println( "A3: " + SafeString.format(arr3, false));
+		//System.out.println( "A3: " + SafeString.format(arr3, false));
+		logger.atInfo().log(  "A3: " + SafeString.format(arr3, false));
 		Object[] arr4 = null;
-		System.out.println( "A4: " + SafeString.format(arr4, false));
+		//System.out.println( "A4: " + SafeString.format(arr4, false));
+		logger.atInfo().log( "A4: " + SafeString.format(arr4, false));
 	}
 	public static String format( Object o, boolean debug ) {
 		return format( o, false, debug );
@@ -61,17 +74,20 @@ public class SafeString {
 		}
 		String ret = "{" + o.getClass() + ":" + o.toString() + "}";
 		if ( debug ) {
-			System.out.println( "[SENSOR] Defaulting to toString() - " + ret );
+			//System.out.println( "[SENSOR] Defaulting to toString() - " + ret );
+			logger.atFinest().log( "[SENSOR] Defaulting to toString() - " + ret );
 			dumpMethods(o);
 		}
 		return ret;
 	}
 
 	private static void dumpMethods(Object o) {
-		System.err.println( "[SENSOR] Possible methods to invoke on: " + o.getClass());
+		//System.err.println( "[SENSOR] Possible methods to invoke on: " + o.getClass());
+		logger.atWarning().log("[SENSOR] Possible methods to invoke on: " + o.getClass());
 		for ( Method m : getAllMethodsInHierarchy(o.getClass())) {
 			if ( m.getParameterCount() == 0 ) {
-				System.err.println( "  " + m.getName() + "()" );
+				//System.err.println( "  " + m.getName() + "()" );
+				logger.atWarning().log("  " + m.getName() + "()" );
 			}
 		}
 	}

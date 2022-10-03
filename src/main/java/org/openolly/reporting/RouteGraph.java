@@ -4,16 +4,21 @@ import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 
+import com.google.common.flogger.FluentLogger;
 import com.google.common.graph.EndpointPair;
 import com.google.common.graph.Graph;
 import com.google.common.graph.GraphBuilder;
 import com.google.common.graph.Graphs;
 import com.google.common.graph.MutableGraph;
+
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.text.StringEscapeUtils;
 
 // ...
 
 public class RouteGraph {
+	
+	private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
 	private static MutableGraph<Event> graph = GraphBuilder.directed().allowsSelfLoops(true).build();
  
@@ -45,7 +50,8 @@ public class RouteGraph {
 			}
 			dump( graph );
 		} catch( Exception e ) {
-			e.printStackTrace();
+			//e.printStackTrace();
+			logger.atWarning().log( ExceptionUtils.getStackTrace(e) );
 		}
 	}
 
@@ -73,29 +79,45 @@ public class RouteGraph {
 	// FIXME: HTML Encode specials
 	private static String style = "shape=box, style=\"rounded,filled\",fillcolor=blue,fontcolor=white,fontname=Helvetica,fontsize=10";
 	public static void dump( Graph<Event> g ) {
-		System.err.println( "====" );
-		System.err.println( "digraph {" );
+		String out = "";
+		//System.err.println( "====" );
+		out += "===="+"\n";
+		//System.err.println( "digraph {" );
+		out += "digraph {" +"\n";
 		// System.err.println( "\trankdir=LR" );
 		if ( !graph.nodes().isEmpty() ) {
-			System.err.println( "\t{ node ["+style+"]");
+			//System.err.println( "\t{ node ["+style+"]");
+			out += "\t{ node ["+style+"]"+"\n";
 			for ( Event e : graph.nodes() ) {
-				System.err.println( "\t\t" + e.getHash() + " [label=<<TABLE border=\"0\">"+
+				/*System.err.println( "\t\t" + e.getHash() + " [label=<<TABLE border=\"0\">"+
 				"<TR><TD>"+StringEscapeUtils.escapeHtml4( e.getRule() )+"</TD></TR>"+
 				"<TR><TD>"+StringEscapeUtils.escapeHtml4( e.getCapture() )+"</TD></TR>"+
 				"<TR><TD>"+StringEscapeUtils.escapeHtml4( e.getCaller(2) )+"</TD></TR>"+
-				"</TABLE>>];" );
+				"</TABLE>>];" );*/
+				out += "\t\t" + e.getHash() + " [label=<<TABLE border=\"0\">"+
+						"<TR><TD>"+StringEscapeUtils.escapeHtml4( e.getRule() )+"</TD></TR>"+
+						"<TR><TD>"+StringEscapeUtils.escapeHtml4( e.getCapture() )+"</TD></TR>"+
+						"<TR><TD>"+StringEscapeUtils.escapeHtml4( e.getCaller(2) )+"</TD></TR>"+
+						"</TABLE>>];" +"\n";
 			}
-			System.err.println( "\t}" );
+			//System.err.println( "\t}" );
+			out += "\t\n";
 		}
 		if ( !graph.edges().isEmpty() ) {
-			System.err.println( "\t{ edge [style=dashed]");
+			//System.err.println( "\t{ edge [style=dashed]");
+			out+=  "\t{ edge [style=dashed]"+"\n";
 			for ( EndpointPair<Event> edge : graph.edges() ) {
-				System.err.println( "\t\t" + edge.source().getHash() + " -> " + edge.target().getHash() );
+				//System.err.println( "\t\t" + edge.source().getHash() + " -> " + edge.target().getHash() );
+				out+= "\t\t" + edge.source().getHash() + " -> " + edge.target().getHash()+"\n";
 			}
-			System.err.println( "\t}" );
+			//System.err.println( "\t}" );
+			out += "\t\n";
 		}
-		System.err.println( "}" );
-		System.err.println( "====" );
+		//System.err.println( "}" );
+		out += "\"}\"\n";
+		//System.err.println( "====" );
+		out += "===="+"\n";
+		logger.atWarning().log(out);
 	}
     
 }

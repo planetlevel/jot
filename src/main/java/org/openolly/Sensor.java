@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.openolly.advice.CEAdvice;
 import org.openolly.advice.CNEAdvice;
 import org.openolly.advice.MRAdvice;
@@ -140,7 +141,8 @@ public class Sensor {
 					
 				} catch( Exception e ) {
 					logger.atWarning().log( "[JOT %s] Error running capture (%s) %s", this, capture, e.getMessage() );
-					e.printStackTrace();
+					//e.printStackTrace();
+					logger.atWarning().log( ExceptionUtils.getStackTrace(e) );
 				}
 			}
 
@@ -476,12 +478,14 @@ public class Sensor {
 		
 		// add advice to "methods"
 		for ( MethodLocator method : this.getMethods() ) {
-			System.err.println( "INSTRUMENTING " + method.className() + " -> " + method.methodName() );
+			//System.err.println( "INSTRUMENTING " + method.className() + " -> " + method.methodName() );
+			logger.atWarning().log("INSTRUMENTING " + method.className() + " -> " + method.methodName() );
 			try {
 
 				// ignore methods listed as excludes in JOT rule
 				for ( MethodLocator eloc : this.getExcludes() ) {
-					System.out.println ( "EXCLUDING: " + eloc.className() + " from " + method );
+					//System.out.println ( "EXCLUDING: " + eloc.className() + " from " + method );
+					logger.atInfo().log( "EXCLUDING: " + eloc.className() + " from " + method );
 					builder.ignore(nameStartsWith(eloc.className()) );
 					builder.ignore(hasGenericSuperType(failSafe(named(eloc.className()))));
 				}
@@ -547,14 +551,17 @@ public class Sensor {
 				}
 				
 			} catch (Exception e) {
-				System.err.println("WARNING: Error instrumenting: " + e.getMessage());
-				e.printStackTrace();
+				//System.err.println("WARNING: Error instrumenting: " + e.getMessage());
+				logger.atWarning().log("WARNING: Error instrumenting: " + e.getMessage());
+				//e.printStackTrace();
+				logger.atWarning().log( ExceptionUtils.getStackTrace(e) );
 			}
 		}
 				
 		// add advice to "scopes"
 		for ( MethodLocator scope : this.getScopes() ) {
-			System.err.println( "SCOPERIZING " + scope.className() + " -> " + scope.methodName() );
+			//System.err.println( "SCOPERIZING " + scope.className() + " -> " + scope.methodName() );
+			logger.atWarning().log("SCOPERIZING " + scope.className() + " -> " + scope.methodName() );
 			try {				
 				builder = builder
 				.type(hasGenericSuperType(failSafe(named(scope.className()))))
@@ -568,8 +575,10 @@ public class Sensor {
 						.or(isConstructor()))) ) );
 			
 			} catch (Exception e) {
-				System.err.println("WARNING: Error instrumenting: " + e.getMessage());
-				e.printStackTrace();
+				//System.err.println("WARNING: Error instrumenting: " + e.getMessage());
+				logger.atWarning().log("WARNING: Error instrumenting: " + e.getMessage());
+				//e.printStackTrace();
+				logger.atWarning().log( ExceptionUtils.getStackTrace(e) );
 			}
 		}
 
