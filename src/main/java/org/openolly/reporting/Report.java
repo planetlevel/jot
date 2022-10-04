@@ -219,7 +219,7 @@ public class Report {
 	
 	public synchronized void dump() {
 		
-		String out = "";
+		String out = "\n";
 		// print headers
 		//System.err.print( StringUtils.rightPad(name, rowNameColWidth) );
 		out += StringUtils.rightPad(name, rowNameColWidth) ;
