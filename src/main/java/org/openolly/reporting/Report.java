@@ -244,7 +244,7 @@ public class Report {
 		//System.err.print( " " );
 		out += " ";
 		for ( String col : table.columnKeySet() ) {
-			if ( !col.equals("|||" ) ) {
+			if ( !"|||".equals(col ) ) {
 				int colWidth = getMaxWidth( col );
 				String under2 = StringUtils.repeat( "-", colWidth );
 				//System.err.print( under2 );
@@ -258,7 +258,7 @@ public class Report {
 		
 		// print data
 		for ( String row : table.rowKeySet() ) {
-			if ( !row.equals( "|||" ) ) {
+			if ( !"|||".equals (row ) ) {
 				//System.err.print( StringUtils.rightPad(row,rowNameColWidth," " ).substring(0,rowNameColWidth));
 				out += StringUtils.rightPad(row,rowNameColWidth," " ).substring(0,rowNameColWidth);
 				//System.err.print( " " );
