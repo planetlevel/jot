@@ -39,11 +39,11 @@ public class RouteGraph {
 
 			Event tail = route;
 			for ( Event event : t.getEvents() ) {
-				if ( !event.getRule().equals( "route" ) ) {
+				if ( !"route".equals (event.getRule() ) ) {
 					event = findExistingEventInRoute( route, event );
 					graph.putEdge( tail, event );
 					tail = event;
-					if ( event.getRule().equals( "forward" ) ) {
+					if ( "forward".equals (event.getRule() ) ) {
 						route = event;
 					}
 				}

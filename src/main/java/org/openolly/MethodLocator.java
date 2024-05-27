@@ -79,7 +79,7 @@ public class MethodLocator {
 	}
 
 	public boolean isConstructor() {
-		return method.equals( "<init>" );
+		return "<init>".equals (method );
 	}
 	
 	public boolean isNegative() {

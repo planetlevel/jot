@@ -68,7 +68,7 @@ public class ConfigReader {
 					logger.atWarning().log("[JOT] WARNING: " + entry.name + " from " + yaml + " already loaded. Skipping." );
 				}
 
-				else if ( entry.name.equals("example")) {					
+				else if ( "example".equals(entry.name)) {					
 					//System.err.println( "[JOT] WARNING: Found 'example' JOT in " + yaml + ". Skipping." );
 					logger.atWarning().log("[JOT] WARNING: Found 'example' JOT in " + yaml + ". Skipping." );
 				}
