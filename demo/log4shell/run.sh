@@ -20,7 +20,7 @@ javac -cp "$CP" -d $OUT/classes FakeDirectory.java Victim.java
 run() {
   rm -f pwned.txt
   java "$@" -Djava.naming.factory.initial=FakeDirectory -cp "$CP" Victim 2>&1 \
-    | grep -E 'ERROR Victim|pwned|blocked|SEVERE'
+    | grep -E 'ERROR Victim|pwned|BLOCKED|SEVERE|CVE-2021'
   rm -f pwned.txt
 }
 echo "=== without JOT ==="; run

@@ -4,6 +4,7 @@ import java.lang.instrument.Instrumentation;
 
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.openolly.config.ConfigReader;
+import org.openolly.reporting.EventBus;
 import org.openolly.reporting.Reporter;
 
 import com.google.common.flogger.FluentLogger;
@@ -24,6 +25,7 @@ public class JOTAgent {
 
 	public static void transform(String yaml, Instrumentation inst) {
 		try {
+			EventBus.configureFromSystemProperties();
 			ConfigReader.init(yaml);
 			Instrumenter.instrument(inst, Sensor.getSensors());
 			new Reporter();

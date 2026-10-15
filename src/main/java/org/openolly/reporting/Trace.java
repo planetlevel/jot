@@ -42,7 +42,6 @@ public class Trace {
 	
 	public void stop() {
 		if ( events.isEmpty() ) return;
-		printTrace();
 		Reporter.update( this );
 		RouteGraph.update( this );
 	}

@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.StringUtils;
@@ -26,6 +27,7 @@ import org.openolly.advice.ScopeCtorWrapper;
 import org.openolly.advice.SensorException;
 import org.openolly.advice.scope.BinaryScope;
 import org.openolly.reporting.Event;
+import org.openolly.reporting.EventBus;
 import org.openolly.reporting.Trace;
 
 import com.google.common.flogger.FluentLogger;
@@ -90,6 +92,11 @@ public class Sensor {
 		sensors.clear();
 	}
 
+	// a sensor that blocks reports the block, not each thing it captured on the way
+	private void publishObserved(Event event) {
+		if ( getException() == null ) EventBus.publish( event );
+	}
+
 	/**
 	 * Walking the stack is expensive, so it is only done once we know the sensor will really run,
 	 * not for every call to a method that happens to have a sensor on it.
@@ -137,7 +144,7 @@ public class Sensor {
 				if ( !inScope ) return results;
 			}
 	
-			if ( stack == null && !captures.isEmpty() ) stack = currentStack();
+			if ( stack == null && ( !captures.isEmpty() || getException() != null ) ) stack = currentStack();
 
 			for (Expression capture : captures) {
 				try {
@@ -151,6 +158,7 @@ public class Sensor {
 								String cleaned = StringUtils.normalizeSpace( safe );
 								Event event = new Event(getName(), cleaned, stack);
 								Trace.getCurrentTrace().addEvent( event );
+								publishObserved( event );
 								// logger.atWarning().log( "[JOT %s] %s", this, event );
 		 						results.add(safe);
 							}
@@ -162,6 +170,7 @@ public class Sensor {
 							String cleaned = StringUtils.normalizeSpace( safe );
 							Event event = new Event(getName(), cleaned, stack);
 							Trace.getCurrentTrace().addEvent( event );
+								publishObserved( event );
 							// logger.atWarning().log( "[JOT %s] %s", this, event );
 	 						results.add(safe);
 						}
@@ -177,9 +186,9 @@ public class Sensor {
 			// if there are either results or zero captures, generate exceptions if any
 			if ( getException() != null ) {
 				if ( captures.isEmpty() || !results.isEmpty() ) {
-					String details = SafeString.format( results, false );
+					String details = results.stream().map( String::valueOf ).collect( Collectors.joining( " | " ) );
 					SensorException e = new SensorException( getException() );
-					logger.atInfo().log( "[JOT %s] %s: %s", this, getException(), details );
+					EventBus.publish( new Event( getName(), details, stack, Event.Action.BLOCKED, getException() ) );
 					throw e;
 				}
 			}			

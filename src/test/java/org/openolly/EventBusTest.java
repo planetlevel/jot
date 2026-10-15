@@ -1,0 +1,166 @@
+package org.openolly;
+
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.io.StringWriter;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
+import org.openolly.advice.SensorException;
+import org.openolly.reporting.ConsoleSink;
+import org.openolly.reporting.Event;
+import org.openolly.reporting.EventBus;
+import org.openolly.reporting.EventSink;
+import org.openolly.reporting.JsonSink;
+
+class EventBusTest {
+
+	static class Recorder implements EventSink {
+		final List<Event> events = Collections.synchronizedList( new ArrayList<Event>() );
+		boolean closed = false;
+		public void accept(Event e) { events.add( e ); }
+		public void close() { closed = true; }
+	}
+
+	private static Event event(String rule) {
+		return new Event( rule, "value", Thread.currentThread().getStackTrace() );
+	}
+
+	@AfterEach
+	void tearDown() {
+		EventBus.shutdown();
+	}
+
+	@Test
+	void testPublishWithNoSinksDoesNothing() {
+		EventBus.configure( new ArrayList<EventSink>(), 10, false );
+		EventBus.publish( event( "a" ) );
+		Assertions.assertEquals( 0, EventBus.getDropped() );
+	}
+
+	@Test
+	void testEventsAreDeliveredInOrderAndSinksClosedOnShutdown() {
+		Recorder r = new Recorder();
+		EventBus.configure( List.of( r ), 100, false );
+		for ( int i = 0; i < 50; i++ ) EventBus.publish( event( "r" + i ) );
+		EventBus.shutdown();
+		Assertions.assertEquals( 50, r.events.size() );
+		for ( int i = 0; i < 50; i++ ) Assertions.assertEquals( "r" + i, r.events.get( i ).getRule() );
+		Assertions.assertTrue( r.closed );
+	}
+
+	@Test
+	void testFullQueueDropsEventsInsteadOfBlocking() throws Exception {
+		CountDownLatch release = new CountDownLatch( 1 );
+		CountDownLatch started = new CountDownLatch( 1 );
+		Recorder r = new Recorder() {
+			public void accept(Event e) {
+				started.countDown();
+				try { release.await( 5, TimeUnit.SECONDS ); } catch ( InterruptedException ex ) { }
+				super.accept( e );
+			}
+		};
+		EventBus.configure( List.of( r ), 2, false );
+		EventBus.publish( event( "first" ) );
+		Assertions.assertTrue( started.await( 5, TimeUnit.SECONDS ) );   // worker is now stuck in the sink
+		for ( int i = 0; i < 10; i++ ) EventBus.publish( event( "x" ) );
+		Assertions.assertEquals( 8, EventBus.getDropped() );             // 2 queued, 8 dropped
+		release.countDown();
+		EventBus.shutdown();
+		Assertions.assertEquals( 3, r.events.size() );
+	}
+
+	@Test
+	void testBrokenSinkDoesNotAffectOthers() {
+		Recorder good = new Recorder();
+		EventSink bad = e -> { throw new IllegalStateException( "boom" ); };
+		PrintStream original = System.err;
+		System.setErr( new PrintStream( new ByteArrayOutputStream() ) );
+		try {
+			EventBus.configure( List.of( bad, good ), 10, false );
+			EventBus.publish( event( "a" ) );
+			EventBus.shutdown();
+		} finally {
+			System.setErr( original );
+		}
+		Assertions.assertEquals( 1, good.events.size() );
+	}
+
+	@Test
+	void testViolationsOnlySkipsObservedEvents() {
+		Recorder r = new Recorder();
+		EventBus.configure( List.of( r ), 10, true );
+		EventBus.publish( event( "observed" ) );
+		EventBus.publish( new Event( "blocked", "v", null, Event.Action.BLOCKED, "no" ) );
+		EventBus.publish( new Event( "monitored", "v", null, Event.Action.MONITORED, "no" ) );
+		EventBus.shutdown();
+		Assertions.assertEquals( 2, r.events.size() );
+		Assertions.assertEquals( "blocked", r.events.get( 0 ).getRule() );
+	}
+
+	@Test
+	void testJsonSinkEscapesAndIncludesStackOnlyForViolations() {
+		StringWriter out = new StringWriter();
+		JsonSink sink = new JsonSink( out );
+		StackTraceElement[] stack = { new StackTraceElement( "java.lang.Thread", "getStackTrace", "Thread.java", 1 ),
+				new StackTraceElement( "com.acme.Foo", "bar", "Foo.java", 7 ) };
+		sink.accept( new Event( "rule", "say \"hi\"\n\tback\\slash", stack ) );
+		sink.accept( new Event( "rule", "x", stack, Event.Action.BLOCKED, "denied" ) );
+		String[] lines = out.toString().split( "\n" );
+		Assertions.assertEquals( 2, lines.length );
+		Assertions.assertTrue( lines[0].contains( "\"capture\":\"say \\\"hi\\\"\\n\\tback\\\\slash\"" ), lines[0] );
+		Assertions.assertTrue( lines[0].contains( "\"action\":\"observed\"" ) );
+		Assertions.assertTrue( lines[0].contains( "\"caller\":\"com.acme.Foo.bar(Foo.java:7)\"" ) );
+		Assertions.assertFalse( lines[0].contains( "\"stack\"" ) );
+		Assertions.assertTrue( lines[1].contains( "\"action\":\"blocked\"" ) );
+		Assertions.assertTrue( lines[1].contains( "\"message\":\"denied\"" ) );
+		Assertions.assertTrue( lines[1].contains( "\"stack\":[\"com.acme.Foo.bar(Foo.java:7)\"]" ), lines[1] );
+	}
+
+	@Test
+	void testConsoleSinkShowsActionMessageAndCaller() {
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		StackTraceElement[] stack = { new StackTraceElement( "java.lang.Thread", "getStackTrace", "Thread.java", 1 ),
+				new StackTraceElement( "com.acme.Foo", "bar", "Foo.java", 7 ),
+				new StackTraceElement( "com.acme.Main", "main", "Main.java", 3 ) };
+		new ConsoleSink( new PrintStream( bytes ) ).accept( new Event( "block-it", "[ls]", stack, Event.Action.BLOCKED, "not allowed" ) );
+		String text = bytes.toString();
+		Assertions.assertTrue( text.contains( "BLOCKED block-it [ls]" ), text );
+		Assertions.assertTrue( text.contains( "not allowed" ), text );
+		Assertions.assertTrue( text.contains( "at com.acme.Foo.bar(Foo.java:7)" ), text );
+		Assertions.assertTrue( text.contains( "from com.acme.Main.main(Main.java:3)" ), text );
+	}
+
+	@Test
+	void testBlockingSensorPublishesOneBlockedEventWithItsMessage() {
+		Recorder r = new Recorder();
+		EventBus.configure( List.of( r ), 10, false );
+		Sensor s = new Sensor().method( "a.b.Class.method" ).capture( "#P0" ).exception( "Not allowed" );
+		Assertions.assertThrows( SensorException.class,
+				() -> s.execute( "test", "a.b.Class.Method", "foo", new String[] { "bar" }, "zoo" ) );
+		EventBus.shutdown();
+		Assertions.assertEquals( 1, r.events.size() );
+		Event e = r.events.get( 0 );
+		Assertions.assertEquals( Event.Action.BLOCKED, e.getAction() );
+		Assertions.assertEquals( "Not allowed", e.getMessage() );
+		Assertions.assertEquals( "bar", e.getCapture() );
+		Assertions.assertNotNull( e.getStack() );
+	}
+
+	@Test
+	void testObservingSensorPublishesObservedEvent() {
+		Recorder r = new Recorder();
+		EventBus.configure( List.of( r ), 10, false );
+		Sensor s = new Sensor().method( "a.b.Class.method" ).capture( "#P0" );
+		s.execute( "test", "a.b.Class.Method", "foo", new String[] { "bar" }, "zoo" );
+		EventBus.shutdown();
+		Assertions.assertEquals( 1, r.events.size() );
+		Assertions.assertEquals( Event.Action.OBSERVED, r.events.get( 0 ).getAction() );
+	}
+}

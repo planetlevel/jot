@@ -66,6 +66,24 @@ what algorithm is specified.
     org.apache.jsp.accessB_jsp._jspService(accessB_jsp.java:212) DES                    
     org.apache.jsp.accessC_jsp._jspService(accessC_jsp.java:212) DES/CBC/PKCS5Padding   
 
+## Events and Output
+JOT reports what its sensors observe, and what they block, as events. Each event has a sensor name,
+an action (`observed`, `monitored` or `blocked`), the captured values, the calling method and, for blocks,
+the stack. Events are delivered on a background thread, so your application never waits on output.
+
+    [JOT] 2026-10-15T19:27:07.301Z BLOCKED cve-log4shell-no-exec [[touch, pwned.txt]]
+          CVE-2021-44228 microsandbox blocked process execution
+          at java.base/java.lang.ProcessBuilder.<init>(ProcessBuilder.java:228)
+
+Choose where events go with system properties.
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `jot.output` | `console` | Comma separated list of `console` (stderr) and `json` (one JSON object per line) |
+| `jot.output.file` | `jot-events.jsonl` | File for the `json` output |
+| `jot.events` | `all` | `all`, or `violations` to only report monitored and blocked events |
+| `jot.queue.size` | `10000` | Events to buffer. If the queue fills up, new events are dropped and counted. |
+
 ## Advanced Options
 Set `-Djot.verbose=true` to report instrumentation errors. By default JOT suppresses them so that
 a problem in a JOT can never break your application, which also means a rule that fails to apply

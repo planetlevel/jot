@@ -1,18 +1,46 @@
 package org.openolly.reporting;
 
-public class Event implements Comparable {
+import java.util.concurrent.atomic.AtomicInteger;
 
-	private String rule = null;
-	private String capture = null;
-	private StackTraceElement[] stack = null;
-	private int id = 0;
-	private static int counter = 0;
-	
-	public Event(String rule, String capture, StackTraceElement[] stack ) {
+/**
+ * Something a sensor observed, or an action a sensor took. Events are immutable once created
+ * and are published to the EventBus as they happen.
+ */
+public class Event implements Comparable<Event> {
+
+	public enum Action {
+		/** the sensor captured something */
+		OBSERVED,
+		/** the sensor would have blocked, but is only monitoring */
+		MONITORED,
+		/** the sensor blocked the call by throwing an exception */
+		BLOCKED
+	}
+
+	private static final AtomicInteger counter = new AtomicInteger(0);
+
+	private final String rule;
+	private final String capture;
+	private final StackTraceElement[] stack;
+	private final int id;
+	private final long timestamp;
+	private final Action action;
+	private final String message;
+	private final String thread;
+
+	public Event(String rule, String capture, StackTraceElement[] stack) {
+		this(rule, capture, stack, Action.OBSERVED, null);
+	}
+
+	public Event(String rule, String capture, StackTraceElement[] stack, Action action, String message) {
 		this.rule = rule;
 		this.capture = capture;
 		this.stack = stack;
-		this.id = counter++;
+		this.action = action;
+		this.message = message;
+		this.id = counter.getAndIncrement();
+		this.timestamp = System.currentTimeMillis();
+		this.thread = Thread.currentThread().getName();
 	}
 
 	public String getRule() {
@@ -22,15 +50,42 @@ public class Event implements Comparable {
 	public String getCapture() {
 		return capture;
 	}
-	
+
+	public Action getAction() {
+		return action;
+	}
+
+	/** The sensor's exception message for blocked or monitored events, otherwise null. */
+	public String getMessage() {
+		return message;
+	}
+
+	/** Milliseconds since the epoch. */
+	public long getTimestamp() {
+		return timestamp;
+	}
+
+	public String getThread() {
+		return thread;
+	}
+
 	public String getCaller( int depth ) {
+		if ( stack == null || depth >= stack.length ) return "";
 		return stack[depth].toString();
+	}
+
+	/**
+	 * The frame of the instrumented method. Frame 0 of an event's stack is Thread.getStackTrace
+	 * and frame 1 is the instrumented method itself.
+	 */
+	public String getCaller() {
+		return getCaller( 1 );
 	}
 
 	public StackTraceElement[] getStack() {
 		return stack;
 	}
-	
+
 	// FIXME: return the "name" of a name-value pair captured. Needs update.
 	public String getNameFromCapture() {
 		if ( capture.indexOf( ':' ) != -1 ) {
@@ -39,7 +94,7 @@ public class Event implements Comparable {
 			return capture;
 		}
 	}
-	
+
 	// FIXME: return the "name" of a name-value pair captured. Needs update.
 	public String getValueFromCapture() {
 		if ( capture.indexOf( ':' ) != -1 ) {
@@ -48,7 +103,7 @@ public class Event implements Comparable {
 			return "X";
 		}
 	}
-	
+
 	public String toString() {
 		return "[JOT " + rule + "] " + getCaller(2) + " " + getCapture();
 	}
@@ -69,27 +124,20 @@ public class Event implements Comparable {
 	@Override
 	public boolean equals(Object obj) {
 		if (obj == null)
-			return false;       
+			return false;
 		if (this == obj)
 			return true;
-
 		if (getClass() != obj.getClass())
 			return false;
 		Event other = (Event) obj;
-		return (rule == other.rule && capture == other.capture );
+		return rule.equals(other.rule) && capture.equals(other.capture);
 	}
 
 	@Override
-	public int compareTo(Object obj) {
-		if (obj == null)
-			return 0;       
-		if (this == obj)
+	public int compareTo(Event other) {
+		if (other == null || this == other)
 			return 0;
-		if (getClass() != obj.getClass())
-			return 0;
-		Event other = (Event) obj;
 		return (rule + capture).compareTo( other.rule + other.capture );
 	}
-
 
 }
