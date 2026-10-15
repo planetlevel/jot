@@ -53,7 +53,7 @@ public class Instrumenter {
 			builder = builder
 				// add a sensor for every service method to start and stop a trace
 				.type(hasGenericSuperType(named("javax.servlet.Servlet")))
-				.transform((b, td, cl, m) -> b.visit(Advice.to(TraceAdvice.class).on(named("service").and(isMethod()))));
+				.transform((b, td, cl, m, pd) -> b.visit(Advice.to(TraceAdvice.class).on(named("service").and(isMethod()))));
 
 			for (Sensor sensor : sensors ) {
 				//System.err.println( "[SENSOR] processing " + sensor );

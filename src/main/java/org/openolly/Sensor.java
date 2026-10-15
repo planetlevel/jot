@@ -68,7 +68,7 @@ public class Sensor {
 	
 	public static boolean exists(String name) {
 		for ( Sensor s : sensors ) {
-			if ( s.getName().equals( name ) ) {
+			if ( name != null && name.equals( s.getName() ) ) {
 				return true;
 			}
 		}
@@ -494,7 +494,7 @@ public class Sensor {
 				if ( method.isConstructor() && hasException() ) {
 					builder = builder
 					.type(hasGenericSuperType(failSafe(named(method.className()))))
-					.transform((b, td, cl, m) -> b.visit( Advice
+					.transform((b, td, cl, m, pd) -> b.visit( Advice
 						.withCustomMapping()
 						.bind(SensorIndexValue.class, this.getIndex() )
 						.bind(MethodIndexValue.class, method.getIndex() )
@@ -506,7 +506,7 @@ public class Sensor {
 				else if ( method.isConstructor() ) {
 					builder = builder
 					.type(hasGenericSuperType(failSafe(named(method.className()))))
-					.transform((b, td, cl, m) -> b.visit( Advice
+					.transform((b, td, cl, m, pd) -> b.visit( Advice
 						.withCustomMapping()
 						.bind(SensorIndexValue.class, this.getIndex() )
 						.bind(MethodIndexValue.class, method.getIndex() )
@@ -518,7 +518,7 @@ public class Sensor {
 				else if ( hasReturn() ) {
 					builder = builder
 					.type(hasGenericSuperType(failSafe(named(method.className()))))
-					.transform((b, td, cl, m) -> b.visit( Advice
+					.transform((b, td, cl, m, pd) -> b.visit( Advice
 						.withCustomMapping()
 						.bind(SensorIndexValue.class, this.getIndex() )
 						.bind(MethodIndexValue.class, method.getIndex() )
@@ -530,7 +530,7 @@ public class Sensor {
 				else if ( hasException() ) {
 					builder = builder
 					.type(hasGenericSuperType(failSafe(named(method.className()))))
-					.transform((b, td, cl, m) -> b.visit( Advice
+					.transform((b, td, cl, m, pd) -> b.visit( Advice
 						.withCustomMapping()
 						.bind(SensorIndexValue.class, this.getIndex() )
 						.bind(MethodIndexValue.class, method.getIndex() )
@@ -542,7 +542,7 @@ public class Sensor {
 				else {
 					builder = builder
 					.type(hasGenericSuperType(failSafe(named(method.className()))))
-					.transform((b, td, cl, m) -> b.visit( Advice
+					.transform((b, td, cl, m, pd) -> b.visit( Advice
 						.withCustomMapping()
 						.bind(SensorIndexValue.class, this.getIndex() )
 						.bind(MethodIndexValue.class, method.getIndex() )
@@ -565,7 +565,7 @@ public class Sensor {
 			try {				
 				builder = builder
 				.type(hasGenericSuperType(failSafe(named(scope.className()))))
-				.transform((b, td, cl, m) -> b.visit( Advice
+				.transform((b, td, cl, m, pd) -> b.visit( Advice
 					.withCustomMapping()
 					.bind(SensorIndexValue.class, this.getIndex() )
 					.bind(MethodIndexValue.class, scope.getIndex() )
