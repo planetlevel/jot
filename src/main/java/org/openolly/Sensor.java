@@ -6,6 +6,7 @@ import static net.bytebuddy.matcher.ElementMatchers.isConstructor;
 import static net.bytebuddy.matcher.ElementMatchers.nameStartsWith;
 import static net.bytebuddy.matcher.ElementMatchers.nameContains;
 import static net.bytebuddy.matcher.ElementMatchers.named;
+import static net.bytebuddy.matcher.ElementMatchers.not;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -21,6 +22,7 @@ import org.openolly.advice.MRAdvice;
 import org.openolly.advice.MVEAdvice;
 import org.openolly.advice.MVNEAdvice;
 import org.openolly.advice.ScopeAdvice;
+import org.openolly.advice.ScopeCtorAdvice;
 import org.openolly.advice.SensorException;
 import org.openolly.advice.scope.BinaryScope;
 import org.openolly.reporting.Event;
@@ -30,6 +32,8 @@ import com.google.common.flogger.FluentLogger;
 
 import net.bytebuddy.agent.builder.AgentBuilder;
 import net.bytebuddy.asm.Advice;
+import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.matcher.ElementMatcher;
 
 public class Sensor {
 
@@ -55,7 +59,7 @@ public class Sensor {
 	private boolean debug = false;
 	private boolean hasReturn = false;
 
-	private Pattern namePattern = Pattern.compile( "([a-z]+\\-)*[a-z]+");
+	private Pattern namePattern = Pattern.compile( "([a-z][a-z0-9]*\\-)*[a-z][a-z0-9]*");
 	private Pattern descriptionPattern = Pattern.compile( "^.*$");
 	private Pattern methodPattern = Pattern.compile( "^(!)?([\\p{L}_$][\\p{L}\\p{N}_$]*\\.)*(<init>|[\\p{L}_$][\\p{L}\\p{N}_$]*)$");
 	private Pattern capturePattern = Pattern.compile( "^.*$");
@@ -106,6 +110,7 @@ public class Sensor {
 			if ( !scopes.isEmpty() ) {
 				boolean inScope = false;
 				for ( MethodLocator scope : scopes ) {
+					scope.healIfLeaked( stack );
 					inScope |= ( scope.inScope() );
 				}
 				if ( !inScope ) return results;
@@ -563,16 +568,19 @@ public class Sensor {
 			//System.err.println( "SCOPERIZING " + scope.className() + " -> " + scope.methodName() );
 			logger.atWarning().log("SCOPERIZING " + scope.className() + " -> " + scope.methodName() );
 			try {				
+				// constructors can't use onThrowable exit advice, so they get their own advice
+				// (see MethodLocator.healIfLeaked)
+				final Class<?> scopeAdvice = scope.isConstructor() ? ScopeCtorAdvice.class : ScopeAdvice.class;
+				final ElementMatcher.Junction<MethodDescription> scopeMethods = scope.isConstructor()
+						? isConstructor() : named(scope.methodName()).and(not(isConstructor()));
 				builder = builder
 				.type(hasGenericSuperType(failSafe(named(scope.className()))))
 				.transform((b, td, cl, m, pd) -> b.visit( Advice
 					.withCustomMapping()
 					.bind(SensorIndexValue.class, this.getIndex() )
 					.bind(MethodIndexValue.class, scope.getIndex() )
-					.to(ScopeAdvice.class)
-					.on(named(scope.methodName())
-						.or(named(scope.methodName())
-						.or(isConstructor()))) ) );
+					.to(scopeAdvice)
+					.on(scopeMethods) ) );
 			
 			} catch (Exception e) {
 				//System.err.println("WARNING: Error instrumenting: " + e.getMessage());

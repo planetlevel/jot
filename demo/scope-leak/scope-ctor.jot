@@ -1,0 +1,8 @@
+---
+sensors:
+- name: "guard-ctor"
+  methods:
+  - "ScopeLeak$Danger.call"
+  scopes:
+  - "ScopeLeak$Vuln.<init>"
+  exception: "blocked in ctor scope"

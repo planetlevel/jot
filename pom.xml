@@ -90,6 +90,9 @@
 				<artifactId>maven-surefire-plugin</artifactId>
 				<version>3.6.0</version>
                 <configuration>
+					<systemPropertyVariables>
+						<jot.verbose>true</jot.verbose>
+					</systemPropertyVariables>
                     <!-- Enable JOT during test runs to verify JUnit test fail capability.
                     <argLine>
                         -javaagent:${project.basedir}/target/jot-${project.version}.jar=${project.basedir}/src/test/resources/junit.jot

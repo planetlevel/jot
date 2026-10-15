@@ -13,6 +13,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.openolly.advice.TraceAdvice;
 
 import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.utility.JavaModule;
 import net.bytebuddy.agent.builder.AgentBuilder.InitializationStrategy;
 import net.bytebuddy.agent.builder.AgentBuilder.InstallationListener;
 import net.bytebuddy.agent.builder.AgentBuilder.LocationStrategy;
@@ -29,6 +30,16 @@ public class Instrumenter {
 
 	private static Instrumentation inst = null;
 
+	// -Djot.verbose=true reveals instrumentation errors that are otherwise suppressed
+	private static final boolean VERBOSE = Boolean.getBoolean("jot.verbose");
+
+	private static class ErrorLogger extends AgentBuilder.Listener.Adapter {
+		@Override
+		public void onError(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded, Throwable throwable) {
+			logger.atSevere().withCause(throwable).log("[JOT] Error instrumenting %s", typeName);
+		}
+	}
+
 	public static void instrument(Instrumentation inst, Sensor sensor ) {
 		List<Sensor> list = new ArrayList<Sensor>();
 		list.add( sensor );
@@ -43,7 +54,8 @@ public class Instrumenter {
 			//	.with(AgentBuilder.Listener.StreamWriting.toSystemError())
 			//	.with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
 			//	.with(AgentBuilder.Listener.StreamWriting.toSystemError().withTransformationsOnly())
-				.with(InstallationListener.ErrorSuppressing.INSTANCE)  // prevent errors from breaking app
+				.with(VERBOSE ? InstallationListener.StreamWriting.toSystemError() : InstallationListener.ErrorSuppressing.INSTANCE)  // prevent errors from breaking app
+				.with(VERBOSE ? new ErrorLogger() : AgentBuilder.Listener.NoOp.INSTANCE)
 				.with(LocationStrategy.ForClassLoader.STRONG.withFallbackTo(ClassFileLocator.ForClassLoader.ofBootLoader()))
 			//	.with(RedefinitionStrategy.RETRANSFORMATION) // for redefine, for java. classes too?
 			//	.with(InitializationStrategy.NoOp.INSTANCE) // for redefine

@@ -13,9 +13,8 @@ public class ScopeAdvice {
 		Sensor.enterScopeScope(sensorIndex, scopeIndex);
 	}
 
-	// FIXME: Must use onThrowable here to ensure we leave scope in exceptional cases
-	// BUT IT'S BREAKING IN CONSTRUCTORS
-	@Advice.OnMethodExit()
+	// onThrowable ensures we leave scope when the method exits exceptionally
+	@Advice.OnMethodExit(onThrowable = Throwable.class)
 	public static void exit(@SensorIndexValue(value = -1) int sensorIndex, @MethodIndexValue(value = -1) int scopeIndex) {
 		Sensor.leaveScopeScope(sensorIndex, scopeIndex);
 	}

@@ -32,3 +32,7 @@ dependency-reduced-pom.xml
 hs_err_pid*
 .settings/org.eclipse.core.resources.prefs
 *.prefs
+
+# Demo output
+demo/**/target
+demo/**/pwned.txt

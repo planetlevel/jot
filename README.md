@@ -67,6 +67,10 @@ what algorithm is specified.
     org.apache.jsp.accessC_jsp._jspService(accessC_jsp.java:212) DES/CBC/PKCS5Padding   
 
 ## Advanced Options
+Set `-Djot.verbose=true` to report instrumentation errors. By default JOT suppresses them so that
+a problem in a JOT can never break your application, which also means a rule that fails to apply
+fails silently. Turn verbose on while writing or debugging JOTs.
+
 You might find using the JAVA_TOOL_OPTIONS environment variable useful.
 Like "export JAVA_TOOL_OPTIONS="-javaagent:jot.jar=ciphers.jot". Then
 no matter how Java eventually gets launched, it will use JOT.

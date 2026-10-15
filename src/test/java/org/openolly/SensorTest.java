@@ -31,6 +31,15 @@ class SensorTest {
 		Assertions.assertEquals("[]", SafeString.format(ret, false));
 	}
 
+	// a stack that really is inside s.Class.method, as the scope counter is validated against the stack
+	private static StackTraceElement[] stackInsideScope() {
+		StackTraceElement[] real = new Exception().getStackTrace();
+		StackTraceElement[] stack = new StackTraceElement[real.length + 1];
+		stack[0] = new StackTraceElement("s.Class", "method", "Class.java", 1);
+		System.arraycopy(real, 0, stack, 1, real.length);
+		return stack;
+	}
+
 	@Test
 	void testInScope() {
 		Sensor s = new Sensor().method("a.Class.method").capture("#P0").scope("s.Class.method");
@@ -38,7 +47,7 @@ class SensorTest {
 		s.getScopes().iterator().next().enterScope();
 
 		Object ret = s.execute("test", "a.b.Class.Method", "foo", new String[] { "bar" }, "zoo",
-				new Exception().getStackTrace());
+				stackInsideScope());
 		Assertions.assertEquals("[bar]", SafeString.format(ret, false));
 	}
 
@@ -58,7 +67,7 @@ class SensorTest {
 		s.getScopes().iterator().next().enterScope();
 
 		Object ret = s.execute("test", "a.b.Class.Method", "foo", new String[] { "bar" }, "zoo",
-				new Exception().getStackTrace());
+				stackInsideScope());
 		Assertions.assertEquals("[]", SafeString.format(ret, false));
 	}
 

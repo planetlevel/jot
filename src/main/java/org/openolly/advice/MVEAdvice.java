@@ -26,6 +26,8 @@ public class MVEAdvice {
 			}
 		} catch (Throwable t) {
 			if ( t instanceof SensorException ) {
+				// exit advice doesn't run when enter advice throws, so release the method scope here
+				sensor.leaveMethodScope(methodIndex);
 				throw t;
 			} else {
 				//t.printStackTrace();

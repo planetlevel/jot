@@ -1,0 +1,8 @@
+---
+sensors:
+- name: "guard-method"
+  methods:
+  - "ScopeLeak$Danger.call"
+  scopes:
+  - "ScopeLeak$Vuln.method"
+  exception: "blocked in method scope"
