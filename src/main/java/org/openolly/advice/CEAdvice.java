@@ -21,8 +21,7 @@ public class CEAdvice {
 			sensor.enterMethodScope(methodIndex);
 			if (sensor.inOutermostMethodScope(methodIndex)) {
 				String sig = className + "." + methodName + "()";
-				StackTraceElement[] trace = Thread.currentThread().getStackTrace();
-				sensor.execute("CEAdvice", sig, null, args, null, trace);
+				sensor.execute("CEAdvice", sig, null, args, null);
 			}
 		} catch (Throwable t) {
 			if ( t instanceof SensorException ) {

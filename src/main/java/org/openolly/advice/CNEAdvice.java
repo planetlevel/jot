@@ -24,8 +24,7 @@ public class CNEAdvice {
 		try {
 			if (sensor.inOutermostMethodScope(methodIndex)) {
 				String sig = className + "." + methodName + "()";
-				StackTraceElement[] trace = Thread.currentThread().getStackTrace();
-				sensor.execute("CNEAdvice", sig, obj, args, null, trace);
+				sensor.execute("CNEAdvice", sig, obj, args, null);
 			}
 		} finally {
 			sensor.leaveMethodScope(methodIndex);

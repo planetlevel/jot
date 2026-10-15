@@ -144,5 +144,20 @@ class SensorTest {
         Assertions.assertEquals( "[]" , SafeString.format(ret, false));		
 	}
 	
-}
+	@Test
+	void testCurrentStackLooksLikeAdviceCaptured() {
+		StackTraceElement[] stack = Sensor.currentStack();
+		Assertions.assertEquals("getStackTrace", stack[0].getMethodName());
+		// JOT's own frames are gone, so [1] is the method the advice would be inlined in
+		Assertions.assertEquals("testCurrentStackLooksLikeAdviceCaptured", stack[1].getMethodName());
+		Assertions.assertEquals(SensorTest.class.getName(), stack[1].getClassName());
+	}
 
+	@Test
+	void testExecuteWithoutStackStillCapturesAndUsesStack() {
+		Sensor s = new Sensor().method("a.Class.method").capture("#P0");
+		Object ret = s.execute("test", "a.b.Class.Method", "foo", new String[] { "bar" }, "zoo");
+		Assertions.assertEquals("[bar]", SafeString.format(ret, false));
+	}
+
+}

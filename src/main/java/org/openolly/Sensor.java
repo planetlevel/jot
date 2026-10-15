@@ -90,6 +90,29 @@ public class Sensor {
 		sensors.clear();
 	}
 
+	/**
+	 * Walking the stack is expensive, so it is only done once we know the sensor will really run,
+	 * not for every call to a method that happens to have a sensor on it.
+	 */
+	public List<Object> execute(String advice, String caller, Object obj, Object[] params, Object ret) {
+		return execute( advice, caller, obj, params, ret, null );
+	}
+
+	/**
+	 * The current stack with JOT's own frames removed, so it looks like it was captured by advice
+	 * inlined in the instrumented method. [0] is Thread.getStackTrace, [1] is the instrumented method.
+	 */
+	static StackTraceElement[] currentStack() {
+		StackTraceElement[] full = Thread.currentThread().getStackTrace();
+		String self = Sensor.class.getName();
+		int skip = 1;
+		while ( skip < full.length && full[skip].getClassName().equals( self ) ) skip++;
+		StackTraceElement[] stack = new StackTraceElement[full.length - skip + 1];
+		stack[0] = full[0];
+		System.arraycopy( full, skip, stack, 1, full.length - skip );
+		return stack;
+	}
+
 	public List<Object> execute(String advice, String caller, Object obj, Object[] params, Object ret, StackTraceElement[] stack) {			
 
 		// protect against calling execute from itself
@@ -114,6 +137,8 @@ public class Sensor {
 				if ( !inScope ) return results;
 			}
 	
+			if ( stack == null && !captures.isEmpty() ) stack = currentStack();
+
 			for (Expression capture : captures) {
 				try {
 					Object o = capture.execute(obj, params, ret, caller, stack);

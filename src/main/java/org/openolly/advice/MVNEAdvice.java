@@ -21,8 +21,7 @@ public class MVNEAdvice {
 			sensor.enterMethodScope(methodIndex);
 			if (sensor.inOutermostMethodScope(methodIndex)) {
 				String sig = className + "." + methodName + "()";
-				StackTraceElement[] trace = Thread.currentThread().getStackTrace();
-				sensor.execute("MVNEAdvice", sig, obj, args, null, trace);
+				sensor.execute("MVNEAdvice", sig, obj, args, null);
 			}
 		} catch (Throwable t) {
 			//t.printStackTrace();

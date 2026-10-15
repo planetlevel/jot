@@ -21,8 +21,7 @@ public class MVEAdvice {
 			sensor.enterMethodScope(methodIndex);
 			if (sensor.inOutermostMethodScope(methodIndex)) {
 				String sig = className + "." + methodName + "()";
-				StackTraceElement[] trace = Thread.currentThread().getStackTrace();
-				sensor.execute("MVEAdvice", sig, obj, args, null, trace);
+				sensor.execute("MVEAdvice", sig, obj, args, null);
 			}
 		} catch (Throwable t) {
 			if ( t instanceof SensorException ) {

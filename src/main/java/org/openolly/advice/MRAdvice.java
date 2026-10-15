@@ -27,8 +27,7 @@ public class MRAdvice {
 		try {
 			if (sensor.inOutermostMethodScope(methodIndex)) {
 				String sig = className + "." + methodName + "()";
-				StackTraceElement[] trace = Thread.currentThread().getStackTrace();
-				sensor.execute("MRAdvice", sig, obj, args, ret, trace);
+				sensor.execute("MRAdvice", sig, obj, args, ret);
 			}
 		} catch( Throwable t ) {
 			if ( !(t instanceof SensorException) ) {
