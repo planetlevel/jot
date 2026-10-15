@@ -43,19 +43,6 @@ public class MethodLocator {
 		scope.leaveScope();
 	}
 	
-	/**
-	 * Constructors can't use exit advice that runs on exceptions, so a constructor scope
-	 * that throws is never left and its counter stays incremented. If the counter is
-	 * non-zero but the scope's method isn't on the given stack, reset the counter.
-	 */
-	public void healIfLeaked( StackTraceElement[] stack ) {
-		if ( stack == null || scope.value() == 0 ) return;
-		for ( StackTraceElement frame : stack ) {
-			if ( frame.getMethodName().equals( method ) ) return;
-		}
-		scope.reset();
-	}
-
 	public boolean inScope() {
 		if ( negative ) {
 			return !scope.inScope();

@@ -22,7 +22,7 @@ import org.openolly.advice.MRAdvice;
 import org.openolly.advice.MVEAdvice;
 import org.openolly.advice.MVNEAdvice;
 import org.openolly.advice.ScopeAdvice;
-import org.openolly.advice.ScopeCtorAdvice;
+import org.openolly.advice.ScopeCtorWrapper;
 import org.openolly.advice.SensorException;
 import org.openolly.advice.scope.BinaryScope;
 import org.openolly.reporting.Event;
@@ -32,8 +32,7 @@ import com.google.common.flogger.FluentLogger;
 
 import net.bytebuddy.agent.builder.AgentBuilder;
 import net.bytebuddy.asm.Advice;
-import net.bytebuddy.description.method.MethodDescription;
-import net.bytebuddy.matcher.ElementMatcher;
+import net.bytebuddy.asm.AsmVisitorWrapper;
 
 public class Sensor {
 
@@ -110,7 +109,6 @@ public class Sensor {
 			if ( !scopes.isEmpty() ) {
 				boolean inScope = false;
 				for ( MethodLocator scope : scopes ) {
-					scope.healIfLeaked( stack );
 					inScope |= ( scope.inScope() );
 				}
 				if ( !inScope ) return results;
@@ -568,19 +566,24 @@ public class Sensor {
 			//System.err.println( "SCOPERIZING " + scope.className() + " -> " + scope.methodName() );
 			logger.atWarning().log("SCOPERIZING " + scope.className() + " -> " + scope.methodName() );
 			try {				
-				// constructors can't use onThrowable exit advice, so they get their own advice
-				// (see MethodLocator.healIfLeaked)
-				final Class<?> scopeAdvice = scope.isConstructor() ? ScopeCtorAdvice.class : ScopeAdvice.class;
-				final ElementMatcher.Junction<MethodDescription> scopeMethods = scope.isConstructor()
-						? isConstructor() : named(scope.methodName()).and(not(isConstructor()));
-				builder = builder
-				.type(hasGenericSuperType(failSafe(named(scope.className()))))
-				.transform((b, td, cl, m, pd) -> b.visit( Advice
-					.withCustomMapping()
-					.bind(SensorIndexValue.class, this.getIndex() )
-					.bind(MethodIndexValue.class, scope.getIndex() )
-					.to(scopeAdvice)
-					.on(scopeMethods) ) );
+				// constructors can't use Advice with onThrowable, so they get an ASM wrapper
+				// that scopes the constructor body (see ScopeCtorWrapper)
+				if ( scope.isConstructor() ) {
+					builder = builder
+					.type(hasGenericSuperType(failSafe(named(scope.className()))))
+					.transform((b, td, cl, m, pd) -> b.visit( new AsmVisitorWrapper.ForDeclaredMethods()
+						.constructor(isConstructor(), new ScopeCtorWrapper(this.getIndex(), scope.getIndex()))));
+				}
+				else {
+					builder = builder
+					.type(hasGenericSuperType(failSafe(named(scope.className()))))
+					.transform((b, td, cl, m, pd) -> b.visit( Advice
+						.withCustomMapping()
+						.bind(SensorIndexValue.class, this.getIndex() )
+						.bind(MethodIndexValue.class, scope.getIndex() )
+						.to(ScopeAdvice.class)
+						.on(named(scope.methodName()).and(not(isConstructor()))) ) );
+				}
 			
 			} catch (Exception e) {
 				//System.err.println("WARNING: Error instrumenting: " + e.getMessage());

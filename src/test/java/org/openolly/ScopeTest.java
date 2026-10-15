@@ -36,45 +36,4 @@ public class ScopeTest {
         Assertions.assertEquals( 5, x );
 	}
 
-	private static StackTraceElement frame(String method) {
-		return new StackTraceElement("com.acme.Vuln", method, "Vuln.java", 1);
-	}
-
-	@Test
-	public void testLeakedScopeIsHealedWhenScopeMethodNotOnStack() {
-		MethodLocator scope = new MethodLocator("com.acme.Vuln.lookup");
-		scope.enterScope(); // never left, as when a constructor throws
-		scope.healIfLeaked( new StackTraceElement[] { frame("main") } );
-		Assertions.assertFalse( scope.inScope() );
-		Assertions.assertEquals( 0, scope.scopeValue() );
-	}
-
-	@Test
-	public void testScopeKeptWhenScopeMethodOnStack() {
-		MethodLocator scope = new MethodLocator("com.acme.Vuln.lookup");
-		scope.enterScope();
-		scope.healIfLeaked( new StackTraceElement[] { frame("exec"), frame("lookup"), frame("main") } );
-		Assertions.assertTrue( scope.inScope() );
-	}
-
-	@Test
-	public void testConstructorScopeHealedOnlyByConstructorFrame() {
-		MethodLocator scope = new MethodLocator("com.acme.Vuln.<init>");
-		scope.enterScope();
-		scope.healIfLeaked( new StackTraceElement[] { frame("exec"), frame("<init>"), frame("main") } );
-		Assertions.assertTrue( scope.inScope() );
-		scope.healIfLeaked( new StackTraceElement[] { frame("exec"), frame("lookup"), frame("main") } );
-		Assertions.assertFalse( scope.inScope() );
-	}
-
-	@Test
-	public void testHealIgnoresIdleScopeAndNullStack() {
-		MethodLocator scope = new MethodLocator("com.acme.Vuln.lookup");
-		scope.healIfLeaked( new StackTraceElement[] { frame("main") } );
-		Assertions.assertEquals( 0, scope.scopeValue() );
-		scope.enterScope();
-		scope.healIfLeaked( null );
-		Assertions.assertTrue( scope.inScope() );
-	}
-
 }
