@@ -99,6 +99,16 @@ class App:
     def sql(self, sql):
         return store.run_query(self.db_path, sql)
 
+    def empty_hint(self):
+        """Said when a question matched nothing, so it is clear whether the data is missing or the question is."""
+        seen = store.run_query(self.db_path, "SELECT sensor, COUNT(*) FROM events GROUP BY sensor ORDER BY 2 DESC",
+                               limit=20)["rows"]
+        if not seen:
+            return "No events have been loaded yet. Check that the application is running with JOT and that --log points at its event log."
+        return ("No events matched. Sensors that have recorded events so far are %s. "
+                "A sensor only records events when the code it watches runs." %
+                ", ".join("%s (%d)" % (name, n) for name, n in seen))
+
     def ask(self, question, history=()):
         """Returns {"title", "sql", "chart", "explanation"} plus the query result, or no result when the
         question can't be answered from the events."""
@@ -115,6 +125,8 @@ class App:
                 return answer
             try:
                 answer.update(self.sql(answer["sql"]))
+                if not answer["rows"]:
+                    answer["hint"] = self.empty_hint()
                 return answer
             except store.QueryError as e:
                 error = "%s\nSQL: %s" % (e, answer["sql"])

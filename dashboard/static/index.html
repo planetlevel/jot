@@ -230,8 +230,8 @@ function cell(col, v) {
   return td;
 }
 
-function tableView(r) {
-  if (!r.rows.length) return el("div", { class: "empty", text: "No matching events" });
+function tableView(r, hint) {
+  if (!r.rows.length) return el("div", { class: "empty", text: hint || "No matching events" });
   const head = el("tr", {}, ...r.columns.map((c) => el("th", { text: c })));
   const body = r.rows.map((row) => el("tr", {}, ...row.map((v, i) => cell(r.columns[i], v))));
   return el("div", { class: "tablewrap" }, el("table", {}, el("thead", {}, head), el("tbody", {}, ...body)));
@@ -286,7 +286,7 @@ function show(entry, r) {
   current = entry;
   let chart = entry.chart;
   if (chart !== "table" && !chartable(r)) chart = "table";
-  const view = chart === "bar" ? barView(r) : chart === "line" ? lineView(r) : tableView(r);
+  const view = !r.rows.length ? tableView(r, r.hint) : chart === "bar" ? barView(r) : chart === "line" ? lineView(r) : tableView(r);
 
   const sqlBox = el("textarea", { spellcheck: "false", "aria-label": "SQL" });
   sqlBox.value = entry.sql;

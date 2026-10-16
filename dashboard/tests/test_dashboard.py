@@ -210,6 +210,17 @@ class AskTests(unittest.TestCase):
             app.ask("x")
         self.assertEqual(3, len(self.calls))
 
+    def test_an_empty_result_says_which_sensors_do_have_events(self):
+        r = self.app(self.answer("SELECT capture FROM events WHERE sensor = 'get-routes-nothing'")).ask("routes?")
+        self.assertEqual([], r["rows"])
+        self.assertIn("get-ciphers (2)", r["hint"])
+        self.assertIn("get-routes (1)", r["hint"])
+
+    def test_an_empty_result_with_no_events_at_all_points_at_the_log(self):
+        env = Env()
+        app = server.App(env.db, env.ingestor, lambda *a: self.answer("SELECT 1 WHERE 0"))
+        self.assertIn("No events have been loaded", app.ask("anything")["hint"])
+
     def test_no_sql_means_the_question_could_not_be_answered(self):
         r = self.app({"title": "No", "sql": "", "chart": "table", "explanation": "no such data"}).ask("weather?")
         self.assertEqual([], r["rows"])
