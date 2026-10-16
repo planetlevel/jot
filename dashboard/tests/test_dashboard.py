@@ -701,6 +701,119 @@ class JotsViewTests(unittest.TestCase):
         self.assertEqual("monitor", modes["block-exec"])
 
 
+class StartTimeTests(unittest.TestCase):
+    """Clearing the dashboard sets a start time. Nothing is deleted."""
+
+    def setUp(self):
+        self.env = Env()
+        self.app = server.App(self.env.db, self.env.ingestor)
+        self.env.write(*[event(i, ts=1000 + i) for i in range(5)])       # ids 0 to 4 at ts 1000 to 1004
+        self.env.ingestor.poll()
+
+    def visible(self):
+        return store.run_query(self.env.db, "SELECT COUNT(*) FROM events")["rows"][0][0]
+
+    def test_everything_is_visible_until_a_start_time_is_set(self):
+        status = self.app.status()
+        self.assertEqual((5, None, 0), (status["events"], status["since"], status["hidden"]))
+
+    def test_a_start_time_hides_older_events_and_counts_them(self):
+        status = self.app.set_since(1003)
+        self.assertEqual((2, 1003, 3), (status["events"], status["since"], status["hidden"]))
+        self.assertEqual(2, self.visible())
+
+    def test_events_that_arrive_after_the_start_time_show_up(self):
+        self.app.set_since(1003)
+        self.env.write(event(10, ts=5000), event(11, ts=5001))
+        self.env.ingestor.poll()
+        self.assertEqual(4, self.visible())
+
+    def test_events_with_an_older_time_that_arrive_late_stay_hidden(self):
+        self.app.set_since(1003)
+        self.env.write(event(12, ts=900))
+        self.env.ingestor.poll()
+        self.assertEqual(2, self.visible())
+
+    def test_show_all_brings_everything_back(self):
+        self.app.set_since(1003)
+        status = self.app.set_since(None)
+        self.assertEqual((5, None, 0), (status["events"], status["since"], status["hidden"]))
+
+    def test_now_hides_everything_recorded_so_far(self):
+        before = int(time.time() * 1000)
+        status = self.app.set_since("now")
+        self.assertGreaterEqual(status["since"], before)
+        self.assertEqual((0, 5), (status["events"], status["hidden"]))
+
+    def test_the_start_time_survives_a_restart(self):
+        self.app.set_since(1003)
+        again = server.App(self.env.db, store.Ingestor(self.env.db, [self.env.log]))
+        self.assertEqual(1003, again.status()["since"])
+        self.assertEqual(2, again.status()["events"])
+
+    def test_every_query_and_view_honours_it_including_the_ones_the_model_writes(self):
+        self.app.set_since(1003)
+        for sql in ("SELECT COUNT(*) FROM events", "SELECT COUNT(*) FROM events WHERE sensor = 'get-ciphers'",
+                    "SELECT COUNT(DISTINCT trace) FROM events"):
+            self.assertLessEqual(self.app.sql(sql)["rows"][0][0], 2, sql)
+
+    def test_the_model_is_told_about_events_not_the_raw_table(self):
+        schema = store.schema_for_model()
+        self.assertIn("CREATE TABLE events (", schema)
+        self.assertNotIn("events_raw", schema)
+
+    def test_a_database_from_before_start_times_is_migrated_and_keeps_its_events(self):
+        import sqlite3
+        path = os.path.join(tempfile.mkdtemp(), "old.db")
+        old = sqlite3.connect(path)
+        old.execute("CREATE TABLE events (pk INTEGER PRIMARY KEY, time TEXT, ts INTEGER, run TEXT, host TEXT, pid INTEGER, "
+                    "app TEXT, id INTEGER, trace INTEGER, thread TEXT, thread_id INTEGER, sensor TEXT, action TEXT, "
+                    "capture TEXT, message TEXT, method TEXT, method_name TEXT, call_site TEXT, call_site_name TEXT, "
+                    "stack TEXT, UNIQUE (run, id))")
+        old.execute("INSERT INTO events (ts, run, id, sensor, action, capture) VALUES (7, 'r', 1, 's', 'observed', 'x')")
+        old.commit(); old.close()
+        migrated = store.Ingestor(path, [os.path.join(tempfile.mkdtemp(), "none.jsonl")])
+        self.assertEqual(1, store.run_query(path, "SELECT COUNT(*) FROM events")["rows"][0][0])
+        self.assertEqual(1, store.run_query(path, "SELECT COUNT(*) FROM events_raw")["rows"][0][0])
+        store.set_since(migrated.db, 100)
+        self.assertEqual(0, store.run_query(path, "SELECT COUNT(*) FROM events")["rows"][0][0])
+
+    def test_an_empty_view_after_clearing_says_so_instead_of_saying_nothing_was_loaded(self):
+        self.app.set_since("now")
+        hint = self.app.sql("SELECT * FROM events")["hint"]
+        self.assertIn("since the dashboard was cleared", hint)
+        self.assertIn("5 events", hint)
+        self.assertNotIn("No events have been loaded", hint)
+
+    def test_parse_since(self):
+        self.assertEqual("now", server.parse_since(" NOW "))
+        self.assertEqual(1792111134000, server.parse_since("1792111134000"))
+        self.assertIsInstance(server.parse_since("2026-10-16T09:30"), int)
+        with self.assertRaises(ValueError):
+            server.parse_since("yesterday")
+
+    def test_the_start_time_can_be_set_over_http(self):
+        httpd = server.make_server(self.app, "127.0.0.1", 0)
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+
+        def post(body, headers=None):
+            h = {"Host": "127.0.0.1:%d" % port, "Content-Type": "application/json", "X-JOT-Dashboard": "1"}
+            h.update(headers or {})
+            req = urllib.request.Request("http://127.0.0.1:%d/api/since" % port, data=json.dumps(body).encode(), method="POST", headers=h)
+            with urllib.request.urlopen(req) as r:
+                return json.load(r)
+        self.assertEqual(2, post({"since": 1003})["events"])
+        self.assertEqual(5, post({"since": None})["events"])
+        self.assertEqual(0, post({"since": "now"})["events"])
+        with self.assertRaises(urllib.error.HTTPError) as c:
+            urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:%d/api/since" % port, data=b'{"since":null}', method="POST",
+                                   headers={"Host": "127.0.0.1:%d" % port, "Content-Type": "text/plain"}))
+        self.assertEqual(403, c.exception.code)
+
+
 class ControlStoreTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
@@ -943,6 +1056,9 @@ class HttpTests(unittest.TestCase):
         self.assertIn(b"#tokenBox input { width: 240px;", page)
         # tables must not scroll inside the page, an earlier height limit hid the last rows
         self.assertNotIn(b"max-height: 560px", page)
+        # the Events page can be cleared, which sets a start time
+        self.assertIn(b'id="clearBtn"', page)
+        self.assertIn(b'id="showAllBtn"', page)
         # recent questions live in the top menu, not on the page
         self.assertIn(b'id="recentMenu"', page)
         self.assertNotIn(b'id="history"', page)

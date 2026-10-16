@@ -11,6 +11,8 @@ import json
 import os
 import sqlite3
 import sys
+import time
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -146,6 +148,17 @@ class App:
         return {"files": [{"name": k, **v} for k, v in files.items()], "sensors": sensors, "reports": reports,
                 "issues": issues}
 
+    def set_since(self, value):
+        """Show only events from this time on. "now" starts from this moment, None shows everything again. Nothing is
+        deleted. The events stay in the log and in the database."""
+        if value == "now":
+            value = int(time.time() * 1000)
+        elif value is not None:
+            value = int(value)
+        with self.ingestor.lock:
+            store.set_since(self.ingestor.db, value)
+        return self.status()
+
     def rule_names(self):
         """The sensors that are rules, meaning they have an exception. Only these can be switched."""
         return [r["name"] for r in self.rules_declared()]
@@ -210,6 +223,9 @@ class App:
                    MAX(pk) AS last_pk FROM events""")
         keys = r["columns"]
         status = dict(zip(keys, r["rows"][0]))
+        status["since"] = store.get_since(self.db_path)
+        raw = store.run_query(self.db_path, "SELECT COUNT(*) FROM events_raw")["rows"][0][0]
+        status["hidden"] = raw - status["events"]
         status["llm"] = llm.configured()
         status["model"] = llm.model() if llm.configured() else None
         status["known_sensors"] = len(self.sensors())
@@ -237,6 +253,11 @@ class App:
         seen = store.run_query(self.db_path, "SELECT sensor, COUNT(*) FROM events GROUP BY sensor ORDER BY 2 DESC",
                                limit=20)["rows"]
         if not seen:
+            since = store.get_since(self.db_path)
+            raw = store.run_query(self.db_path, "SELECT COUNT(*) FROM events_raw")["rows"][0][0]
+            if since and raw:
+                return ("Nothing has been recorded since the dashboard was cleared at %s. Show all brings back the earlier %d events."
+                        % (time.strftime("%H:%M:%S", time.localtime(since / 1000)), raw))
             return "No events have been loaded yet. Check that the application is running with JOT and that --log points at its event log."
         return ("No events matched. Sensors that have recorded events so far are %s. "
                 "A sensor only records events when the code it watches runs." %
@@ -336,6 +357,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.ask(body.get("question"), body.get("history") or []))
             if url.path == "/api/sql":
                 return self._send(200, self.app.sql(body.get("sql"), body.get("limit")))
+            if url.path == "/api/since":
+                return self._send(200, self.app.set_since(body.get("since")))
             if url.path == "/api/control":
                 token = self.headers.get("X-JOT-Admin")
                 return self._send(200, self.app.change_control(token, body.get("master"), body.get("rules")))
@@ -354,6 +377,16 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, {"error": "not found"})
 
 
+def parse_since(text):
+    """A start time given on the command line, now, epoch milliseconds, or a date and time like 2026-10-16T09:30."""
+    text = text.strip()
+    if text.lower() == "now":
+        return "now"
+    if text.isdigit():
+        return int(text)
+    return int(datetime.fromisoformat(text).timestamp() * 1000)
+
+
 def make_server(app, host, port):
     handler = type("BoundHandler", (Handler,), {
         "app": app, "port": port, "enforce_host": host in ("127.0.0.1", "localhost", "::1")})
@@ -369,6 +402,8 @@ def main(argv=None):
     p.add_argument("--host", default="127.0.0.1", help="address to listen on. There is no login, "
                    "so only change this on a network you trust")
     p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--since", help="show only events from this time on, now, or a date and time like 2026-10-16T09:30. "
+                   "Nothing is deleted, the Clear and Show all buttons on the Events page change it later")
     p.add_argument("--control", help="control file that agents poll, to switch rules between monitor and block. "
                    "Start each agent with -Djot.control=<this path>. Changes need JOT_DASHBOARD_ADMIN_TOKEN")
     p.add_argument("--env", default=os.path.join(HERE, ".env"),
@@ -387,6 +422,8 @@ def main(argv=None):
     if args.control:
         control = control_module.ControlStore(args.control, os.environ.get("JOT_DASHBOARD_ADMIN_TOKEN"))
     app = App(args.db, ingestor, control=control)
+    if args.since:
+        app.set_since(parse_since(args.since))
 
     server = make_server(app, args.host, args.port)
     print("JOT dashboard on http://%s:%d" % (args.host, args.port))

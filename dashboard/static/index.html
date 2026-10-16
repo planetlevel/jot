@@ -85,6 +85,8 @@
   .stats { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--muted); font-size: 13px; }
   .stats b { color: var(--text); }
   .stats .blocked b { color: var(--blocked); }
+  .toolbar-right { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+  button.small { padding: 4px 12px; font-size: 13px; }
   label.refresh { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
   .result h2 { margin: 0 0 2px; font-size: 17px; }
   .explain { color: var(--muted); margin: 0 0 12px; }
@@ -194,9 +196,13 @@
   </div>
   <div class="toolbar">
     <div class="stats" id="stats"></div>
-    <label class="refresh" title="Run the current view again every 3 seconds, so new events show up on their own">
-      <input type="checkbox" id="live"> Refresh every 3 seconds
-    </label>
+    <div class="toolbar-right">
+      <button type="button" class="small" id="clearBtn" title="Hide everything recorded so far, so the page only shows what happens from now on. The events stay in the log, and Show all brings them back.">Clear</button>
+      <button type="button" class="small" id="showAllBtn" title="Show everything again, including what was hidden by Clear" hidden>Show all</button>
+      <label class="refresh" title="Run the current view again every 3 seconds, so new events show up on their own">
+        <input type="checkbox" id="live"> Refresh every 3 seconds
+      </label>
+    </div>
   </div>
   <div id="results" style="margin-top:10px"></div>
 </main>
@@ -411,10 +417,24 @@ async function refreshStatus() {
     el("span", {}, el("b", { text: s.events.toLocaleString() }), " events"),
     el("span", { class: s.blocked ? "blocked" : "" }, el("b", { text: s.blocked.toLocaleString() }), " blocked"),
     el("span", {}, el("b", { text: s.monitored.toLocaleString() }), " reported only"),
-    el("span", { text: "last event " + ago(s.last_ts) }));
+    el("span", { text: "last event " + ago(s.last_ts) }),
+    s.since ? el("span", { title: "Cleared, Show all brings the earlier events back",
+      text: "showing since " + clock(s.since) + ", " + s.hidden.toLocaleString() + " earlier hidden" }) : null);
+  $("showAllBtn").hidden = !s.since;
   $("notice").replaceChildren(...(s.llm ? [] : [el("div", { class: "notice",
     text: "Natural language is off because ANTHROPIC_API_KEY isn't set. The views and the SQL box still work." })]));
 }
+
+// ---- clearing. This sets a start time, nothing is deleted.
+async function setSince(value) {
+  try {
+    await api("/api/since", { since: value });
+    await refreshStatus();
+    if (current) await runSql(current.sql, current);
+  } catch (e) { showError(e.message); }
+}
+$("clearBtn").addEventListener("click", () => setSince("now"));
+$("showAllBtn").addEventListener("click", () => setSince(null));
 
 // ---- rendering results
 function isNumber(v) { return typeof v === "number" && isFinite(v); }

@@ -26,6 +26,7 @@ Without a key the dashboard still works. The preset views and the SQL box don't 
 | `--log` | JSON event log to follow. May be a glob such as `'logs/*.jsonl'`, and may be given more than once. Default `jot-events.jsonl` |
 | `--jot` | A `.jot` file or a directory of them. The sensor names and descriptions help the model understand your questions. May be given more than once |
 | `--db` | SQLite file that holds the events. Default `jot-dashboard.db`. Delete it to start fresh |
+| `--since` | Show only events from this time on. `now`, or a date and time like `2026-10-16T09:30`. Nothing is deleted |
 | `--control` | Control file agents poll, to switch rules between monitor and block. See below |
 | `--port`, `--host` | Where to listen. Default `127.0.0.1:8765`. See the note on access below |
 
@@ -45,6 +46,18 @@ Turn it off and the view stays put while you look at it.
 
 Events from several applications can share one dashboard. Each event records its host, process and
 application, and events with the same `run` and `trace` came from the same request.
+
+## Clearing
+
+The **Clear** button on the Events page hides everything recorded so far, so the views, charts, reports, rule counts
+and questions only reflect what happens from that moment on. **Show all** brings it back. The stats line says when
+you cleared and how many earlier events are hidden.
+
+Nothing is deleted. Clearing sets a start time that is kept in the database, so it survives a restart and applies to
+everyone looking at this dashboard. Internally the table of events is called `events_raw`, and `events`, which every query
+reads, is a view over it that applies the start time. An older database is converted the first time the dashboard
+starts on it, and keeps all its events. Start with `--since now` to begin clear, or delete the database file to start
+completely fresh, after which it is rebuilt from the whole log.
 
 ## What the model sees
 

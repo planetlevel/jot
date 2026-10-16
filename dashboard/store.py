@@ -11,7 +11,7 @@ import time
 import yaml
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS events (
+CREATE TABLE IF NOT EXISTS events_raw (
   pk INTEGER PRIMARY KEY,
   time TEXT,            -- ISO 8601, UTC
   ts INTEGER,           -- epoch milliseconds
@@ -34,9 +34,19 @@ CREATE TABLE IF NOT EXISTS events (
   stack TEXT,           -- JSON array of stack frames, starting at the instrumented method
   UNIQUE (run, id)
 );
-CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
-CREATE INDEX IF NOT EXISTS events_sensor ON events (sensor, action);
-CREATE INDEX IF NOT EXISTS events_trace ON events (run, trace);
+CREATE INDEX IF NOT EXISTS events_ts ON events_raw (ts);
+CREATE INDEX IF NOT EXISTS events_sensor ON events_raw (sensor, action);
+CREATE INDEX IF NOT EXISTS events_trace ON events_raw (run, trace);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+
+-- What every query and view reads. Everything recorded since the start time, or all of it if none is set.
+-- The start time is how the dashboard is cleared, nothing is deleted and Show all brings it back.
+CREATE VIEW IF NOT EXISTS events AS
+  SELECT * FROM events_raw WHERE ts >= COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'since'), 0);
 
 CREATE TABLE IF NOT EXISTS sensors (
   name TEXT PRIMARY KEY,
@@ -103,6 +113,10 @@ def connect(path):
 
 
 def init(db):
+    # a database from before the start time existed has the events in a table called events, which becomes the raw one
+    old = db.execute("SELECT type FROM sqlite_master WHERE name = 'events'").fetchone()
+    if old and old[0] == "table":
+        db.execute("ALTER TABLE events RENAME TO events_raw")
     # these two are filled again from the .jot files at every start, so an older layout can simply be replaced
     db.execute("DROP TABLE IF EXISTS sensors")
     db.execute("DROP TABLE IF EXISTS reports")
@@ -121,7 +135,7 @@ def row_from_event(e):
     return tuple(values[k] for k in EVENT_COLUMNS)
 
 
-INSERT = "INSERT OR IGNORE INTO events (%s) VALUES (%s)" % (",".join(EVENT_COLUMNS), ",".join("?" * len(EVENT_COLUMNS)))
+INSERT = "INSERT OR IGNORE INTO events_raw (%s) VALUES (%s)" % (",".join(EVENT_COLUMNS), ",".join("?" * len(EVENT_COLUMNS)))
 
 
 class Ingestor:
@@ -376,9 +390,31 @@ def run_query(db_path, sql, limit=1000, timeout=5.0):
 
 
 def schema_for_model():
-    """The tables the model may query, as the DDL with its comments."""
+    """The tables the model may query, as the DDL with its comments. The events are presented under the name the model
+    queries, which is the view that honours the start time."""
+    names = {"events_raw": "events", "sensors": "sensors"}
     out = []
     for block in SCHEMA.split(";\n"):
-        if block.strip().startswith("CREATE TABLE IF NOT EXISTS") and block.split()[5] in MODEL_TABLES:
-            out.append(block.strip().replace(" IF NOT EXISTS", "") + ";")
+        if block.strip().startswith("CREATE TABLE IF NOT EXISTS") and block.split()[5] in names:
+            ddl = block.strip().replace(" IF NOT EXISTS", "").replace("events_raw", "events")
+            out.append(ddl + ";")
     return "\n\n".join(out)
+
+
+def get_since(db_path):
+    """The start time in epoch milliseconds, or None when everything is shown."""
+    db = sqlite3.connect(db_path)
+    try:
+        row = db.execute("SELECT value FROM settings WHERE key = 'since'").fetchone()
+        return int(row[0]) if row else None
+    finally:
+        db.close()
+
+
+def set_since(db, value):
+    """Show only events from this time on, as epoch milliseconds. None shows everything again."""
+    if value is None:
+        db.execute("DELETE FROM settings WHERE key = 'since'")
+    else:
+        db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('since', ?)", (str(int(value)),))
+    db.commit()
