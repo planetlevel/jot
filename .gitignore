@@ -36,3 +36,7 @@ hs_err_pid*
 # Demo output
 demo/**/target
 demo/**/pwned.txt
+dashboard/*.db
+dashboard/*.db-*
+dashboard/**/__pycache__
+jot-events.jsonl

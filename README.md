@@ -104,6 +104,10 @@ about the event.
 | `call_site` | The code that called it |
 | `stack` | The stack from the instrumented method up to `jot.output.stack` frames |
 
+## Dashboard
+The `dashboard` directory has a web app that loads the `json` event log into SQLite and answers questions
+about it in plain English, as live or historical tables and charts. See [dashboard/README.md](dashboard/README.md).
+
 ## Advanced Options
 Set `-Djot.verbose=true` to report instrumentation errors. By default JOT suppresses them so that
 a problem in a JOT can never break your application, which also means a rule that fails to apply

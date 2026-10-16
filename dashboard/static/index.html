@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JOT Dashboard</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #667085; --line: #e3e6eb;
+    --accent: #2457d6; --accent-text: #ffffff; --bar: #2457d6; --blocked: #c62828; --blocked-bg: #fdecec;
+    --monitored: #a05a00; --monitored-bg: #fff4e0; --observed: #2e6b3d; --observed-bg: #e8f4ea;
+    --code: #f0f2f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151a; --panel: #1b2027; --text: #e6e9ee; --muted: #98a2b3; --line: #2b323c;
+      --accent: #6b95ff; --accent-text: #0d1117; --bar: #6b95ff; --blocked: #ff8a80; --blocked-bg: #3a1f1f;
+      --monitored: #ffc078; --monitored-bg: #3a2e1a; --observed: #7ed08f; --observed-bg: #1d3023; --code: #232a33;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151a; --panel: #1b2027; --text: #e6e9ee; --muted: #98a2b3; --line: #2b323c;
+    --accent: #6b95ff; --accent-text: #0d1117; --bar: #6b95ff; --blocked: #ff8a80; --blocked-bg: #3a1f1f;
+    --monitored: #ffc078; --monitored-bg: #3a2e1a; --observed: #7ed08f; --observed-bg: #1d3023; --code: #232a33;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 14px 16px;
+           background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: 0.5px; }
+  .stats { display: flex; flex-wrap: wrap; gap: 8px 18px; flex: 1; color: var(--muted); font-size: 13px; }
+  .stats b { color: var(--text); font-size: 15px; }
+  .stats .blocked b { color: var(--blocked); }
+  label.live { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); display: inline-block; }
+  .live-on .dot { background: var(--observed); box-shadow: 0 0 0 3px var(--observed-bg); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; padding: 16px; max-width: 1500px; margin: 0 auto; }
+  @media (max-width: 960px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card + .card { margin-top: 16px; }
+  form.ask { display: flex; gap: 8px; }
+  input[type=text], textarea { width: 100%; font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  input[type=text]:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+           border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: 0.55; cursor: default; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip { font-size: 13px; padding: 4px 10px; border-radius: 999px; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .notice { margin-top: 10px; padding: 8px 12px; border-radius: 8px; background: var(--monitored-bg); color: var(--monitored); font-size: 13px; }
+  .error { margin-top: 10px; padding: 8px 12px; border-radius: 8px; background: var(--blocked-bg); color: var(--blocked); font-size: 14px; white-space: pre-wrap; }
+  .result h2 { margin: 0 0 2px; font-size: 17px; }
+  .explain { color: var(--muted); margin: 0 0 12px; }
+  .tablewrap { overflow: auto; max-height: 560px; border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th { position: sticky; top: 0; background: var(--panel); text-align: left; border-bottom: 1px solid var(--line); padding: 6px 10px; white-space: nowrap; }
+  td { padding: 5px 10px; border-bottom: 1px solid var(--line); vertical-align: top; max-width: 460px; overflow-wrap: anywhere; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.null { color: var(--muted); }
+  tr:last-child td { border-bottom: 0; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; padding: 1px 7px; border-radius: 999px; text-transform: uppercase; }
+  .badge.blocked { background: var(--blocked-bg); color: var(--blocked); }
+  .badge.monitored { background: var(--monitored-bg); color: var(--monitored); }
+  .badge.observed { background: var(--observed-bg); color: var(--observed); }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 16px; justify-content: space-between; align-items: center; color: var(--muted); font-size: 12px; margin-top: 8px; }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; min-height: 120px; background: var(--code); margin-top: 8px; }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  svg text { fill: var(--text); font-size: 12px; }
+  svg .muted { fill: var(--muted); }
+  .feed { max-height: 78vh; overflow: auto; }
+  .feed h3 { margin: 0 0 8px; font-size: 14px; }
+  .ev { padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .ev:last-child { border-bottom: 0; }
+  .ev .top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .ev .when { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .ev .cap { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
+  .ev .site { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>JOT</h1>
+  <div class="stats" id="stats"></div>
+  <label class="live" id="liveLabel"><input type="checkbox" id="live"><span class="dot"></span> Live</label>
+</header>
+
+<main>
+  <div>
+    <div class="card">
+      <form class="ask" id="askForm">
+        <input type="text" id="question" autocomplete="off" aria-label="Ask a question"
+               placeholder="Ask about your application, like: which routes use weak ciphers?">
+        <button class="primary" id="askBtn" type="submit">Ask</button>
+      </form>
+      <div class="chips" id="presets"></div>
+      <div class="chips" id="history"></div>
+      <div id="notice"></div>
+    </div>
+    <div id="results"></div>
+  </div>
+  <aside class="card feed">
+    <h3>Latest events</h3>
+    <div id="feed"><div class="empty">Waiting for events</div></div>
+  </aside>
+</main>
+
+<script>
+"use strict";
+
+const PRESETS = [
+  { label: "Recent events", chart: "table", title: "Recent events",
+    sql: "SELECT datetime(ts/1000, 'unixepoch') AS time, action, sensor, capture, call_site_name AS call_site\nFROM events ORDER BY ts DESC LIMIT 100" },
+  { label: "Blocked", chart: "table", title: "Blocked calls",
+    sql: "SELECT datetime(ts/1000, 'unixepoch') AS time, sensor, capture, message, call_site_name AS call_site\nFROM events WHERE action = 'blocked' ORDER BY ts DESC LIMIT 200" },
+  { label: "Events by sensor", chart: "bar", title: "Events by sensor",
+    sql: "SELECT sensor || ' (' || action || ')' AS sensor, COUNT(*) AS events\nFROM events GROUP BY sensor, action ORDER BY events DESC" },
+  { label: "Busiest call sites", chart: "bar", title: "Busiest call sites",
+    sql: "SELECT call_site_name AS call_site, COUNT(*) AS events\nFROM events WHERE call_site_name IS NOT NULL GROUP BY call_site_name ORDER BY events DESC LIMIT 15" },
+  { label: "Events per minute", chart: "line", title: "Events per minute",
+    sql: "SELECT strftime('%H:%M', ts/1000, 'unixepoch', 'localtime') AS minute, COUNT(*) AS events\nFROM events GROUP BY minute ORDER BY MIN(ts)" },
+];
+
+const $ = (id) => document.getElementById(id);
+let current = null;       // { title, explanation, sql, chart, question }
+let lastPk = 0;
+let busy = false;
+let asked = [];           // questions asked, with the SQL the model wrote
+let timer = null;
+
+// ---- tiny DOM helper. Text is only ever added as text, captured values can be hostile.
+function el(tag, props, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === "class") e.className = v;
+    else if (k === "text") e.textContent = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v);
+  }
+  for (const kid of kids) if (kid != null) e.append(kid);
+  return e;
+}
+const svgEl = (tag, attrs, text) => {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+  if (text != null) e.textContent = text;
+  return e;
+};
+
+async function api(path, body) {
+  const opts = body === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json", "X-JOT-Dashboard": "1" },
+    body: JSON.stringify(body),
+  };
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({ error: "unreadable response" }));
+  if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+  return data;
+}
+
+function ago(ms) {
+  if (!ms) return "never";
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.round(s / 60) + "m ago";
+  if (s < 86400) return Math.round(s / 3600) + "h ago";
+  return Math.round(s / 86400) + "d ago";
+}
+const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour12: false });
+
+// ---- status and feed
+async function refreshStatus() {
+  const s = await api("/api/status");
+  const stats = $("stats");
+  stats.replaceChildren(
+    el("span", {}, el("b", { text: s.events.toLocaleString() }), " events"),
+    el("span", { class: s.blocked ? "blocked" : "" }, el("b", { text: s.blocked.toLocaleString() }), " blocked"),
+    el("span", {}, el("b", { text: s.monitored.toLocaleString() }), " monitored"),
+    el("span", {}, el("b", { text: String(s.sensors) }), " sensors seen"),
+    el("span", { text: "last event " + ago(s.last_ts) }),
+  );
+  if (!s.llm) {
+    $("notice").replaceChildren(el("div", { class: "notice",
+      text: "Natural language is off because ANTHROPIC_API_KEY isn't set. Presets and the SQL box still work." }));
+  } else {
+    $("notice").replaceChildren();
+  }
+}
+
+function eventRow(e) {
+  const [pk, ts, action, sensor, capture, site, message] = e;
+  return el("div", { class: "ev" },
+    el("div", { class: "top" },
+      el("span", { class: "badge " + action, text: action }),
+      el("b", { text: sensor }),
+      el("span", { class: "when", text: clock(ts) })),
+    el("div", { class: "cap", text: capture || "" }),
+    message ? el("div", { class: "site", text: message }) : null,
+    site ? el("div", { class: "site", text: site }) : null);
+}
+
+async function refreshFeed() {
+  const r = await api("/api/recent" + (lastPk ? "?after=" + lastPk : ""));
+  if (!r.rows.length) return;
+  const feed = $("feed");
+  if (!lastPk) feed.replaceChildren();
+  const rows = r.rows;                       // newest first
+  lastPk = Math.max(lastPk, ...rows.map((x) => x[0]));
+  const frag = document.createDocumentFragment();
+  rows.forEach((x) => frag.append(eventRow(x)));
+  feed.prepend(frag);
+  while (feed.children.length > 200) feed.lastChild.remove();
+}
+
+// ---- rendering results
+function isNumber(v) { return typeof v === "number" && isFinite(v); }
+
+function cell(col, v) {
+  if (v === null || v === undefined) return el("td", { class: "null", text: "—" });
+  if ((col === "ts" || col.endsWith("_ts")) && isNumber(v)) return el("td", { text: new Date(v).toLocaleString() });
+  if (col === "action" && typeof v === "string") return el("td", {}, el("span", { class: "badge " + v, text: v }));
+  const s = String(v);
+  const td = el("td", { class: isNumber(v) ? "num" : "", text: s.length > 300 ? s.slice(0, 300) + "…" : s });
+  if (s.length > 300) td.title = s.slice(0, 2000);
+  return td;
+}
+
+function tableView(r) {
+  if (!r.rows.length) return el("div", { class: "empty", text: "No matching events" });
+  const head = el("tr", {}, ...r.columns.map((c) => el("th", { text: c })));
+  const body = r.rows.map((row) => el("tr", {}, ...row.map((v, i) => cell(r.columns[i], v))));
+  return el("div", { class: "tablewrap" }, el("table", {}, el("thead", {}, head), el("tbody", {}, ...body)));
+}
+
+function chartable(r) {
+  return r.columns.length >= 2 && r.rows.length > 0 && r.rows.every((x) => isNumber(x[1]));
+}
+
+function barView(r) {
+  const rows = r.rows.slice(0, 25);
+  const max = Math.max(...rows.map((x) => x[1]), 1);
+  const rowH = 26, labelW = 260, W = 900, barW = W - labelW - 70;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${rows.length * rowH + 4}`, width: "100%", role: "img",
+                             "aria-label": "bar chart" });
+  rows.forEach((x, i) => {
+    const y = i * rowH + 2;
+    const label = String(x[0] ?? "—");
+    svg.append(svgEl("text", { x: labelW - 8, y: y + 17, "text-anchor": "end" }, label.length > 40 ? label.slice(0, 39) + "…" : label));
+    const w = Math.max(2, (x[1] / max) * barW);
+    svg.append(svgEl("rect", { x: labelW, y: y + 3, width: w, height: rowH - 8, rx: 3, fill: "var(--bar)" }));
+    svg.append(svgEl("text", { x: labelW + w + 6, y: y + 17, class: "muted" }, x[1].toLocaleString()));
+  });
+  return svg;
+}
+
+function lineView(r) {
+  const rows = r.rows;
+  const W = 900, H = 260, L = 50, R = 20, T = 12, B = 34;
+  const max = Math.max(...rows.map((x) => x[1]), 1);
+  const px = (i) => L + (rows.length === 1 ? (W - L - R) / 2 : (i / (rows.length - 1)) * (W - L - R));
+  const py = (v) => T + (1 - v / max) * (H - T - B);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img", "aria-label": "line chart" });
+  [0, 0.5, 1].forEach((f) => {
+    const y = py(max * f);
+    svg.append(svgEl("line", { x1: L, x2: W - R, y1: y, y2: y, stroke: "var(--line)" }));
+    svg.append(svgEl("text", { x: L - 6, y: y + 4, "text-anchor": "end", class: "muted" }, Math.round(max * f).toLocaleString()));
+  });
+  svg.append(svgEl("polyline", { points: rows.map((x, i) => `${px(i)},${py(x[1])}`).join(" "),
+                                 fill: "none", stroke: "var(--bar)", "stroke-width": 2 }));
+  rows.forEach((x, i) => {
+    const dot = svgEl("circle", { cx: px(i), cy: py(x[1]), r: 3.5, fill: "var(--bar)" });
+    dot.append(svgEl("title", {}, `${x[0]}: ${x[1]}`));
+    svg.append(dot);
+  });
+  const ends = rows.length > 1 ? [0, rows.length - 1] : [0];
+  ends.forEach((i, n) => svg.append(svgEl("text", { x: px(i), y: H - 10, "text-anchor": n ? "end" : "start", class: "muted" }, String(rows[i][0]))));
+  return svg;
+}
+
+function show(entry, r) {
+  current = entry;
+  let chart = entry.chart;
+  if (chart !== "table" && !chartable(r)) chart = "table";
+  const view = chart === "bar" ? barView(r) : chart === "line" ? lineView(r) : tableView(r);
+
+  const sqlBox = el("textarea", { spellcheck: "false", "aria-label": "SQL" });
+  sqlBox.value = entry.sql;
+  const chartSel = el("select", { "aria-label": "chart type" }, ...["table", "bar", "line"].map((c) => {
+    const o = el("option", { value: c, text: c }); if (c === chart) o.selected = true; return o; }));
+  chartSel.addEventListener("change", () => { current.chart = chartSel.value; show(current, r); });
+  const run = el("button", { text: "Run SQL", onclick: () => runSql(sqlBox.value, current) });
+
+  $("results").replaceChildren(el("div", { class: "card result" },
+    el("h2", { text: entry.title || "Result" }),
+    entry.explanation ? el("p", { class: "explain", text: entry.explanation }) : null,
+    view,
+    el("div", { class: "meta" },
+      el("span", { text: r.rows.length.toLocaleString() + " rows" + (r.truncated ? " (limited, there are more)" : "") + " in " + r.ms + " ms" }),
+      el("span", {}, "show as ", chartSel)),
+    el("details", {}, el("summary", { text: "SQL" }), sqlBox, el("div", { class: "row" }, run))));
+}
+
+function showError(message) {
+  $("results").replaceChildren(el("div", { class: "error", text: message }));
+}
+
+// ---- actions
+async function runSql(sql, entry) {
+  if (busy) return;
+  busy = true;
+  try {
+    const r = await api("/api/sql", { sql });
+    show({ ...entry, sql }, r);
+  } catch (e) { showError(e.message); } finally { busy = false; }
+}
+
+async function ask(question) {
+  if (busy || !question.trim()) return;
+  busy = true; $("askBtn").disabled = true; $("askBtn").textContent = "Thinking…";
+  try {
+    const r = await api("/api/ask", { question, history: asked.slice(-5) });
+    const entry = { title: r.title, explanation: r.explanation, sql: r.sql, chart: r.chart, question };
+    if (!r.sql) {
+      $("results").replaceChildren(el("div", { class: "card" }, el("h2", { text: r.title }), el("p", { class: "explain", text: r.explanation })));
+    } else {
+      show(entry, r);
+      remember({ question, sql: r.sql, title: r.title, chart: r.chart, explanation: r.explanation });
+    }
+  } catch (e) { showError(e.message); }
+  finally { busy = false; $("askBtn").disabled = false; $("askBtn").textContent = "Ask"; }
+}
+
+function remember(item) {
+  asked = asked.filter((h) => h.question !== item.question).concat(item).slice(-8);
+  try { localStorage.setItem("jot-history", JSON.stringify(asked)); } catch (e) { /* private mode */ }
+  drawHistory();
+}
+
+function drawHistory() {
+  $("history").replaceChildren(...asked.slice().reverse().map((h) =>
+    el("button", { class: "chip", title: h.sql, text: h.question, onclick: () => { $("question").value = h.question; runSql(h.sql, h); } })));
+}
+
+function drawPresets() {
+  $("presets").replaceChildren(...PRESETS.map((p) =>
+    el("button", { class: "chip", text: p.label, onclick: () => runSql(p.sql, p) })));
+}
+
+async function tick() {
+  try {
+    await Promise.all([refreshStatus(), refreshFeed()]);
+    if ($("live").checked && current && !busy) {
+      const r = await api("/api/sql", { sql: current.sql });
+      show(current, r);
+    }
+  } catch (e) { /* the server may be restarting, try again next tick */ }
+}
+
+function setLive(on) {
+  $("liveLabel").classList.toggle("live-on", on);
+  clearInterval(timer);
+  timer = setInterval(tick, on ? 2500 : 8000);
+  try { localStorage.setItem("jot-live", on ? "1" : "0"); } catch (e) { /* ignore */ }
+}
+
+$("askForm").addEventListener("submit", (ev) => { ev.preventDefault(); ask($("question").value); });
+$("live").addEventListener("change", (ev) => setLive(ev.target.checked));
+
+try { asked = JSON.parse(localStorage.getItem("jot-history") || "[]"); } catch (e) { asked = []; }
+try { $("live").checked = localStorage.getItem("jot-live") === "1"; } catch (e) { /* ignore */ }
+drawPresets(); drawHistory(); setLive($("live").checked);
+runSql(PRESETS[0].sql, PRESETS[0]);
+tick();
+</script>
+</body>
+</html>
