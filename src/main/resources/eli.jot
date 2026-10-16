@@ -20,12 +20,3 @@ sensors:
   captures:
   - "#P0"
   exception: "Attempt to escape expression language sandbox prevented by JST rule 'sandbox-expressions'"
-
-reports:
- 
-- name: "Expression Language Injection Attempt Log"
-  type: "series"
-  rows: "get-routes"
-  cols: "sandbox-expressions:13"
-
-

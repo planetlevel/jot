@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -18,7 +19,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * Options, as system properties
  *   jot.output        comma separated sinks, "console" and/or "json". Default "console".
  *   jot.output.file   file for the json sink. Default "jot-events.jsonl".
- *   jot.events        "all" (default) or "violations" to only report monitored and blocked events.
+ *   jot.events        "all" (default) or "violations" to only send monitored and blocked events
+ *                     to the console and json sinks. Reports always see every event.
  *   jot.queue.size    events to buffer. Default 10000.
  */
 public final class EventBus {
@@ -26,9 +28,9 @@ public final class EventBus {
 	private static final int DEFAULT_QUEUE_SIZE = 10000;
 
 	private static volatile boolean active = false;
-	private static volatile boolean violationsOnly = false;
+	private static int queueSize = DEFAULT_QUEUE_SIZE;
 	private static BlockingQueue<Event> queue;
-	private static List<EventSink> sinks = new ArrayList<EventSink>();
+	private static final List<EventSink> sinks = new CopyOnWriteArrayList<EventSink>();
 	private static Thread worker;
 	private static volatile boolean running = false;
 	private static final AtomicLong dropped = new AtomicLong();
@@ -49,9 +51,12 @@ public final class EventBus {
 			default: System.err.println( "[JOT] Unknown jot.output '" + name.trim() + "', ignoring. Use console or json." );
 			}
 		}
-		boolean violations = System.getProperty( "jot.events", "all" ).equalsIgnoreCase( "violations" );
-		int size = Integer.getInteger( "jot.queue.size", DEFAULT_QUEUE_SIZE );
-		configure( list, size, violations );
+		if ( System.getProperty( "jot.events", "all" ).equalsIgnoreCase( "violations" ) ) {
+			List<EventSink> filtered = new ArrayList<EventSink>();
+			for ( EventSink sink : list ) filtered.add( new ViolationsOnlySink( sink ) );
+			list = filtered;
+		}
+		configure( list, Integer.getInteger( "jot.queue.size", DEFAULT_QUEUE_SIZE ) );
 
 		if ( !hookInstalled ) {
 			hookInstalled = true;
@@ -59,14 +64,23 @@ public final class EventBus {
 		}
 	}
 
-	public static synchronized void configure( List<EventSink> newSinks, int queueSize, boolean onlyViolations ) {
+	/** Replace all sinks and start delivering. */
+	public static synchronized void configure( List<EventSink> newSinks, int size ) {
 		shutdown();
-		sinks = new ArrayList<EventSink>( newSinks );
-		violationsOnly = onlyViolations;
+		sinks.addAll( newSinks );
+		queueSize = Math.max( size, 1 );
 		dropped.set( 0 );
-		if ( sinks.isEmpty() ) return;
+		if ( !sinks.isEmpty() ) start();
+	}
 
-		queue = new ArrayBlockingQueue<Event>( Math.max( queueSize, 1 ) );
+	/** Add a sink, such as a report, starting delivery if it isn't running. */
+	public static synchronized void addSink( EventSink sink ) {
+		sinks.add( sink );
+		if ( !active ) start();
+	}
+
+	private static void start() {
+		queue = new ArrayBlockingQueue<Event>( queueSize );
 		running = true;
 		worker = new Thread( EventBus::run, "jot-events" );
 		worker.setDaemon( true );
@@ -76,7 +90,6 @@ public final class EventBus {
 
 	public static void publish(Event event) {
 		if ( !active ) return;
-		if ( violationsOnly && event.getAction() == Event.Action.OBSERVED ) return;
 		if ( !queue.offer( event ) ) dropped.incrementAndGet();
 	}
 
@@ -105,7 +118,7 @@ public final class EventBus {
 				err.println( "[JOT] Error closing " + sink + ": " + t );
 			}
 		}
-		sinks = new ArrayList<EventSink>();
+		sinks.clear();
 	}
 
 	private static void run() {

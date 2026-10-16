@@ -19,13 +19,3 @@ sensors:
   captures:
   - "#ARGS"
   exception: "Attempt to create ProcessBuilder from within Servlet.service() prevented 'block-native-process' JOT sensor"
-
-
-reports:
- 
-- name: "CMDi"
-  type: "series"
-  rows: "get-routes"
-  cols: "block-native-process:13"
-
-

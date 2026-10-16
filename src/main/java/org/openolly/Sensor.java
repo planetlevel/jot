@@ -28,7 +28,6 @@ import org.openolly.advice.SensorException;
 import org.openolly.advice.scope.BinaryScope;
 import org.openolly.reporting.Event;
 import org.openolly.reporting.EventBus;
-import org.openolly.reporting.Trace;
 
 import com.google.common.flogger.FluentLogger;
 
@@ -157,7 +156,6 @@ public class Sensor {
 							if ( matched ) {
 								String cleaned = StringUtils.normalizeSpace( safe );
 								Event event = new Event(getName(), cleaned, stack);
-								Trace.getCurrentTrace().addEvent( event );
 								publishObserved( event );
 								// logger.atWarning().log( "[JOT %s] %s", this, event );
 		 						results.add(safe);
@@ -169,7 +167,6 @@ public class Sensor {
 						if ( matched ) {
 							String cleaned = StringUtils.normalizeSpace( safe );
 							Event event = new Event(getName(), cleaned, stack);
-							Trace.getCurrentTrace().addEvent( event );
 								publishObserved( event );
 							// logger.atWarning().log( "[JOT %s] %s", this, event );
 	 						results.add(safe);

@@ -27,6 +27,7 @@ public class Event implements Comparable<Event> {
 	private final Action action;
 	private final String message;
 	private final String thread;
+	private final long trace;
 
 	public Event(String rule, String capture, StackTraceElement[] stack) {
 		this(rule, capture, stack, Action.OBSERVED, null);
@@ -41,6 +42,7 @@ public class Event implements Comparable<Event> {
 		this.id = counter.getAndIncrement();
 		this.timestamp = System.currentTimeMillis();
 		this.thread = Thread.currentThread().getName();
+		this.trace = Trace.currentId();
 	}
 
 	public String getRule() {
@@ -69,6 +71,11 @@ public class Event implements Comparable<Event> {
 		return thread;
 	}
 
+	/** Identifies the request, or thread, this event was observed in. See Trace. */
+	public long getTrace() {
+		return trace;
+	}
+
 	public String getCaller( int depth ) {
 		if ( stack == null || depth >= stack.length ) return "";
 		return stack[depth].toString();
@@ -80,6 +87,11 @@ public class Event implements Comparable<Event> {
 	 */
 	public String getCaller() {
 		return getCaller( 1 );
+	}
+
+	/** The code that called the instrumented method, which is where this event was triggered from. */
+	public String getCallSite() {
+		return getCaller( 2 );
 	}
 
 	public StackTraceElement[] getStack() {
@@ -105,7 +117,7 @@ public class Event implements Comparable<Event> {
 	}
 
 	public String toString() {
-		return "[JOT " + rule + "] " + getCaller(2) + " " + getCapture();
+		return "[JOT " + rule + "] " + getCallSite() + " " + getCapture();
 	}
 
 	public String getHash() {

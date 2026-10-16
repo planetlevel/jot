@@ -204,41 +204,46 @@ sensors to perform limited actions within an application.
 
 ## Creating Your Own JOT Reports
 
-Reports let you define how JOT will collect data over time and
-how it will format it for you. 
+Reports summarize the events JOT's sensors produce. A report receives every event as it happens,
+keeps a bounded table in memory, and prints it to stderr when the JVM shuts down. Reports are
+independent of the event output, so they work the same with `jot.output=console`, `json`, or neither.
 
        # Title of this report that will be displayed above the results
        - name: "example"
-	 	 
-         # Type of reports include
-         # 1. list
-         #       ROWS: caller method
-         #       COLS: one column named after the sensor defined in "cols" 
-         #       DATA: values from the sensor named in "cols" 
-         # 2. compare
-         #       ROWS: 
-         #       COLS: uses the "cols" sensor values as column headers
-         #       DATA: values from the sensor named in "cols" 
-         # 3. table
-         #       ROWS: 
-         #       COLS: uses rule names for cols[0-n] as column headers - parses data values
-         #       DATA: values from the sensor named in "cols" 
-         # 4. series - table but each row starts with a timestamp (currently includes callers col too)
-         #       ROWS: 
-         #       COLS: uses rule names for cols[0-n] as column headers - parses data values
-         #       DATA: values from the sensor named in "cols"
-         type: "table"
-       
-         # Rows indicates a sensor to be used to populate row headers
-         rows: "get-routes"
-	   
-         # Cols indicates a sensor (or list of sensors) to be used to populate column headers
-         cols: "get-users"
-   
-         # Data indicates how the content of data cells should be populated. Can be a fixed string or a rule name.
-         data: "X"
-	   
 
+         # Types of reports
+         # 1. list
+         #       ROWS: the code that called the instrumented method
+         #       COLS: one column named after the sensor in "cols"
+         #       DATA: values captured by that sensor
+         # 2. compare
+         #       ROWS: values captured by the sensor in "rows"
+         #       COLS: names taken from the "cols" sensor's captures, written as name:value
+         #       DATA: the value part of those captures
+         # 3. table
+         #       ROWS: values captured by the sensor in "rows"
+         #       COLS: one column per sensor in "cols"
+         #       DATA: values captured by those sensors
+         # 4. graph - not a table. Prints a GraphViz DOT graph of what happened inside each route.
+         #       rows: the sensor that identifies the route
+         #       cols: optional, sensors such as forwards that start a new route node
+         type: "table"
+
+         # A sensor to be used to populate row headers (compare, table and graph)
+         rows: "get-routes"
+
+         # A sensor, or a comma separated list of sensors, to be used to populate columns
+         cols: "get-users"
+
+compare, table and graph relate a row to a column when both were observed during the same request,
+in either order. Outside of a servlet request, events are related when they happen on the same thread.
+
+A table holds at most 1000 rows and 20 values per cell. Anything beyond that is counted and a note is
+printed under the table. A graph holds at most 2000 nodes.
+
+The old `series` report type is gone. Its job, a record of every event with its caller, is what the
+event log does. Use `-Djot.output=json` to keep one. A `series` report in a .jot file is skipped
+with a warning.
 
 ## Building from Source
 

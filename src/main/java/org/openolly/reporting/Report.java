@@ -1,309 +1,249 @@
 package org.openolly.reporting;
 
-import java.text.SimpleDateFormat;
-import java.util.Collection;
-import java.util.Date;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import com.google.common.collect.TreeBasedTable;
-import com.google.common.flogger.FluentLogger;
 
-public class Report {
-	private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+/**
+ * Summarizes the events it receives as a table, which is printed to stderr at shutdown.
+ *
+ * There are three styles.
+ *   list     one row per call site, one column for the "cols" sensor, holding what it captured
+ *   compare  rows from the "rows" sensor, columns named by the "cols" sensor's captures
+ *   table    rows from the "rows" sensor, one column per "cols" sensor, holding what it captured
+ *
+ * compare and table relate a row to a column when both were observed in the same request, so
+ * "rows" is typically a sensor that identifies the route.
+ *
+ * Reports are bounded. A table holds at most maxRows rows and each cell holds at most
+ * maxValues values. Anything past that is counted and not stored.
+ */
+public class Report implements EventSink {
 
-	private int rowNameColWidth = 10;
-	
-	private TreeBasedTable<String, String, Set<String>> table = TreeBasedTable.create();
+	public enum ReportStyle {
+		LIST, COMPARE, TABLE
+	}
+
+	private static final int DEFAULT_MAX_ROWS = 1000;
+	private static final int DEFAULT_MAX_VALUES = 20;
+	/** requests tracked at once, the least recently active is forgotten first */
+	private static final int MAX_OPEN_TRACES = 1000;
+	/** rows and cells remembered for one request */
+	private static final int MAX_PER_TRACE = 200;
+
+	private final TreeBasedTable<String, String, Set<String>> table = TreeBasedTable.create();
+	private final Map<Long, Window> traces = new LinkedHashMap<Long, Window>( 16, 0.75f, true ) {
+		@Override
+		protected boolean removeEldestEntry(Map.Entry<Long, Window> eldest) {
+			return size() > MAX_OPEN_TRACES;
+		}
+	};
+
 	private ReportStyle mode = null;
 	private String name = null;
 	private String rows = null;
 	private String[] cols = null;
 	private String data = null;
-	
-	public enum ReportStyle {
-		LIST, COMPARE, TABLE, SERIES
-	}
-	
-	public Report() {
-		Reporter.add( this );
+	private int maxRows = DEFAULT_MAX_ROWS;
+	private int maxValues = DEFAULT_MAX_VALUES;
+	private int rowNameColWidth = 10;
+	private long dropped = 0;
+
+	/** What one request has shown so far, so a row and a column seen at different times still meet. */
+	private static class Window {
+		final Set<String> rowNames = new LinkedHashSet<String>();
+		final List<String[]> cells = new ArrayList<String[]>();
 	}
 
-	public void update( Trace t ) {
-		try {			
-			switch( mode ) {
-			case LIST: updateList( t ); break;
-			case COMPARE: updateCompare( t ); break;
-			case TABLE: updateTable( t ); break;
-			case SERIES: updateSeries( t ); break;
-			}
-		}catch( Exception e ) {
-			//e.printStackTrace();
-			logger.atWarning().log( ExceptionUtils.getStackTrace(e) );
-		}
-	}
-	
-	private void updateList(Trace t) {
-		for( Event colEvent : t.getEventsForRule( cols[0] ) ) {
-			String rowName = colEvent.getCaller(2);
-			String colName = cols[0]; 
-			String data = colEvent.getCapture();
-			String shortened = StringUtils.abbreviateMiddle(data, "...", 50 );
-			set( rowName, colName, shortened );
+	@Override
+	public synchronized void accept(Event event) {
+		if ( mode == null ) return;
+		switch ( mode ) {
+		case LIST: acceptList( event ); break;
+		case COMPARE:
+		case TABLE: acceptRelated( event ); break;
 		}
 	}
 
-	private void updateCompare(Trace t) {
-		for (Event rowEvent : t.getEventsForRule( rows ) ) {
-			String rowName = rowEvent.getNameFromCapture(); 
-			for( Event colEvent : t.getEventsForRule( cols[0] ) ) {
-				String colName = colEvent.getNameFromCapture(); 
-				String data = colEvent.getValueFromCapture();    // FIXME: get rid of getValue() use getCapture()
-				String shortened = StringUtils.abbreviateMiddle(data, "...", 50 );
-				set( rowName, colName, shortened );
-			}
+	private void acceptList(Event event) {
+		if ( matches( event, cols[0] ) ) {
+			set( event.getCallSite(), cols[0], shorten( event.getCapture() ) );
 		}
 	}
 
-	private void updateTable(Trace t) {
-		for (Event rowEvent : t.getEventsForRule( rows ) ) {
-			String r = rowEvent.getNameFromCapture(); 
-			for ( String col : cols ) {
-				for (Event event : t.getEventsForRule( col ) ) {
-					String data = event.getCapture();
-					String shortened = StringUtils.abbreviateMiddle(data, "...", 50 );
-					set( r, col, shortened );
+	private void acceptRelated(Event event) {
+		boolean isRow = matches( event, rows );
+		String column = null;
+		String value = null;
+		for ( String col : cols ) {
+			if ( matches( event, col ) ) {
+				if ( mode == ReportStyle.COMPARE ) {
+					column = event.getNameFromCapture();
+					value = event.getValueFromCapture();
+				} else {
+					column = col;
+					value = event.getCapture();
 				}
+				break;
 			}
 		}
-	}
+		if ( !isRow && column == null ) return;
 
-	
-    private final static SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-    private static int counter = 10000;
-    
-    // FIXME: Should date be in Events, or just added here in Table?
-	private void updateSeries(Trace t) {
-		String time = dateFormat.format(new Date());
-		for (Event rowEvent : t.getEventsForRule( rows ) ) {
-			String r = rowEvent.getNameFromCapture(); 
-			for ( String col : cols ) {
-				String[] parts = col.split(":");
-				int frame = -1;
-				if ( parts.length > 1 ) {
-					col = parts[0];
-					frame = Integer.parseInt( parts[1] );
-				}
-				for ( Event event : t.getEventsForRule( col ) ) {
-					StackTraceElement[] stack = event.getStack();
-					String caller = "";
-					if ( frame != -1 ) {
-						caller = stack[frame].toString();
-					}
-					String row = "" + counter++;
-					String item = event.getCapture();
-					// set( row, " Time", time );    // extra space so this will sort first
-					set( row, rows, r );
-					set( row, "Method Call", caller );
-					set( row, col, item );
-				}
+		Window trace = traces.computeIfAbsent( event.getTrace(), id -> new Window() );
+		if ( isRow ) {
+			String row = event.getNameFromCapture();
+			if ( trace.rowNames.size() < MAX_PER_TRACE && trace.rowNames.add( row ) ) {
+				for ( String[] cell : trace.cells ) set( row, cell[0], cell[1] );
 			}
 		}
-	}
-
-
-	private void dumpStack(StackTraceElement[] stack) {
-		String out = "";
-		for ( StackTraceElement frame : stack ) {
-			//System.out.println( "    " + frame );
-			out += "    " + frame +"\n";
+		if ( column != null && trace.cells.size() < MAX_PER_TRACE ) {
+			String shortened = shorten( value );
+			trace.cells.add( new String[] { column, shortened } );
+			for ( String row : trace.rowNames ) set( row, column, shortened );
 		}
-		logger.atInfo().log(out);
 	}
 
-//====================================	
-	
+	private static boolean matches(Event event, String rule) {
+		return rule != null && event.getRule().equalsIgnoreCase( rule );
+	}
+
+	private static String shorten(String value) {
+		return StringUtils.abbreviateMiddle( value, "...", 50 );
+	}
+
+	//====================================
+
 	public Report name( String value ) {
 		this.name = value;
 		rowNameColWidth = Math.max( rowNameColWidth, name.length() + 4 );
 		return this;
 	}
-	
+
 	public Report type( String value ) {
-		this.mode = ReportStyle.valueOf( value.toUpperCase() );
+		try {
+			this.mode = ReportStyle.valueOf( value.trim().toUpperCase() );
+		} catch ( IllegalArgumentException | NullPointerException e ) {
+			throw new IllegalArgumentException( "unknown report type '" + value + "', use list, compare or table" );
+		}
 		return this;
 	}
-	
-	
-	// FIXME: check to be sure value is a legit rule name
-	
+
 	public Report rows( String value ) {
 		this.rows = value;
 		return this;
 	}
-	
-	// FIXME: check to be sure value is a legit rule name
-	
+
 	public Report cols( String value ) {
-		this.cols = value.split(", ");
+		this.cols = value == null ? null : value.split( ",\\s*" );
 		return this;
 	}
-	
-	// FIXME: check to be sure value is a legit rule name
-	
+
 	public Report data( String value ) {
 		this.data = value;
 		return this;
 	}
-	
-//====================================	
-	
-	public void set( String r, String c, Collection<String> values ) {
-		for ( String v : values )  {
-			set( r, c, v );
+
+	public Report maxRows( int value ) {
+		this.maxRows = value;
+		return this;
+	}
+
+	public Report maxValues( int value ) {
+		this.maxValues = value;
+		return this;
+	}
+
+	/** Throws if the report is missing what its type needs. */
+	public Report validate() {
+		if ( name == null || mode == null ) throw new IllegalArgumentException( "a report needs a name and a type" );
+		if ( cols == null || cols.length == 0 ) throw new IllegalArgumentException( "report '" + name + "' needs cols" );
+		if ( mode != ReportStyle.LIST && StringUtils.isBlank( rows ) ) {
+			throw new IllegalArgumentException( "report '" + name + "' needs rows" );
 		}
+		return this;
 	}
-	
-	public Set<String> get( String r, String c ) {
-		return table.get(r, c);
+
+	//====================================
+
+	public synchronized Set<String> get( String r, String c ) {
+		return table.get( r, c );
 	}
-	
-	public void set( String r, String c, String v ) {
-		if ( r != null && !r.isEmpty() && 
-			 c != null && !c.isEmpty() &&
-			 v != null && !v.isEmpty() ) {
-			Set<String> current = table.get( r,  c );
-			if ( current == null ) {
-				current = new TreeSet<String>();
-				table.put( r, c, current);
+
+	public synchronized void set( String r, String c, String v ) {
+		if ( StringUtils.isEmpty( r ) || StringUtils.isEmpty( c ) || StringUtils.isEmpty( v ) ) return;
+		Set<String> current = table.get( r, c );
+		if ( current == null ) {
+			if ( !table.containsRow( r ) && table.rowKeySet().size() >= maxRows ) {
+				dropped++;
+				return;
 			}
+			current = new TreeSet<String>();
+			table.put( r, c, current );
+		}
+		if ( current.size() < maxValues ) {
 			current.add( v );
-			rowNameColWidth = Math.max( rowNameColWidth, r.length() );
-		} else {
-			//System.err.println( "Failed attempt to set " + r + ", " + c + ", " + v );
-			logger.atWarning().log("Failed attempt to set " + r + ", " + c + ", " + v );
+		} else if ( !current.contains( v ) ) {
+			dropped++;
 		}
+		rowNameColWidth = Math.max( rowNameColWidth, r.length() );
 	}
-	
-	public void clear( String r, String c ) {
-		table.remove( r, c );
+
+	/** Print the table. Nothing is printed for a report that saw no events. */
+	@Override
+	public synchronized void close() {
+		String out = render();
+		if ( !out.isEmpty() ) System.err.print( out );
 	}
-	
-	public void addRow( String r ) {
-		if ( r != null && !r.isEmpty() ) {
-			set( r, "|||", "X" );
-		}
-	}
-	
-	
-	public void addCol( String c ) {
-		if ( c != null && !c.isEmpty() ) {
-			set( "|||", c, "X" );
-		}
-	}
-	
-	public void clearRow( String r ) {
-		for( String c : table.columnKeySet() ) {
-			table.remove( r, c );
-		}
-	}
-	
-	public void clearCol( String c ) {
-		for ( String r : table.rowKeySet() ) {
-			table.remove( r, c );
-		}
-	}
-	
-	public synchronized void dump() {
-		
-		String out = "\n";
-		// print headers
-		//System.err.print( StringUtils.rightPad(name, rowNameColWidth) );
-		out += StringUtils.rightPad(name, rowNameColWidth) ;
-		//System.err.print( " " );
-		out += " ";
-		for ( String col : table.columnKeySet() )  {
-			if ( !col.contentEquals( "|||" ) ) {
-				int colWidth = getMaxWidth( col );
-				//System.err.print( StringUtils.rightPad(col, colWidth, " ") );
-				out += StringUtils.rightPad(col, colWidth, " ");
-				//System.err.print( " " );
-				out += " ";
-			}
-		}		
-		
-		// print ---- 
-		//System.err.println();
-		out += "\n";
-		String under1 = StringUtils.repeat( "-", rowNameColWidth );
-		//System.err.print( under1 );
-		out += under1;
-		//System.err.print( " " );
-		out += " ";
+
+	/** The table as text, or an empty string if nothing has been recorded. */
+	public synchronized String render() {
+		if ( table.isEmpty() ) return "";
+		StringBuilder out = new StringBuilder( "\n" );
+		out.append( StringUtils.rightPad( name, rowNameColWidth ) ).append( ' ' );
 		for ( String col : table.columnKeySet() ) {
-			if ( !col.equals("|||" ) ) {
-				int colWidth = getMaxWidth( col );
-				String under2 = StringUtils.repeat( "-", colWidth );
-				//System.err.print( under2 );
-				out += under2;
-				//System.err.print( " " );
-				out += " ";
-			}
+			out.append( StringUtils.rightPad( col, getMaxWidth( col ) ) ).append( ' ' );
 		}
-		//System.err.println();
-		out += "\n";
-		
-		// print data
+		out.append( '\n' ).append( StringUtils.repeat( '-', rowNameColWidth ) ).append( ' ' );
+		for ( String col : table.columnKeySet() ) {
+			out.append( StringUtils.repeat( '-', getMaxWidth( col ) ) ).append( ' ' );
+		}
+		out.append( '\n' );
+
 		for ( String row : table.rowKeySet() ) {
-			if ( !row.equals( "|||" ) ) {
-				//System.err.print( StringUtils.rightPad(row,rowNameColWidth," " ).substring(0,rowNameColWidth));
-				out += StringUtils.rightPad(row,rowNameColWidth," " ).substring(0,rowNameColWidth);
-				//System.err.print( " " );
-				out += " ";
-				for ( String col : table.columnKeySet() ) {
-					if ( !col.contentEquals( "|||" ) ) {
-						int colWidth = getMaxWidth( col );
-						Set<String> values = table.get(row,col);
-						String value =  "";
-						if ( values != null ) {
-							value = String.join(",", values );
-						}
-						//System.err.print( StringUtils.rightPad(value,colWidth," " ).substring(0,colWidth));
-						out += StringUtils.rightPad(value,colWidth," " ).substring(0,colWidth);
-						//System.err.print( " " );
-						out += " ";
-					}
-				}
-				//System.err.println();
-				out += "\n";
+			out.append( StringUtils.rightPad( row, rowNameColWidth ).substring( 0, rowNameColWidth ) ).append( ' ' );
+			for ( String col : table.columnKeySet() ) {
+				Set<String> values = table.get( row, col );
+				String value = values == null ? "" : String.join( ",", values );
+				out.append( StringUtils.rightPad( value, getMaxWidth( col ) ) ).append( ' ' );
 			}
+			out.append( '\n' );
 		}
-		//System.err.println();
-		out+= "\n";
-		logger.atWarning().log(out);
+		if ( dropped > 0 ) {
+			out.append( "(" + dropped + " entries not shown, this report is limited to " + maxRows + " rows of "
+				+ maxValues + " values per cell)\n" );
+		}
+		return out.append( '\n' ).toString();
 	}
 
 	private int getMaxWidth( String col ) {
-		int width = 4;
-		if ( col.length() > width ) {
-			width = col.length();
-		}
+		int width = Math.max( 4, col.length() );
 		for ( String row : table.rowKeySet() ) {
-			Set<String> values = table.get(row, col);
-			if ( values != null ) {
-				String val = String.join(",", values );
-				if ( val != null && val.length() > width ) {
-					width = val.length();
-				}
-			}
+			Set<String> values = table.get( row, col );
+			if ( values != null ) width = Math.max( width, String.join( ",", values ).length() );
 		}
 		return width;
 	}
-	
+
+	@Override
 	public String toString() {
-		return name + " (" + rows + "," + cols + "," +data + ")";
+		return "Report " + name;
 	}
 }

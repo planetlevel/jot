@@ -54,10 +54,6 @@ reports:
    rows: "get-routes"
    cols: "get-forwards"
    
- - name: "Timeseries"
-   type: "series"
-   rows: "unused"
-   cols: "get-ciphers"
     
  - name: "Exceptions"
    type: "table"

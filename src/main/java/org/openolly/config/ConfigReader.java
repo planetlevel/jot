@@ -3,10 +3,13 @@ package org.openolly.config;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import org.openolly.Sensor;
+import org.openolly.reporting.EventBus;
 import org.openolly.reporting.Report;
+import org.openolly.reporting.RouteGraph;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonMappingException;
@@ -50,7 +53,7 @@ public class ConfigReader {
 	}	
 
 	
-	// FIXME - sensors are added to the Sensor class, Reports are tracked in Reporter
+	// Sensors are added to the Sensor class, reports are added to the EventBus as sinks
 	public static void load( File yaml ) throws IOException {
 		ConfigReader.yaml = yaml;
 		lastModified = yaml.lastModified();
@@ -90,16 +93,34 @@ public class ConfigReader {
 		
 		if ( config.reports != null ) {
 			for ( YAMLReport entry : config.reports ) {
-				if ( !entry.name.contentEquals( "example" )) {
-					new Report()
-						.name( entry.name )
-						.type( entry.type )
-						.rows( entry.rows )
-						.cols( entry.cols )
-						.data( entry.data );
+				if ( entry.name == null || entry.name.contentEquals( "example" ) ) continue;
+				try {
+					addReport( entry );
+				} catch ( IllegalArgumentException e ) {
+					logger.atWarning().log( "[JOT] Skipping report '" + entry.name + "' in " + yaml + ", " + e.getMessage() );
 				}
 			}
 		}
+	}
+
+	private static void addReport( YAMLReport entry ) {
+		String type = entry.type == null ? "" : entry.type.trim();
+		if ( type.equalsIgnoreCase( "series" ) ) {
+			throw new IllegalArgumentException( "series reports were replaced by the event log, see jot.output" );
+		}
+		if ( type.equalsIgnoreCase( "graph" ) ) {
+			if ( entry.rows == null ) throw new IllegalArgumentException( "a graph report needs rows" );
+			List<String> forwards = entry.cols == null ? null : Arrays.asList( entry.cols.split( ",\\s*" ) );
+			EventBus.addSink( new RouteGraph( entry.name, entry.rows, forwards ) );
+			return;
+		}
+		EventBus.addSink( new Report()
+			.name( entry.name )
+			.type( type )
+			.rows( entry.rows )
+			.cols( entry.cols )
+			.data( entry.data )
+			.validate() );
 	}
 	
 	private static class YAML {

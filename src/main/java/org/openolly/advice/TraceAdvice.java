@@ -13,7 +13,7 @@ public class TraceAdvice {
 	public static void enter() {
 		scope.enterScope();
 		if ( scope.inOutermostScope() ) {
-			Trace.getCurrentTrace().start();
+			Trace.start();
 		}
 	}
 
@@ -22,7 +22,7 @@ public class TraceAdvice {
 	public static void exit() {
 		try {
 			if ( scope.inOutermostScope() ) {
-				Trace.getCurrentTrace().stop();
+				Trace.stop();
 			}
 		} finally {
 			scope.leaveScope();

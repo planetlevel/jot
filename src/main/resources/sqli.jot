@@ -21,12 +21,3 @@ sensors:
   - "java.sql.PreparedStatement"   # not vulnerable subclass
   captures:
   - "#ARGS"
-
-reports:
-
- - name: "SQLi"
-   type: "series"
-   rows: "get-routes"
-   cols: "get-unsafe-queries:2"
-
-

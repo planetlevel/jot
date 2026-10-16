@@ -1,85 +1,36 @@
 package org.openolly.reporting;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
-import com.google.common.flogger.FluentLogger;
+/**
+ * Identifies which events belong together. Each thread has a current trace id, and every Event
+ * records the id that was current when it was created. A servlet request starts a new id, so
+ * everything observed while handling that request shares one. Outside a request the id stays
+ * the same for the life of the thread. Sinks use the id to relate events to each other.
+ */
+public final class Trace {
 
-public class Trace {
-	private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+	private static final AtomicLong counter = new AtomicLong( 10000 );
 
-	private static AtomicInteger counter = new AtomicInteger(10000);
-    
-    private static final ThreadLocal<Trace> currentTrace =
-        new ThreadLocal<Trace>() {
-            @Override protected Trace initialValue() {
-                return new Trace();
-        }
-    };
+	private static final ThreadLocal<long[]> current =
+		ThreadLocal.withInitial( () -> new long[] { counter.getAndIncrement() } );
 
-    private final int traceId = counter.getAndIncrement();
-	private List<Event> events = new ArrayList<Event>();
-		
-	public Trace() {
-	}
-	
-	public static Trace getCurrentTrace() {
-		return currentTrace.get();
-	}
-	
-	public int getId() {
-		return traceId;
+	private Trace() {
 	}
 
-	public void addEvent(Event event) {
-		events.add( event );
+	/** The id events created on this thread are tagged with. */
+	public static long currentId() {
+		return current.get()[0];
 	}
 
-	public void start() {
-		events.clear();
-	}
-	
-	public void stop() {
-		if ( events.isEmpty() ) return;
-		Reporter.update( this );
-		RouteGraph.update( this );
-	}
-	
-	public void printTrace() {
-		String out = "";
-		if ( events.isEmpty() ) return;
-		//System.out.println( "\n"+toString());
-		out += "\n"+toString();
-		for ( Event event : events ) {
-			//System.out.println( "  " + event );
-			out += "  " + event+"\n";
-		}
-		//System.out.println();
-		out += "\n";
-		logger.atInfo().log(out);
+	/** Begin a new trace on this thread. */
+	public static void start() {
+		current.get()[0] = counter.getAndIncrement();
 	}
 
-	public List<Event> getEvents() {
-		return events;
+	/** End the current trace. A new one begins at the next start. */
+	public static void stop() {
+		// nothing to release, the id is simply replaced at the next start
 	}
 
-	public List<Event> getEventsForRule(String rulename) {
-		List<Event> list = new ArrayList<Event>();
-		for( Event e : events ) {
-			if ( e.getRule().equalsIgnoreCase(rulename) ) {
-				list.add(e);
-			}
-		}
-		return list;
-	}
-
-	public String toString() {
-		return "TRACE-" + traceId + "(" + events.size() +")";
-	}
-
-	public int getSize() {
-		return events.size();
-	}
-	
 }

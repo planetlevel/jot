@@ -17,6 +17,7 @@ import org.openolly.reporting.ConsoleSink;
 import org.openolly.reporting.Event;
 import org.openolly.reporting.EventBus;
 import org.openolly.reporting.EventSink;
+import org.openolly.reporting.ViolationsOnlySink;
 import org.openolly.reporting.JsonSink;
 
 class EventBusTest {
@@ -39,7 +40,7 @@ class EventBusTest {
 
 	@Test
 	void testPublishWithNoSinksDoesNothing() {
-		EventBus.configure( new ArrayList<EventSink>(), 10, false );
+		EventBus.configure( new ArrayList<EventSink>(), 10 );
 		EventBus.publish( event( "a" ) );
 		Assertions.assertEquals( 0, EventBus.getDropped() );
 	}
@@ -47,7 +48,7 @@ class EventBusTest {
 	@Test
 	void testEventsAreDeliveredInOrderAndSinksClosedOnShutdown() {
 		Recorder r = new Recorder();
-		EventBus.configure( List.of( r ), 100, false );
+		EventBus.configure( List.of( r ), 100 );
 		for ( int i = 0; i < 50; i++ ) EventBus.publish( event( "r" + i ) );
 		EventBus.shutdown();
 		Assertions.assertEquals( 50, r.events.size() );
@@ -66,7 +67,7 @@ class EventBusTest {
 				super.accept( e );
 			}
 		};
-		EventBus.configure( List.of( r ), 2, false );
+		EventBus.configure( List.of( r ), 2 );
 		EventBus.publish( event( "first" ) );
 		Assertions.assertTrue( started.await( 5, TimeUnit.SECONDS ) );   // worker is now stuck in the sink
 		for ( int i = 0; i < 10; i++ ) EventBus.publish( event( "x" ) );
@@ -83,7 +84,7 @@ class EventBusTest {
 		PrintStream original = System.err;
 		System.setErr( new PrintStream( new ByteArrayOutputStream() ) );
 		try {
-			EventBus.configure( List.of( bad, good ), 10, false );
+			EventBus.configure( List.of( bad, good ), 10 );
 			EventBus.publish( event( "a" ) );
 			EventBus.shutdown();
 		} finally {
@@ -95,7 +96,7 @@ class EventBusTest {
 	@Test
 	void testViolationsOnlySkipsObservedEvents() {
 		Recorder r = new Recorder();
-		EventBus.configure( List.of( r ), 10, true );
+		EventBus.configure( List.of( new ViolationsOnlySink( r ) ), 10 );
 		EventBus.publish( event( "observed" ) );
 		EventBus.publish( new Event( "blocked", "v", null, Event.Action.BLOCKED, "no" ) );
 		EventBus.publish( new Event( "monitored", "v", null, Event.Action.MONITORED, "no" ) );
@@ -140,7 +141,7 @@ class EventBusTest {
 	@Test
 	void testBlockingSensorPublishesOneBlockedEventWithItsMessage() {
 		Recorder r = new Recorder();
-		EventBus.configure( List.of( r ), 10, false );
+		EventBus.configure( List.of( r ), 10 );
 		Sensor s = new Sensor().method( "a.b.Class.method" ).capture( "#P0" ).exception( "Not allowed" );
 		Assertions.assertThrows( SensorException.class,
 				() -> s.execute( "test", "a.b.Class.Method", "foo", new String[] { "bar" }, "zoo" ) );
@@ -156,11 +157,22 @@ class EventBusTest {
 	@Test
 	void testObservingSensorPublishesObservedEvent() {
 		Recorder r = new Recorder();
-		EventBus.configure( List.of( r ), 10, false );
+		EventBus.configure( List.of( r ), 10 );
 		Sensor s = new Sensor().method( "a.b.Class.method" ).capture( "#P0" );
 		s.execute( "test", "a.b.Class.Method", "foo", new String[] { "bar" }, "zoo" );
 		EventBus.shutdown();
 		Assertions.assertEquals( 1, r.events.size() );
 		Assertions.assertEquals( Event.Action.OBSERVED, r.events.get( 0 ).getAction() );
 	}
+
+	@Test
+	void testAddSinkStartsDeliveryWhenNothingIsConfigured() {
+		EventBus.configure( new ArrayList<EventSink>(), 10 );
+		Recorder r = new Recorder();
+		EventBus.addSink( r );
+		EventBus.publish( event( "late" ) );
+		EventBus.shutdown();
+		Assertions.assertEquals( 1, r.events.size() );
+	}
+
 }
