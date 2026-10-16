@@ -48,6 +48,22 @@ Turn it off and the view stays put while you look at it.
 Events from several applications can share one dashboard. Each event records its host, process and
 application, and events with the same `run` and `trace` came from the same request.
 
+## The path graph
+
+The **Graph** tab draws every path the application took, built from the events of each request. A path starts at
+the route of the request on the left, goes through the application methods that were running, and ends at what a
+sensor saw, like a cipher, a query, a file or a blocked call. A forward or a redirect goes on to the route it names,
+shown at the far right as an exit. Lines get wider with the number of events, and a node shows its count.
+
+Click a node to follow its paths, everything that does not lead to or from it fades. The panel beside the graph shows
+what the node captured, where it comes from and where it leads, and **Show these events** opens them in a search.
+A picked node has its own address, like `#graph/effect%3Aget-ciphers`. The Route box shows the paths of one route.
+
+Only your application's code is drawn, as set by `--app`, so the JDK, the server and libraries don't clutter it. Sensors
+that only describe the request, like who the user was, are left out unless you tick **Include request details**. The
+graph follows Clear and App events only, and it redraws by itself when new events arrive. The stack of an event is cut
+at `jot.output.stack` frames, 25 by default, so an older event may be missing the outer methods. TicketBook records 500.
+
 ## Searching and refreshing
 
 The search box under the question box finds individual events, newest first, and each row opens in the event viewer.

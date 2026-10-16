@@ -1393,5 +1393,143 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(400, ctx.exception.code)
 
 
+class GraphTests(unittest.TestCase):
+    PREFIXES = ["com.acme", "org.apache.jsp"]
+    LIST_PAGE = "org.apache.jsp.list_jsp._jspService(list_jsp.java:10)"
+    GET = "com.acme.Database.getTickets(Database.java:20)"
+    ENCRYPT = "com.acme.Ticket.encrypt(Ticket.java:30)"
+    SERVLET = "jakarta.servlet.http.HttpServlet.service(HttpServlet.java:710)"
+    FILTER = "org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:132)"
+
+    def setUp(self):
+        self.env = Env()
+        self.env.ingestor.app_prefixes = tuple(self.PREFIXES)
+        self.app = server.App(self.env.db, self.env.ingestor)
+        jdk = "java.base/javax.crypto.Cipher.getInstance(Cipher.java:534)"
+        chain = [jdk, self.ENCRYPT, self.GET, self.LIST_PAGE, self.FILTER]
+        self.env.write(
+            event(1, sensor="get-routes", capture="/app/list.jsp", trace=1, stack=[self.SERVLET, self.FILTER]),
+            event(2, sensor="get-users", capture="Guest", trace=1, stack=[self.SERVLET, self.FILTER]),
+            event(3, sensor="get-ciphers", capture="AES", trace=1, stack=chain),
+            event(4, sensor="get-ciphers", capture="DES", trace=1, stack=chain),
+            event(5, sensor="get-routes", capture="/app/profile", trace=2, stack=[self.SERVLET, self.FILTER]),
+            event(6, sensor="get-forwards", capture="/list.jsp", trace=2,
+                  stack=["jakarta.servlet.RequestDispatcher.forward(R.java:1)", "com.acme.ProfileController.doPost(P.java:28)", self.FILTER]),
+            event(7, sensor="get-hashes", capture="SHA-256", trace=99, stack=["java.base/a.B.c(B.java:1)", "com.acme.Startup.run(S.java:1)"]),
+            event(8, sensor="block-exec", action="blocked", capture="[[open]]", trace=1,
+                  stack=["java.base/java.lang.Runtime.exec(R.java:1)", self.LIST_PAGE, self.FILTER]))
+        self.env.ingestor.poll()
+
+    def graph(self, **kw):
+        g = self.app.graph(**kw)
+        return g, {n["id"]: n for n in g["nodes"]}, {(e["from"], e["to"]): e["events"] for e in g["edges"]}
+
+    def test_a_path_runs_from_the_route_through_the_application_code_to_what_the_sensor_saw(self):
+        g, nodes, edges = self.graph()
+        self.assertEqual(2, edges[("route:/app/list.jsp", "code:com.acme.Database.getTickets")])
+        self.assertEqual(2, edges[("code:com.acme.Database.getTickets", "code:com.acme.Ticket.encrypt")])
+        self.assertEqual(2, edges[("code:com.acme.Ticket.encrypt", "effect:get-ciphers")])
+        self.assertEqual(2, nodes["effect:get-ciphers"]["events"])
+        self.assertEqual([("AES", 1), ("DES", 1)], sorted(nodes["effect:get-ciphers"]["captures"]))
+
+    def test_the_jsp_page_is_the_route_and_is_not_drawn_twice(self):
+        g, nodes, edges = self.graph()
+        self.assertFalse([i for i in nodes if "list_jsp" in i])
+
+    def test_jdk_and_server_frames_are_not_drawn(self):
+        g, nodes, edges = self.graph()
+        self.assertFalse([i for i in nodes if "java.base" in i or "catalina" in i or "Cipher" in i])
+
+    def test_a_blocked_event_marks_its_effect(self):
+        g, nodes, edges = self.graph()
+        self.assertEqual(1, nodes["effect:block-exec"]["blocked"])
+        self.assertEqual(0, nodes["effect:get-ciphers"]["blocked"])
+        self.assertIn(("route:/app/list.jsp", "effect:block-exec"), edges)
+
+    def test_request_details_are_left_out_unless_asked_for(self):
+        g, nodes, edges = self.graph()
+        self.assertNotIn("effect:get-users", nodes)
+        g, nodes, edges = self.graph(details=True)
+        self.assertEqual(1, edges[("route:/app/list.jsp", "effect:get-users")])
+
+    def test_a_forward_leads_on_to_the_route_it_names(self):
+        g, nodes, edges = self.graph()
+        self.assertEqual(1, edges[("effect:get-forwards", "exit:/app/list.jsp")])
+        self.assertEqual("exit", nodes["exit:/app/list.jsp"]["kind"])
+        self.assertIn(("code:com.acme.ProfileController.doPost", "effect:get-forwards"), edges)
+
+    def test_events_outside_a_request_start_from_their_own_route(self):
+        g, nodes, edges = self.graph()
+        self.assertIn(("route:(outside a request)", "code:com.acme.Startup.run"), edges)
+
+    def test_one_route_can_be_picked(self):
+        g, nodes, edges = self.graph(route="/app/profile")
+        self.assertEqual(["route:/app/profile"], [n["id"] for n in g["nodes"] if n["kind"] == "route"])
+        self.assertIn("/app/list.jsp", g["routes"], "the list of routes is of all of them")
+
+    def test_it_follows_the_filters(self):
+        self.env.write(event(20, sensor="get-hashes", capture="MD5", trace=50, stack=["java.base/a.B.c(B.java:1)", "java.base/d.E.f(E.java:1)"]))
+        self.env.ingestor.poll()
+        g, nodes, edges = self.graph()
+        self.assertNotIn("effect:get-hashes", [e[1] for e in edges if e[1] == "effect:get-hashes" and "MD5" in str(nodes[e[1]]["captures"])])
+        self.app.set_since(int(time.time() * 1000) + 100000)
+        g, nodes, edges = self.graph()
+        self.assertEqual([], g["nodes"])
+
+    CHROME = next((c for c in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                               shutil.which("google-chrome") or "", shutil.which("chromium") or "") if c and os.path.exists(c)), None)
+
+    def render(self, address):
+        httpd = server.make_server(self.app, "127.0.0.1", 0)
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        done = subprocess.run([self.CHROME, "--headless=new", "--disable-gpu", "--no-first-run",
+                               "--user-data-dir=" + tempfile.mkdtemp(), "--virtual-time-budget=8000", "--dump-dom",
+                               "http://127.0.0.1:%d/%s" % (port, address)], capture_output=True, text=True, timeout=90)
+        return done.stdout
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_the_graph_page_draws_the_paths(self):
+        page = self.render("#graph")
+        self.assertEqual(1, len(re.findall(r'<aside class="card" id="graphDetail"[^>]* hidden', page)), "nothing is picked, so no panel")
+        self.assertIn('<svg class="graph"', page)
+        for expected in ("/app/list.jsp", "Database.getTickets", "Ticket.encrypt", "get-ciphers"):
+            self.assertIn(expected, page)
+        self.assertNotIn("_jspService", page, "the page is the route")
+        self.assertIn("route out", page)
+        self.assertNotIn(">null<", page)
+        self.assertRegex(page, r'class="node effect blocked"')
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_a_picked_node_follows_its_paths_and_dims_the_rest(self):
+        page = self.render("#graph/effect%3Aget-ciphers")
+        self.assertRegex(page, r'<g class="node effect picked"')
+        panel = re.search(r'<aside class="card" id="graphDetail"([^>]*)>(.*?)</aside>', page, re.S)
+        self.assertNotIn("hidden", panel.group(1))
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", panel.group(2)))
+        for expected in ("get-ciphers", "AES", "DES", "Comes from", "Ticket.encrypt", "Show these events"):
+            self.assertIn(expected, text)
+        self.assertNotIn("null", text.lower())
+        self.assertRegex(page, r'class="node route off"', "a route that does not lead there is dimmed")
+        self.assertRegex(page, r'class="edge on"')
+
+    def test_over_http(self):
+        httpd = server.make_server(self.app, "127.0.0.1", 0)
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        get = lambda path: urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), headers={"Host": "127.0.0.1:%d" % port}))
+        with get("/api/graph") as r:
+            self.assertTrue(json.load(r)["nodes"])
+        with get("/api/graph?route=%27%3B%20DROP%20TABLE%20events_raw%3B--") as r:
+            self.assertEqual([], json.load(r)["nodes"])
+        with get("/graph.js") as r:
+            self.assertIn(b"layout", r.read())
+        self.assertEqual(8, store.run_query(self.env.db, "SELECT COUNT(*) FROM events_raw")["rows"][0][0])
+
+
 if __name__ == "__main__":
     unittest.main()

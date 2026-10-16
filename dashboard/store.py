@@ -468,6 +468,105 @@ def search_where(query):
     return "\n  AND ".join(parts)
 
 
+# ---------------------------------------------------------------------------- graph
+
+NO_REQUEST = "(outside a request)"
+JUMPS = ("get-forwards", "get-redirects")   # sensors whose capture is another route
+
+
+def _short(name):
+    """com.acme.ticketbook.Ticket.encrypt becomes Ticket.encrypt."""
+    return ".".join(name.split(".")[-2:])
+
+
+def _page_of(route):
+    """/ticketbook/ssrf.jsp is compiled to ssrf_jsp."""
+    last = (route or "").rsplit("/", 1)[-1]
+    return last.replace(".", "_") if last else None
+
+
+def graph_rows(db_path, route=None):
+    """One row per distinct (route, sensor, action, capture, stack) with the number of events. The route is the first
+    request the event happened in, as the get-routes sensor saw it."""
+    where = "WHERE sensor <> 'get-routes' AND stack IS NOT NULL"
+    sql = """SELECT route, sensor, action, capture, stack, COUNT(*) FROM (
+               SELECT (SELECT r.capture FROM events r WHERE r.run = e.run AND r.trace = e.trace AND r.sensor = 'get-routes'
+                       ORDER BY r.pk LIMIT 1) AS route, e.sensor, e.action, e.capture, e.stack
+               FROM events e %s) %s GROUP BY 1, 2, 3, 4, 5""" % (where, "WHERE route = %s" % _lit(route) if route else "")
+    return run_query(db_path, sql, limit=GRAPH_ROW_LIMIT)
+
+
+GRAPH_ROW_LIMIT = 30000
+
+
+def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=False):
+    """Nodes and edges for the paths through the application. Every event is a path that starts at the route of its
+    request, goes through the application methods that were running, and ends at what the sensor saw, which is an
+    effect. A forward or a redirect also leads on to the route it names, which is an exit. Plumbing that only
+    describes the request, like who the user is, is left out unless details is set."""
+    nodes, edges = {}, {}
+
+    def node(kind, key, label, full=None):
+        n = nodes.setdefault((kind, key), {"id": "%s:%s" % (kind, key), "kind": kind, "label": label, "full": full or key,
+                                           "events": 0, "blocked": 0, "monitored": 0, "captures": {}})
+        return n
+
+    def link(a, b, count):
+        e = edges.setdefault((a["id"], b["id"]), {"from": a["id"], "to": b["id"], "events": 0})
+        e["events"] += count
+
+    route_names = sorted(routes_seen)
+    for route, sensor, action, capture, stack, count in rows:
+        frames = json.loads(stack) if stack else []
+        if not frames:
+            continue
+        first = frame_name(frames[0]) or ""
+        # a sensor on a servlet's service method describes the request. One on sendRedirect or forward is something done
+        metadata = first.startswith(SERVLET_API) and first.endswith(".service")
+        if metadata and not details:
+            continue
+        route = route or NO_REQUEST
+        chain = [node("route", route, route)]
+        chain[0]["events"] += count
+        if not metadata:
+            names = []
+            for f in reversed(frames):
+                if frame_kind(f, app_prefixes) != "app":
+                    continue
+                name = frame_name(f)
+                if name and (not names or names[-1] != name) and not name.startswith(SERVLET_API):
+                    names.append(name)
+            # the page the route names is compiled to a class, and every method of it, like the tag helpers Jasper
+            # generates, is that page. The route already stands for it, so it isn't drawn again
+            page = _page_of(route)
+            if page:
+                names = [x for x in names if not x.startswith("org.apache.jsp.%s." % page)]
+            for name in names:
+                n = node("code", name, _short(name), name)
+                n["events"] += count
+                chain.append(n)
+        effect = node("effect", sensor, sensor)
+        effect["events"] += count
+        if action in ("blocked", "monitored"):
+            effect[action] += count
+        effect["captures"][capture or ""] = effect["captures"].get(capture or "", 0) + count
+        chain.append(effect)
+        for a, b in zip(chain, chain[1:]):
+            link(a, b, count)
+        if sensor in JUMPS and capture:
+            target = capture.strip()
+            match = next((r for r in route_names if r == target or r.endswith("/" + target.lstrip("/"))), None)
+            exit_node = node("exit", match or target.lstrip("/"), match or target.lstrip("/"))
+            exit_node["events"] += count
+            link(effect, exit_node, count)
+
+    out_nodes = sorted(nodes.values(), key=lambda n: (-n["events"], n["label"]))
+    for n in out_nodes:
+        n["captures"] = sorted(n["captures"].items(), key=lambda kv: -kv[1])[:25]
+    return {"nodes": out_nodes, "edges": sorted(edges.values(), key=lambda e: -e["events"]),
+            "routes": route_names, "truncated": truncated}
+
+
 # ---------------------------------------------------------------------------- queries
 
 class QueryError(Exception):

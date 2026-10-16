@@ -24,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_BODY = 64 * 1024
 MAX_REPAIRS = 2
 MAX_GRID_ROWS = 5000
-SCRIPTS = {"/dom.js": "dom.js", "/grid.js": "grid.js", "/recent.js": "recent.js"}   # the only files served besides the page
+SCRIPTS = {"/dom.js": "dom.js", "/grid.js": "grid.js", "/recent.js": "recent.js", "/graph.js": "graph.js"}   # the only files served besides the page
 
 
 def load_env(path):
@@ -188,6 +188,13 @@ class App:
         shown = store.run_query(self.db_path, "SELECT COUNT(*) FROM events WHERE %s" % where)["rows"][0][0]
         every = store.run_query(self.db_path, "SELECT COUNT(*) FROM events_raw WHERE ts >= %d AND %s" % (since, where))["rows"][0][0]
         return {"sql": sql, "matches": shown, "left_out": every - shown}
+
+    def graph(self, route=None, details=False):
+        """The paths through the application, from each route through the methods that ran to what the sensors saw."""
+        rows = store.graph_rows(self.db_path, route or None)
+        routes = [r[0] for r in store.run_query(self.db_path, """
+            SELECT capture, COUNT(*) FROM events WHERE sensor = 'get-routes' GROUP BY capture ORDER BY capture""", limit=2000)["rows"]]
+        return store.build_graph(rows["rows"], routes, self.ingestor.app_prefixes, bool(details), rows["truncated"])
 
     def set_app_only(self, on):
         """Leave out observed events that have no frame from the application, which is everything the JDK and the
@@ -375,6 +382,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.control_state())
             if url.path == "/api/sensors":
                 return self._send(200, self.app.sensors())
+            if url.path == "/api/graph":
+                q = parse_qs(url.query)
+                return self._send(200, self.app.graph(q.get("route", [""])[0], q.get("details", [""])[0] == "1"))
             if url.path == "/api/search":
                 return self._send(200, self.app.search(parse_qs(url.query).get("q", [""])[0]))
             if url.path == "/api/event":

@@ -155,8 +155,8 @@
   .issue { padding: 6px 10px; border-radius: 6px; margin-top: 6px; font-size: 13px; background: var(--monitored-bg); color: var(--monitored); overflow-wrap: anywhere; }
   .issue.info { background: var(--code); color: var(--muted); }
   #jotDetail { position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 32px); overflow: auto; }
-  #jotDetail .close { float: right; border: 0; background: transparent; color: var(--muted); font-size: 22px; line-height: 1; padding: 0 4px; }
-  #jotDetail .close:hover { color: var(--text); }
+  #graphDetail .close, #jotDetail .close { float: right; border: 0; background: transparent; color: var(--muted); font-size: 22px; line-height: 1; padding: 0 4px; }
+  #graphDetail .close:hover, #jotDetail .close:hover { color: var(--text); }
   table.list td { overflow-wrap: normal; }
   table.list td:first-child { white-space: nowrap; }
   #jotDetail h2 { margin: 0 0 4px; font-size: 17px; overflow-wrap: anywhere; }
@@ -197,6 +197,38 @@
   tr.clickable { cursor: pointer; }
   tr.clickable:hover td { background: var(--code); }
   tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  /* the path graph */
+  .graphtools { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; }
+  .graphtools label { display: inline-flex; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; }
+  .graphlayout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 12px; }
+  .graphlayout.has-detail { grid-template-columns: minmax(0, 1fr) 340px; }
+  .graphscroll { overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); max-height: calc(100vh - 230px); }
+  #graphDetail { position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 40px); overflow: auto; }
+  #graphDetail h2 { margin: 0 0 4px; font-size: 16px; overflow-wrap: anywhere; }
+  #graphDetail h4 { margin: 14px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  #graphDetail ul { margin: 0; padding: 0; list-style: none; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #graphDetail li { padding: 2px 0; overflow-wrap: anywhere; }
+  #graphDetail li.go { cursor: pointer; } #graphDetail li.go:hover { color: var(--accent); }
+  #graphDetail .n { color: var(--muted); }
+  svg.graph text { font: 12px ui-sans-serif, system-ui, sans-serif; fill: var(--text); pointer-events: none; }
+  svg.graph .coltitle { fill: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  svg.graph .edge { fill: none; stroke: var(--muted); opacity: .28; }
+  svg.graph .edge.on { stroke: var(--accent); opacity: .9; }
+  svg.graph .edge.off { opacity: .06; }
+  svg.graph .node { cursor: pointer; }
+  svg.graph .node rect { fill: var(--code); stroke: var(--line); }
+  svg.graph .node.route rect { fill: var(--accent); stroke: var(--accent); }
+  svg.graph .node.route text { fill: var(--accent-text); font-weight: 600; }
+  svg.graph .node.exit rect { fill: transparent; stroke: var(--accent); stroke-dasharray: 4 3; }
+  svg.graph .node.effect rect { fill: var(--observed-bg); stroke: var(--observed); }
+  svg.graph .node.effect.monitored rect { fill: var(--monitored-bg); stroke: var(--monitored); }
+  svg.graph .node.effect.blocked rect { fill: var(--blocked-bg); stroke: var(--blocked); }
+  svg.graph .node .count { fill: var(--muted); text-anchor: end; font-size: 11px; }
+  svg.graph .node.route .count { fill: var(--accent-text); opacity: .8; }
+  svg.graph .node.off { opacity: .15; }
+  svg.graph .node.picked rect { stroke-width: 2.5; stroke: var(--text); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -2px; border: 1px solid var(--line); }
 </style>
 </head>
 <body>
@@ -204,7 +236,8 @@
   <h1>JOT</h1>
   <nav aria-label="Pages">
     <a href="#events" id="navEvents" class="active">Events</a>
-    <a href="#policy" id="navPolicy">Policy</a>
+    <a href="#graph" id="navGraph">Graph</a>
+<a href="#policy" id="navPolicy">Policy</a>
   </nav>
   <div class="menu" id="recentMenu">
     <button type="button" id="recentBtn" aria-haspopup="true" aria-expanded="false">Recent questions &#9662;</button>
@@ -250,6 +283,30 @@
 </main>
 
 <!-- ============ policy ============ -->
+<main id="graphPage" hidden>
+  <div class="card">
+    <div class="graphtools">
+      <label>Route <select id="graphRoute" aria-label="Route"><option value="">All routes</option></select></label>
+      <label title="Also show the sensors that only describe the request, like who the user was and which parameters it had"><input type="checkbox" id="graphDetails"> Include request details</label>
+      <button type="button" class="small" id="graphRefresh">Refresh</button>
+      <span class="hint" id="graphSummary"></span>
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--accent)"></i>route in</span>
+      <span><i style="background:var(--code)"></i>application code</span>
+      <span><i style="background:var(--observed-bg);border-color:var(--observed)"></i>what a sensor saw</span>
+      <span><i style="background:var(--monitored-bg);border-color:var(--monitored)"></i>reported only</span>
+      <span><i style="background:var(--blocked-bg);border-color:var(--blocked)"></i>blocked</span>
+      <span><i style="border-style:dashed;border-color:var(--accent)"></i>route out, a forward or redirect</span>
+      <span>Click anything to follow its paths. Lines are as wide as the number of events.</span>
+    </div>
+  </div>
+  <div class="graphlayout" id="graphLayout">
+    <div class="graphscroll" id="graphScroll"></div>
+    <aside class="card" id="graphDetail" hidden></aside>
+  </div>
+</main>
+
 <main id="policyPage" hidden>
   <div class="policy" id="policyGrid">
     <div class="card wide" id="enforcementCard">
@@ -293,6 +350,7 @@
 <script src="/dom.js"></script>
 <script src="/grid.js"></script>
 <script src="/recent.js"></script>
+<script src="/graph.js"></script>
 <script>
 "use strict";
 
@@ -357,12 +415,18 @@ function showPage(address) {
     closeEvent();
     if (selected) pendingSelect = decodeURIComponent(selected);
   }
-  currentPage = name === "policy" ? "policy" : "events";
+  currentPage = name === "policy" ? "policy" : name === "graph" ? "graph" : "events";
   $("eventsPage").hidden = currentPage !== "events";
+  $("graphPage").hidden = currentPage !== "graph";
   $("policyPage").hidden = currentPage !== "policy";
   $("navEvents").className = currentPage === "events" ? "active" : "";
+  $("navGraph").className = currentPage === "graph" ? "active" : "";
   $("navPolicy").className = currentPage === "policy" ? "active" : "";
   if (currentPage === "policy") { refreshControl(); loadJots(); }
+  if (currentPage === "graph") {
+    if (selected) graphPicked = decodeURIComponent(selected);
+    loadGraph();
+  }
   setTimer();
 }
 window.addEventListener("hashchange", () => showPage(location.hash.slice(1)));
@@ -460,8 +524,10 @@ async function refreshControl() {
 }
 
 // ---- status
+let lastStatus = null;
 async function refreshStatus() {
   const s = await api("/api/status");
+  lastStatus = s;
   $("stats").replaceChildren(...[
     el("span", {}, el("b", { text: s.events.toLocaleString() }), " events"),
     el("span", { class: s.blocked ? "blocked" : "" }, el("b", { text: s.blocked.toLocaleString() }), " blocked"),
@@ -848,6 +914,130 @@ function drawJotDetail(i) {
 $("jotFilter").addEventListener("input", drawJots);
 $("jotKind").addEventListener("change", drawJots);
 
+// ---- the path graph. Every event is a path from the route of its request, through the application methods that were
+// running, to what the sensor saw. Drawn together they show where the application does what.
+let graphData = null;
+let graphPicked = null;
+let graphAt = null;       // the newest event when the graph was drawn, so it only redraws when something is new
+
+async function loadGraph() {
+  const route = $("graphRoute").value;
+  try {
+    const query = "?route=" + encodeURIComponent(route) + "&details=" + ($("graphDetails").checked ? "1" : "0");
+    graphData = await api("/api/graph" + query);
+    graphAt = lastStatus ? lastStatus.last_pk : null;
+    const select = $("graphRoute");
+    select.replaceChildren(el("option", { value: "", text: "All routes" }),
+      ...graphData.routes.map((r) => el("option", { value: r, text: r, selected: r === route ? "" : null })));
+    select.value = route;
+    if (!graphData.nodes.some((n) => n.id === graphPicked)) graphPicked = null;
+    drawGraph();
+  } catch (e) {
+    $("graphScroll").replaceChildren(el("div", { class: "error", text: e.message }));
+  }
+}
+
+// pick or drop a node. The address follows, so a picked node can be linked to, without reloading anything
+function pickNode(id) {
+  graphPicked = id;
+  try { history.replaceState(null, "", "#graph" + (id ? "/" + encodeURIComponent(id) : "")); } catch (e) { /* not important */ }
+  drawGraph();
+}
+
+function graphLabel(text, max) { return text.length > max ? text.slice(0, max - 1) + "…" : text; }
+
+function drawGraph() {
+  const { nodes, edges } = graphData;
+  if (!nodes.length) {
+    $("graphScroll").replaceChildren(el("div", { class: "empty", text: "No paths yet. Use the application and they appear here." }));
+    $("graphSummary").textContent = "";
+    $("graphDetail").hidden = true;
+    $("graphLayout").classList.remove("has-detail");
+    return;
+  }
+  const L = JotGraph.layout(nodes, edges);
+  const lit = graphPicked ? JotGraph.through(graphPicked, edges) : null;
+  // fitted to the width of the page when it can be, but never shrunk below a size that can be read, it scrolls instead
+  const svg = svgEl("svg", { class: "graph", width: L.width, height: L.height, viewBox: "0 0 " + L.width + " " + L.height, role: "img",
+    style: "width:100%;height:auto;min-width:" + Math.round(L.width * 0.85) + "px;display:block",
+    "aria-label": "Paths from routes through the application to what the sensors saw" });
+  L.titles.forEach((t, c) => { if (t) svg.append(svgEl("text", { class: "coltitle", x: L.colX[c], y: 22 }, t)); });
+  const mid = (id) => { const p = L.pos.get(id); return { x: p.x, y: p.y + L.nodeH / 2 }; };
+  for (const e of edges) {
+    if (!L.pos.has(e.from) || !L.pos.has(e.to)) continue;
+    const path = svgEl("path", { d: JotGraph.curve(mid(e.from), mid(e.to), L.nodeW),
+      "stroke-width": String(Math.min(6, 1 + Math.log2(e.events) / 1.6)),
+      class: "edge" + (lit ? (lit.has(e.from) && lit.has(e.to) ? " on" : " off") : "") });
+    path.append(svgEl("title", {}, nodes.find((n) => n.id === e.from).label + " → " + nodes.find((n) => n.id === e.to).label + ", " + e.events + " events"));
+    svg.append(path);
+  }
+  for (const n of nodes) {
+    const p = L.pos.get(n.id);
+    const cls = "node " + n.kind + (n.kind === "effect" && n.blocked ? " blocked" : n.kind === "effect" && n.monitored ? " monitored" : "")
+      + (lit && !lit.has(n.id) ? " off" : "") + (n.id === graphPicked ? " picked" : "");
+    const g = svgEl("g", { class: cls, transform: "translate(" + p.x + "," + p.y + ")", tabindex: "0", role: "button" });
+    g.append(svgEl("title", {}, n.full + " (" + n.events + " events)"));
+    g.append(svgEl("rect", { width: L.nodeW, height: L.nodeH, rx: 6 }));
+    g.append(svgEl("text", { x: 8, y: 17 }, graphLabel(n.label, 28)));
+    g.append(svgEl("text", { class: "count", x: L.nodeW - 8, y: 17 }, String(n.events)));
+    const pick = (ev) => { ev.stopPropagation(); pickNode(graphPicked === n.id ? null : n.id); };
+    g.addEventListener("click", pick);
+    g.addEventListener("keydown", (ev) => { if (ev.key === "Enter") pick(ev); });
+    svg.append(g);
+  }
+  svg.addEventListener("click", () => { if (graphPicked) pickNode(null); });
+  const scroll = $("graphScroll");
+  const keep = [scroll.scrollLeft, scroll.scrollTop];
+  scroll.replaceChildren(svg);
+  scroll.scrollLeft = keep[0]; scroll.scrollTop = keep[1];
+  const kinds = (k) => nodes.filter((n) => n.kind === k).length;
+  $("graphSummary").textContent = kinds("route") + " routes, " + kinds("code") + " methods, " + kinds("effect") + " kinds of effect, " + edges.length + " paths"
+    + (graphData.truncated ? " (only the first part of the events were used)" : "");
+  drawGraphDetail();
+}
+
+function drawGraphDetail() {
+  const box = $("graphDetail");
+  const n = graphData.nodes.find((x) => x.id === graphPicked);
+  $("graphLayout").classList.toggle("has-detail", !!n);
+  box.hidden = !n;
+  if (!n) return;
+  const byId = new Map(graphData.nodes.map((x) => [x.id, x]));
+  const neighbours = (side, other) => graphData.edges.filter((e) => e[side] === n.id)
+    .map((e) => ({ node: byId.get(e[other]), events: e.events })).filter((x) => x.node).slice(0, 12);
+  const list = (items) => el("ul", {}, ...items.map((x) => el("li", { class: "go", title: "Follow this one", onclick: () => pickNode(x.node.id) },
+    el("span", { text: x.node.label }), el("span", { class: "n", text: "  " + x.events }))));
+  const from = neighbours("to", "from"), to = neighbours("from", "to");
+  const query = n.kind === "effect" ? "sensor:" + n.label : '"' + n.full.replace(/"/g, "") + '"';
+  const kind = { route: "A route, where a request comes in", code: "Application code", effect: "What a sensor saw", exit: "A route a forward or redirect leads to" }[n.kind];
+  box.replaceChildren(...[
+    el("button", { class: "close", type: "button", title: "Close", "aria-label": "Close", onclick: () => pickNode(null), text: "×" }),
+    el("h2", { text: n.label }),
+    el("div", { class: "hint", text: kind }),
+    n.full !== n.label ? el("div", { class: "hint", text: n.full }) : null,
+    el("div", { class: "hint", text: n.events.toLocaleString() + " events" + (n.blocked ? ", " + n.blocked + " blocked" : "") + (n.monitored ? ", " + n.monitored + " reported only" : "") }),
+    n.captures.length ? el("h4", { text: "What it captured" }) : null,
+    n.captures.length ? el("ul", {}, ...n.captures.map(([c, count]) => el("li", {}, el("span", { text: c === "" ? "(nothing)" : c }), el("span", { class: "n", text: "  " + count })))) : null,
+    from.length ? el("h4", { text: "Comes from" }) : null,
+    from.length ? list(from) : null,
+    to.length ? el("h4", { text: "Leads to" }) : null,
+    to.length ? list(to) : null,
+    el("div", { class: "row" }, el("button", { class: "primary small", type: "button", text: "Show these events", onclick: () => openSearch(query) })),
+  ].filter(Boolean));
+}
+
+// show the events behind something, as a search on the Events page
+function openSearch(query) {
+  location.hash = "#events";
+  $("searchBox").value = query;
+  search(query);
+}
+
+$("graphRoute").addEventListener("change", () => { graphPicked = null; history.replaceState(null, "", "#graph"); loadGraph(); });
+$("graphDetails").addEventListener("change", loadGraph);
+$("graphRefresh").addEventListener("click", loadGraph);
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && graphPicked && currentPage === "graph") pickNode(null); });
+
 // ---- keeping things current
 function setTimer() {
   clearInterval(timer);
@@ -864,6 +1054,7 @@ async function refreshNow() {
   try {
     await Promise.all([refreshStatus(), refreshControl()]);
     if (currentPage === "policy") await loadJots();
+    else if (currentPage === "graph") await loadGraph();
     else if (current && !busy) {
       const r = await api("/api/sql", { sql: current.sql, limit: current.chart === "grid" ? 5000 : undefined });
       show(current, r);
@@ -878,6 +1069,7 @@ async function tick() {
     await Promise.all([refreshStatus(), refreshControl()]);
     stamp();
     if (currentPage === "policy") { await loadJots(); return; }
+    if (currentPage === "graph") { if (lastStatus && lastStatus.last_pk !== graphAt) await loadGraph(); return; }
     // refresh the current view, unless someone is editing its SQL
     if ($("live").checked && current && !busy && !$("results").querySelector("details[open]")) {
       const r = await api("/api/sql", { sql: current.sql, limit: current.chart === "grid" ? 5000 : undefined });
