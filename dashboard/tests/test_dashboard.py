@@ -3,6 +3,7 @@ import http.server
 import io
 import json
 import os
+import ssl
 import sys
 import tempfile
 import threading
@@ -309,7 +310,7 @@ class ModelApiTests(unittest.TestCase):
         self.assertEqual("test-key", headers["x-api-key"])
         self.assertEqual("2023-06-01", headers["anthropic-version"])
         self.assertEqual(llm.DEFAULT_MODEL, body["model"])
-        self.assertEqual({"type": "tool", "name": "report"}, body["tool_choice"])
+        self.assertNotIn("tool_choice", body)  # forcing a tool is rejected by some models
         self.assertEqual("report", body["tools"][0]["name"])
         prompt = body["messages"][0]["content"]
         for text in ("which ciphers?", "CREATE TABLE events", "- s: d", "SQL: SELECT 2"):
@@ -331,6 +332,12 @@ class ModelApiTests(unittest.TestCase):
         self.fake(reply={"content": [{"type": "text", "text": "sorry"}]})
         with self.assertRaises(llm.LLMError):
             llm.generate("q", "s", [])
+
+    def test_tls_is_verified_but_not_strict(self):
+        ctx = llm.tls_context()
+        self.assertEqual(ssl.CERT_REQUIRED, ctx.verify_mode)
+        self.assertTrue(ctx.check_hostname)
+        self.assertFalse(ctx.verify_flags & ssl.VERIFY_X509_STRICT)
 
     def test_the_model_can_be_chosen(self):
         fake = self.fake(reply=self.tool_reply(title="t", sql="", chart="table", explanation="e"))

@@ -29,7 +29,8 @@ Without a key the dashboard still works. The preset views and the SQL box don't 
 | `--port`, `--host` | Where to listen. Default `127.0.0.1:8765`. See the note on access below |
 
 Environment variables are `ANTHROPIC_API_KEY`, `JOT_DASHBOARD_MODEL` (default `claude-sonnet-5-5`) and
-`JOT_DASHBOARD_API_URL` if requests have to go through a gateway.
+`JOT_DASHBOARD_API_URL` if requests have to go through a gateway. If your network inspects TLS and the
+model call fails with a certificate error, set `JOT_DASHBOARD_CA_BUNDLE` to the path of your company's CA file.
 
 ## Asking questions
 

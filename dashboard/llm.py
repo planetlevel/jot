@@ -7,6 +7,7 @@ the query runs locally, so the answer comes back to the browser without the data
 
 import json
 import os
+import ssl
 import urllib.error
 import urllib.request
 
@@ -68,6 +69,16 @@ def configured():
     return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
+def tls_context():
+    """The TLS settings for calling the model. Certificates and host names are fully checked.
+    Python 3.13 added a stricter rule that rejects many company inspection proxy CAs, so that one
+    flag is relaxed. JOT_DASHBOARD_CA_BUNDLE names a CA file to trust, for a proxy whose CA isn't
+    already known to Python."""
+    ctx = ssl.create_default_context(cafile=os.environ.get("JOT_DASHBOARD_CA_BUNDLE") or None)
+    ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    return ctx
+
+
 def api_url():
     return os.environ.get("JOT_DASHBOARD_API_URL", API_URL)
 
@@ -117,12 +128,11 @@ def generate(question, schema, sensors, history=(), error=None, timeout=60):
         "system": SYSTEM,
         "messages": [{"role": "user", "content": build_prompt(question, schema, sensors, history, error)}],
         "tools": [TOOL],
-        "tool_choice": {"type": "tool", "name": "report"},
     }
     req = urllib.request.Request(api_url(), data=json.dumps(body).encode(), method="POST", headers={
         "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=tls_context()) as resp:
             data = json.load(resp)
     except urllib.error.HTTPError as e:
         detail = ""
