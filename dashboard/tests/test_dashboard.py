@@ -534,6 +534,137 @@ sensors:
 """
 
 
+JOTS_A = """
+sensors:
+- name: 'get-routes'
+  description: 'Identifies the route'
+  methods: ['javax.servlet.Servlet.service']
+  captures: ['#P0.getRequestURI()']
+  matchers: ['!null']
+- name: 'never-fires'
+  description: 'No events will ever come'
+  methods: ['a.b.C.method']
+- name: 'no-methods'
+- name: 'bad-method'
+  methods: ['not a method']
+- name: 'block-exec'
+  description: 'No processes'
+  methods: ['java.lang.ProcessBuilder.<init>']
+  scopes: ['javax.servlet.Servlet.service']
+  exception: 'no processes'
+- name: 'example'
+  methods: ['a.b.c.Class.method']
+reports:
+- name: 'Routes by users'
+  type: 'compare'
+  rows: 'get-routes'
+  cols: 'get-users'
+- name: 'Old series'
+  type: 'series'
+  rows: 'get-routes'
+  cols: 'get-routes'
+"""
+
+JOTS_B = """
+sensors:
+- name: 'get-routes'
+  methods: ['x.Y.z']
+- name: 'block-staged'
+  methods: ['java.net.Socket.<init>']
+  exception: 'no sockets'
+  enforce: false
+"""
+
+
+class JotsViewTests(unittest.TestCase):
+    def setUp(self):
+        self.env = Env()
+        for name, text in (("a.jot", JOTS_A), ("b.jot", JOTS_B)):
+            with open(os.path.join(self.env.dir, name), "w") as f:
+                f.write(text)
+        store.load_sensors(self.env.ingestor.db, [self.env.dir])
+        store.load_reports(self.env.ingestor.db, [self.env.dir])
+        now = int(time.time() * 1000)
+        self.env.write(event(1, sensor="get-routes", capture="/a", ts=now),
+                       event(2, sensor="get-routes", capture="/b", ts=now - 7200 * 1000),
+                       event(3, sensor="block-exec", action="blocked", ts=now),
+                       event(4, sensor="block-exec", action="monitored", ts=now),
+                       event(5, sensor="mystery", ts=now),
+                       event(6, sensor="jot-control", capture="x=block", ts=now))
+        self.env.ingestor.poll()
+        self.app = server.App(self.env.db, self.env.ingestor)
+        self.view = self.app.jots()
+        self.by_name = {s["name"]: s for s in self.view["sensors"]}
+
+    def test_lists_sensors_rules_and_reports_with_their_definitions(self):
+        self.assertEqual({"get-routes", "never-fires", "no-methods", "bad-method", "block-exec", "block-staged"},
+                         set(self.by_name))
+        routes = self.by_name["get-routes"]
+        self.assertEqual(("sensor", "observe"), (routes["kind"], routes["mode"]))
+        self.assertEqual(["javax.servlet.Servlet.service"], routes["methods"])
+        self.assertEqual(["#P0.getRequestURI()"], routes["captures"])
+        self.assertEqual(["!null"], routes["matchers"])
+        self.assertIn("name: get-routes", routes["definition"])
+        self.assertEqual(["Routes by users"], [r["name"] for r in self.view["reports"]])
+
+    def test_the_first_definition_wins_like_the_agent_and_the_duplicate_is_reported(self):
+        self.assertEqual("a.jot", self.by_name["get-routes"]["file"])
+        self.assertEqual(["javax.servlet.Servlet.service"], self.by_name["get-routes"]["methods"])
+        self.assertTrue(any("get-routes is defined again in b.jot" in i["text"] and "a.jot" in i["text"]
+                            for i in self.view["issues"]))
+
+    def test_rules_show_their_mode_and_a_staged_rule_is_monitor(self):
+        self.assertEqual(("rule", "block"), (self.by_name["block-exec"]["kind"], self.by_name["block-exec"]["mode"]))
+        self.assertEqual("monitor", self.by_name["block-staged"]["mode"])
+        self.assertEqual("no processes", self.by_name["block-exec"]["exception"])
+
+    def test_activity_counts(self):
+        routes = self.by_name["get-routes"]
+        self.assertEqual((2, 1), (routes["events"], routes["last_hour"]))
+        self.assertIsNotNone(routes["last_ts"])
+        rule = self.by_name["block-exec"]
+        self.assertEqual((1, 1, 2), (rule["blocked"], rule["monitored"], rule["events"]))
+        self.assertEqual(0, self.by_name["never-fires"]["events"])
+        self.assertIsNone(self.by_name["never-fires"]["last_ts"])
+
+    def test_notices_what_looks_wrong(self):
+        texts = " | ".join(i["text"] for i in self.view["issues"])
+        self.assertIn("no-methods has no methods", texts)
+        self.assertIn("'not a method'", texts)
+        self.assertIn("report Routes by users uses get-users, which no loaded sensor defines", texts)
+        self.assertIn("Old series is type series", texts)
+        self.assertIn("mystery, which isn't in the loaded .jot files", texts)
+        self.assertNotIn("jot-control", texts)          # the agent's own events aren't a sensor
+        self.assertNotIn("example", " ".join(self.by_name))   # the placeholder is skipped
+
+    def test_files_are_summarised(self):
+        files = {f["name"]: f for f in self.view["files"]}
+        self.assertEqual({"sensors": 4, "rules": 1, "reports": 1}, {k: files["a.jot"][k] for k in ("sensors", "rules", "reports")})
+        self.assertEqual({"sensors": 0, "rules": 1, "reports": 0}, {k: files["b.jot"][k] for k in ("sensors", "rules", "reports")})
+
+    def test_a_reports_query_is_included_so_it_can_be_opened(self):
+        self.assertIn("SELECT DISTINCT", self.view["reports"][0]["sql"])
+
+    def test_the_view_is_served_over_http_and_changes_nothing(self):
+        httpd = server.make_server(self.app, "127.0.0.1", 0)
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        req = urllib.request.Request("http://127.0.0.1:%d/api/jots" % port, headers={"Host": "127.0.0.1:%d" % port})
+        with urllib.request.urlopen(req) as r:
+            served = json.load(r)
+        self.assertEqual(len(self.view["sensors"]), len(served["sensors"]))
+
+    def test_rule_modes_follow_the_control_file_when_there_is_one(self):
+        path = os.path.join(self.env.dir, "control.json")
+        control_store = control.ControlStore(path, token="t")
+        control_store.write(rules={"block-exec": False}, known_rules=["block-exec", "block-staged"])
+        app = server.App(self.env.db, self.env.ingestor, control=control_store)
+        modes = {s["name"]: s["mode"] for s in app.jots()["sensors"]}
+        self.assertEqual("monitor", modes["block-exec"])
+
+
 class ControlStoreTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()

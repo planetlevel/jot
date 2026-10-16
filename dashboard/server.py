@@ -90,6 +90,61 @@ class App:
         finally:
             db.close()
 
+    def jots(self):
+        """Everything the JOTs view shows. Read only. How each sensor, rule and report is defined, which file it
+        is in, whether it has fired, and what looks wrong."""
+        db = sqlite3.connect(self.db_path)
+        try:
+            rows = db.execute("""SELECT name, description, methods, scopes, captures, blocks, enforce, source,
+                                        matchers, excludes, definition FROM sensors ORDER BY rowid""").fetchall()
+            issues = [{"level": l, "text": t, "file": f} for l, t, f in db.execute(
+                "SELECT level, text, source FROM jot_issues ORDER BY rowid")]
+            report_rows = db.execute("SELECT name, type, rows, cols, source FROM reports ORDER BY rowid").fetchall()
+        finally:
+            db.close()
+
+        stats = {}
+        for sensor, total, last, hour, blocked, monitored in store.run_query(self.db_path, """
+                SELECT sensor, COUNT(*), MAX(ts), SUM(ts > (strftime('%s','now') - 3600) * 1000),
+                       SUM(action = 'blocked'), SUM(action = 'monitored')
+                FROM events GROUP BY sensor""")["rows"]:
+            stats[sensor] = {"events": total, "last_ts": last, "last_hour": hour or 0,
+                             "blocked": blocked or 0, "monitored": monitored or 0}
+        modes = {}
+        control = self.control_state() if self.control is not None else None
+        if control and control["enabled"]:
+            modes = {r["name"]: r["mode"] for r in control["rules"]}
+
+        sensors = []
+        for (name, description, methods, scopes, captures, blocks, enforce, source,
+             matchers, excludes, definition) in rows:
+            rule = blocks is not None
+            mode = modes.get(name, "monitor" if enforce == "false" else "block") if rule else "observe"
+            sensors.append({
+                "name": name, "kind": "rule" if rule else "sensor", "mode": mode, "description": description,
+                "methods": json.loads(methods or "[]"), "scopes": json.loads(scopes or "[]"),
+                "captures": json.loads(captures or "[]"), "matchers": json.loads(matchers or "[]"),
+                "excludes": json.loads(excludes or "[]"), "exception": blocks, "file": source,
+                "definition": definition,
+                **stats.get(name, {"events": 0, "last_ts": None, "last_hour": 0, "blocked": 0, "monitored": 0})})
+
+        known = {x["name"] for x in sensors}
+        for sensor in sorted(set(stats) - known - {"jot-control"}):
+            issues.append({"level": "info", "file": None,
+                           "text": "the log has %d events from %s, which isn't in the loaded .jot files"
+                                   % (stats[sensor]["events"], sensor)})
+
+        sql_by_name = {r["name"]: r["sql"] for r in self.reports()}
+        reports = [{"name": n, "type": t, "rows": r, "cols": c, "file": f, "sql": sql_by_name.get(n)}
+                   for n, t, r, c, f in report_rows]
+        files = {}
+        for x in sensors:
+            files.setdefault(x["file"], {"sensors": 0, "rules": 0, "reports": 0})["rules" if x["kind"] == "rule" else "sensors"] += 1
+        for r in reports:
+            files.setdefault(r["file"], {"sensors": 0, "rules": 0, "reports": 0})["reports"] += 1
+        return {"files": [{"name": k, **v} for k, v in files.items()], "sensors": sensors, "reports": reports,
+                "issues": issues}
+
     def rule_names(self):
         """The sensors that are rules, meaning they have an exception. Only these can be switched."""
         return [r["name"] for r in self.rules_declared()]
@@ -251,6 +306,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.status())
             if url.path == "/api/reports":
                 return self._send(200, self.app.reports())
+            if url.path == "/api/jots":
+                return self._send(200, self.app.jots())
             if url.path == "/api/control":
                 return self._send(200, self.app.control_state())
             if url.path == "/api/sensors":

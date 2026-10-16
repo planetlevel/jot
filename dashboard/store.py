@@ -46,6 +46,15 @@ CREATE TABLE IF NOT EXISTS sensors (
   captures TEXT,        -- JSON array of expressions
   blocks TEXT,          -- the exception message if the sensor is a rule, otherwise null
   enforce TEXT,         -- 'false' if the .jot file stages the rule as report only, otherwise null
+  source TEXT,          -- the .jot file it came from
+  matchers TEXT,        -- JSON array
+  excludes TEXT,        -- JSON array
+  definition TEXT       -- the sensor as written, as YAML
+);
+
+CREATE TABLE IF NOT EXISTS jot_issues (
+  level TEXT,           -- warning or info
+  text TEXT,
   source TEXT
 );
 
@@ -97,6 +106,7 @@ def init(db):
     # these two are filled again from the .jot files at every start, so an older layout can simply be replaced
     db.execute("DROP TABLE IF EXISTS sensors")
     db.execute("DROP TABLE IF EXISTS reports")
+    db.execute("DROP TABLE IF EXISTS jot_issues")
     db.executescript(SCHEMA)
     db.commit()
 
@@ -213,19 +223,43 @@ def _read_jot(path):
         return {}
 
 
+_METHOD = re.compile(r"^(static )?!?[\w$]+(\.[\w$<>]+)+$")
+
+
+def _issue(db, level, text, source):
+    db.execute("INSERT INTO jot_issues VALUES (?,?,?)", (level, text, source))
+
+
 def load_sensors(db, paths):
-    """Read sensor definitions from .jot files, or directories of them, so the model knows what they mean."""
+    """Read sensor definitions from .jot files, or directories of them, so the model knows what they mean and
+    the JOTs view can show them. Like the agent, the first definition of a name wins and a later one is skipped."""
     db.execute("DELETE FROM sensors")
+    db.execute("DELETE FROM jot_issues")
     loaded = 0
     for f in jot_files(paths):
+        source = os.path.basename(f)
         for s in _read_jot(f).get("sensors") or []:
             if not isinstance(s, dict) or not s.get("name") or s["name"] == "example":
                 continue
+            name = s["name"]
+            first = db.execute("SELECT source FROM sensors WHERE name = ?", (name,)).fetchone()
+            if first:
+                _issue(db, "warning", "%s is defined again in %s, the agent skips it and keeps the one in %s"
+                       % (name, source, first[0]), source)
+                continue
+            methods = s.get("methods") or []
+            if not methods:
+                _issue(db, "warning", "%s has no methods, so it can never fire" % name, source)
+            for m in list(methods) + list(s.get("scopes") or []):
+                if not _METHOD.match(str(m).strip()):
+                    _issue(db, "warning", "%s has %r, which doesn't look like Class.method" % (name, m), source)
             staged = "false" if s.get("enforce") is False else None
-            db.execute("INSERT OR REPLACE INTO sensors VALUES (?,?,?,?,?,?,?,?)", (
-                s["name"], s.get("description"), json.dumps(s.get("methods") or []),
-                json.dumps(s.get("scopes") or []), json.dumps(s.get("captures") or []),
-                s.get("exception"), staged, os.path.basename(f)))
+            db.execute("""INSERT INTO sensors (name, description, methods, scopes, captures, blocks, enforce, source,
+                                               matchers, excludes, definition) VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (
+                name, s.get("description"), json.dumps(methods), json.dumps(s.get("scopes") or []),
+                json.dumps(s.get("captures") or []), s.get("exception"), staged, source,
+                json.dumps(s.get("matchers") or []), json.dumps(s.get("excludes") or []),
+                yaml.safe_dump(s, sort_keys=False, default_flow_style=False, allow_unicode=True).rstrip()))
             loaded += 1
     db.commit()
     return loaded
@@ -240,10 +274,18 @@ def load_reports(db, paths):
         for r in _read_jot(f).get("reports") or []:
             if not isinstance(r, dict) or not r.get("name") or r["name"] == "example":
                 continue
-            if str(r.get("type", "")).lower() not in ("list", "compare", "table"):
+            source = os.path.basename(f)
+            rtype = str(r.get("type", "")).lower()
+            if rtype not in ("list", "compare", "table"):
+                _issue(db, "info", "report %s is type %s, which the dashboard doesn't build. series reports are "
+                       "replaced by the event log" % (r["name"], rtype or "(none)"), source)
                 continue
             db.execute("INSERT OR REPLACE INTO reports VALUES (?,?,?,?,?)", (
-                r["name"], str(r["type"]).lower(), r.get("rows"), r.get("cols"), os.path.basename(f)))
+                r["name"], rtype, r.get("rows"), r.get("cols"), source))
+            used = ([r["rows"]] if r.get("rows") else []) + [c.strip() for c in str(r.get("cols") or "").split(",") if c.strip()]
+            for sensor in used:
+                if not db.execute("SELECT 1 FROM sensors WHERE name = ?", (sensor,)).fetchone():
+                    _issue(db, "warning", "report %s uses %s, which no loaded sensor defines" % (r["name"], sensor), source)
             loaded += 1
     db.commit()
     return loaded

@@ -55,10 +55,6 @@ reports:
    cols: "get-forwards"
    
     
- - name: "Exceptions"
-   type: "table"
-   rows: "get-routes"
-   cols: "get-exceptions"
    
 
  - name: "Encryption Usage"

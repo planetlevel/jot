@@ -39,6 +39,29 @@
   .mode button.active.observe { background: var(--monitored-bg); color: var(--monitored); }
   .mode button.active.block { background: var(--blocked-bg); color: var(--blocked); }
   .mode button:disabled { cursor: default; opacity: 0.7; }
+  nav.tabs { display: flex; gap: 4px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  nav.tabs button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; padding: 10px 14px; font-weight: 600; color: var(--muted); }
+  nav.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+  main.jots { grid-template-columns: minmax(0, 1fr) 440px; }
+  @media (max-width: 960px) { main.jots { grid-template-columns: minmax(0, 1fr); } }
+  .jotbar { display: flex; gap: 8px; }
+  .jotbar input { flex: 1; }
+  table.list tbody tr { cursor: pointer; }
+  table.list tbody tr:hover td { background: var(--code); }
+  table.list tbody tr.selected td { background: var(--observed-bg); }
+  .badge.sensor { background: var(--observed-bg); color: var(--observed); }
+  .badge.report { background: var(--code); color: var(--muted); }
+  .issue { padding: 6px 10px; border-radius: 6px; margin-top: 6px; font-size: 13px; background: var(--monitored-bg); color: var(--monitored); overflow-wrap: anywhere; }
+  .issue.info { background: var(--code); color: var(--muted); }
+  #jotDetail h2 { margin: 0 0 4px; font-size: 17px; overflow-wrap: anywhere; }
+  #jotDetail h4 { margin: 14px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+  #jotDetail ul { margin: 0; padding-left: 18px; }
+  #jotDetail li { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
+  #jotDetail pre { margin: 0; padding: 10px; background: var(--code); border-radius: 8px; overflow: auto; font-size: 12px; max-height: 320px; }
+  .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 6px; }
+  .fact { background: var(--code); border-radius: 8px; padding: 6px 10px; }
+  .fact b { display: block; font-size: 16px; }
+  .fact span { color: var(--muted); font-size: 12px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); display: inline-block; }
   .live-on .dot { background: var(--observed); box-shadow: 0 0 0 3px var(--observed-bg); }
   main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; padding: 16px; max-width: 1500px; margin: 0 auto; }
@@ -121,7 +144,12 @@
   <label class="live" id="liveLabel"><input type="checkbox" id="live"><span class="dot"></span> Live</label>
 </header>
 
-<main>
+<nav class="tabs" aria-label="Views">
+  <button type="button" id="tabDash" class="active">Dashboard</button>
+  <button type="button" id="tabJots">JOTs</button>
+</nav>
+
+<main id="dashView">
   <div>
     <div class="card" id="controlCard" hidden>
       <details id="controlDetails">
@@ -152,6 +180,24 @@
     <h3>Latest events</h3>
     <div id="feed"><div class="empty">Waiting for events</div></div>
   </aside>
+</main>
+
+<main id="jotsView" class="jots" hidden>
+  <div>
+    <div class="card">
+      <div class="jotbar">
+        <input type="text" id="jotFilter" autocomplete="off" aria-label="Filter" placeholder="Filter by name, method, file or description">
+        <select id="jotKind" aria-label="Show">
+          <option value="">Everything</option><option value="sensor">Sensors</option>
+          <option value="rule">Rules</option><option value="report">Reports</option>
+        </select>
+      </div>
+      <div class="hint" id="jotSummary"></div>
+      <div id="jotIssues"></div>
+    </div>
+    <div class="card"><div class="tablewrap" id="jotList"></div></div>
+  </div>
+  <aside class="card" id="jotDetail"><div class="empty">Select a sensor, rule or report to see how it is defined</div></aside>
 </main>
 
 <script src="/grid.js"></script>
@@ -532,9 +578,126 @@ function drawPresets() {
   drawPicker([]);
 }
 
+// ---- the JOTs view, read only. It shows how sensors, rules and reports are defined and whether they fire.
+let jots = null;
+let jotSelected = null;       // "kind:name"
+let currentView = "dash";
+
+function showView(name) {
+  currentView = name;
+  $("dashView").hidden = name !== "dash";
+  $("jotsView").hidden = name !== "jots";
+  $("tabDash").className = name === "dash" ? "active" : "";
+  $("tabJots").className = name === "jots" ? "active" : "";
+  if (name === "jots") loadJots();
+}
+
+async function loadJots() {
+  try { jots = await api("/api/jots"); drawJots(); } catch (e) { $("jotList").replaceChildren(el("div", { class: "error", text: e.message })); }
+}
+
+function jotItems() {
+  const items = jots.sensors.map((s) => ({ ...s, key: s.kind + ":" + s.name, search:
+    [s.name, s.description, s.file, ...s.methods, ...s.scopes].join(" ").toLowerCase() }));
+  for (const r of jots.reports) {
+    items.push({ ...r, kind: "report", key: "report:" + r.name, search: [r.name, r.type, r.rows, r.cols, r.file].join(" ").toLowerCase() });
+  }
+  return items;
+}
+
+function kindBadge(item) {
+  if (item.kind === "report") return el("span", { class: "badge report", text: "report" });
+  if (item.kind === "sensor") return el("span", { class: "badge sensor", text: "observe" });
+  return el("span", { class: "badge " + (item.mode === "block" ? "blocked" : "monitored"), text: item.mode });
+}
+
+function drawJots() {
+  if (!jots) return;
+  const filter = $("jotFilter").value.trim().toLowerCase();
+  const kind = $("jotKind").value;
+  const all = jotItems();
+  const shown = all.filter((i) => (!kind || i.kind === kind) && (!filter || i.search.includes(filter)));
+  const rules = jots.sensors.filter((s) => s.kind === "rule").length;
+  $("jotSummary").textContent = (jots.sensors.length - rules) + " sensors, " + rules + " rules and " + jots.reports.length
+    + " reports from " + jots.files.length + " files" + (shown.length !== all.length ? ". Showing " + shown.length : "");
+
+  const issues = jots.issues;
+  $("jotIssues").replaceChildren(...(issues.length > 3
+    ? [el("details", {}, el("summary", { class: "hint", text: issues.length + " things to look at" }), ...issues.map(issueRow))]
+    : issues.map(issueRow)));
+
+  const head = el("tr", {}, ...["Name", "Kind", "Watches or uses", "File", "Last hour", "Total", "Last fired"].map((t) => el("th", { text: t })));
+  const body = shown.map((i) => {
+    const watches = i.kind === "report"
+      ? i.type + (i.rows ? ", " + i.rows + " by " : ", ") + (i.cols || "")
+      : (i.methods[0] || "") + (i.methods.length > 1 ? " +" + (i.methods.length - 1) : "");
+    const num = (v) => el("td", { class: "num", text: i.kind === "report" ? "" : String(v) });
+    return el("tr", { class: i.key === jotSelected ? "selected" : "", onclick: () => { jotSelected = i.key; drawJots(); drawJotDetail(i); } },
+      el("td", { text: i.name }), el("td", {}, kindBadge(i)), el("td", { text: watches }), el("td", { text: i.file || "" }),
+      num(i.last_hour), num(i.events),
+      el("td", { class: i.kind !== "report" && !i.events ? "null" : "", text: i.kind === "report" ? "" : (i.events ? ago(i.last_ts) : "never") }));
+  });
+  $("jotList").replaceChildren(shown.length
+    ? el("table", { class: "list" }, el("thead", {}, head), el("tbody", {}, ...body))
+    : el("div", { class: "empty", text: "Nothing matches" }));
+  const open = shown.find((i) => i.key === jotSelected);
+  if (open) drawJotDetail(open);
+}
+
+function issueRow(i) {
+  return el("div", { class: "issue " + i.level, text: (i.file ? i.file + ": " : "") + i.text });
+}
+
+function listSection(title, values) {
+  if (!values || !values.length) return null;
+  return el("div", {}, el("h4", { text: title }), el("ul", {}, ...values.map((v) => el("li", { text: v }))));
+}
+
+function fact(value, label) {
+  return el("div", { class: "fact" }, el("b", { text: String(value) }), el("span", { text: label }));
+}
+
+function drawJotDetail(i) {
+  const d = $("jotDetail");
+  if (i.kind === "report") {
+    d.replaceChildren(
+      el("h2", { text: i.name }), kindBadge(i), " ", el("span", { class: "hint", text: i.file }),
+      el("p", { class: "explain", text: i.type === "list"
+        ? "One row per call site, with what " + i.cols + " captured there."
+        : "Rows are the captures of " + i.rows + ". " + (i.type === "compare"
+          ? "Columns come from the captures of " + i.cols + ", with an X where it was seen in the same request."
+          : "One column for each of " + i.cols + ", showing what it captured in the same request.") }),
+      listSection("Rows", i.rows ? [i.rows] : null), listSection(i.type === "table" ? "Columns" : "Column source", (i.cols || "").split(",").map((c) => c.trim()).filter(Boolean)),
+      i.sql ? el("button", { class: "primary", text: "Open this report", onclick: () => { showView("dash"); runSql(i.sql, { title: i.name, chart: "grid", sql: i.sql }); } }) : null);
+    return;
+  }
+  const never = !i.events;
+  d.replaceChildren(
+    el("h2", { text: i.name }), kindBadge(i), " ", el("span", { class: "hint", text: i.file }),
+    i.description ? el("p", { class: "explain", text: i.description }) : null,
+    el("div", { class: "facts" }, fact(i.events, "events"), fact(i.last_hour, "last hour"), fact(i.events ? ago(i.last_ts) : "never", "last fired"),
+      ...(i.kind === "rule" ? [fact(i.blocked, "blocked"), fact(i.monitored, "monitored")] : [])),
+    never ? el("div", { class: "hint", text: "No events in the log yet. A sensor only records when the code it watches runs, so check the method names if you expected it." }) : null,
+    i.kind === "rule" ? el("div", { class: "notice", text: (i.mode === "block" ? "Blocks the call. " : "Only reports, nothing is stopped. ") + "Message: " + i.exception }) : null,
+    listSection("Watches", i.methods), listSection("Only inside", i.scopes), listSection("Skips", i.excludes),
+    listSection("Captures", i.captures), listSection("Matchers", i.matchers),
+    el("h4", { text: "As written" }), el("pre", { text: i.definition || "" }),
+    el("div", { class: "row" }, el("button", { class: "primary", text: "Show its events", onclick: () => {
+      showView("dash");
+      runSql("SELECT datetime(ts/1000, 'unixepoch') AS time, action, capture, call_site_name AS call_site, message\nFROM events WHERE sensor = '"
+        + i.name.replace(/'/g, "''") + "' ORDER BY ts DESC LIMIT 200", { title: "Events from " + i.name, chart: "table" });
+    } })));
+}
+
+$("tabDash").addEventListener("click", () => showView("dash"));
+$("tabJots").addEventListener("click", () => showView("jots"));
+$("jotFilter").addEventListener("input", drawJots);
+$("jotKind").addEventListener("change", drawJots);
+
 async function tick() {
   try {
     await Promise.all([refreshStatus(), refreshFeed(), refreshControl()]);
+    if (currentView === "jots") await loadJots();
     if ($("live").checked && current && !busy) {
       const r = await api("/api/sql", { sql: current.sql, limit: current.chart === "grid" ? 5000 : undefined });
       show(current, r);
