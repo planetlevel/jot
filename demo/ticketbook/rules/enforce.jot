@@ -1,0 +1,62 @@
+---
+# TicketBook demo, the rules. A sensor with an exception is a rule, its message says why the call is bad.
+# run.sh adds this file in monitor and enforce modes.
+#   monitor   the rules only report, nothing is stopped, the attacks still work
+#   enforce   the rules stop the call
+# The dashboard's Enforcement panel can switch single rules between the two while the app runs.
+# javax names also match jakarta, so these work on Tomcat 9 and Tomcat 11.
+
+sensors:
+
+# A web request must never start an operating system process.
+- name: "block-native-process"
+  description: "Blocks attempts to start native processes from a web request"
+  methods:
+  - "java.lang.ProcessBuilder.<init>"
+  scopes:
+  - "javax.servlet.Servlet.service"
+  captures:
+  - "#ARGS"
+  exception: "Attempt to create a process from within Servlet.service() prevented by JOT rule 'block-native-process'"
+
+# A web request must never deserialize objects.
+- name: "block-deserialization"
+  description: "Blocks attempts to deserialize objects from a web request"
+  methods:
+  - "java.io.ObjectInputStream.readObject"
+  - "java.io.ObjectInputStream.readUnshared"
+  scopes:
+  - "javax.servlet.Servlet.service"
+  captures:
+  - "#ARGS"
+  exception: "Attempt to deserialize an object from within Servlet.service() prevented by JOT rule 'block-deserialization'"
+
+# The microsandbox for expression injection. Evaluating an expression is allowed, but while one is being
+# evaluated it can't start a process or open a socket.
+- name: "sandbox-expressions"
+  description: "Stops expressions from starting processes or opening sockets while they are evaluated"
+  methods:
+  - "java.lang.ProcessBuilder.<init>"
+  - "java.net.Socket.<init>"
+  scopes:
+  - "javax.el.ValueExpression.getValue"
+  captures:
+  - "#ARGS"
+  exception: "Expression language sandbox escape prevented by JOT rule 'sandbox-expressions'"
+
+# The pattern based alternative, which looks for attack text in the expression itself. It is easier to get
+# around than the sandbox above, and it starts staged as report only so you can try it and then promote it
+# to block from the dashboard.
+- name: "block-nasty-expressions"
+  description: "Flags expressions that contain reflection or process APIs"
+  methods:
+  - "javax.el.ExpressionFactory.createValueExpression"
+  captures:
+  - "#P1"
+  matchers:
+  - "\\.class"
+  - "getRuntime"
+  - "ProcessBuilder"
+  - "forName"
+  enforce: false
+  exception: "Suspicious expression flagged by JOT rule 'block-nasty-expressions'"

@@ -49,12 +49,33 @@ cat > "$BASE/conf/Catalina/localhost/ticketbook.xml" <<XML
 <Context docBase="$HERE/webapp" reloadable="false"/>
 XML
 
+# The policy. jots/ holds the sensors that only observe, and rules/ the rules that can stop a call.
+#   MODE=observe   (default) only the sensors, nothing can be blocked
+#   MODE=enforce   the sensors and the rules, the rules block. The dashboard can switch them to report only
+#   MODE=monitor   the sensors and the rules, but every rule only reports. The attacks still work. This is
+#                  fixed for the life of the process, the dashboard can't switch it to block
+MODE=${MODE:-observe}
+case "$MODE" in observe|monitor|enforce) ;; *) echo "MODE must be observe, monitor or enforce" >&2; exit 1;; esac
+ACTIVE=$HERE/target/active-jots
+mkdir -p "$ACTIVE"
+rm -f "$ACTIVE"/*.jot
+cp "$HERE"/jots/*.jot "$ACTIVE"/
+[ "$MODE" = observe ] || cp "$HERE"/rules/*.jot "$ACTIVE"/
+
+# The file the dashboard writes to switch rules between monitor and block. Start from a clean one so a setting
+# left over from an earlier session can't quietly change what this run does.
+CONTROL=${JOT_CONTROL:-$ROOT/jot-control.json}
+rm -f "$CONTROL"
+
 LOG=${JOT_LOG:-$ROOT/jot-events.jsonl}
 export CATALINA_BASE=$BASE
 export CATALINA_HOME
-# Observe-only sensors, nothing here blocks. Remove -Djot.verbose=true to quiet instrumentation errors.
+ENFORCE_OPT=""
+[ "$MODE" = monitor ] && ENFORCE_OPT="-Djot.enforce=false"
+# Remove -Djot.verbose=true to quiet instrumentation errors.
 export CATALINA_OPTS="-Djot.verbose=true -Djot.output=json -Djot.output.file=$LOG -Djot.app=ticketbook \
-  -javaagent:$JAR=$HERE/jots"
+  -Djot.control=$CONTROL $ENFORCE_OPT -javaagent:$JAR=$ACTIVE"
 
-echo "JOT events go to $LOG"
+echo "Mode $MODE. JOT events go to $LOG"
+echo "Dashboard: python3 dashboard/server.py --log $LOG --jot jots --jot rules --control $CONTROL"
 exec "$CATALINA_HOME/bin/catalina.sh" run

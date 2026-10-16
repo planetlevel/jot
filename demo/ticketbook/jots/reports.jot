@@ -60,3 +60,11 @@ reports:
    rows: "get-routes"
    cols: "get-exceptions"
    
+
+ - name: "Encryption Usage"
+   type: "list"
+   cols: "get-ciphers"
+
+ - name: "Hash Usage"
+   type: "list"
+   cols: "get-hashes"

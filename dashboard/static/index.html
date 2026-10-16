@@ -33,6 +33,12 @@
   .stats b { color: var(--text); font-size: 15px; }
   .stats .blocked b { color: var(--blocked); }
   label.live { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+  .mode { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .mode button { border: 0; border-radius: 0; padding: 6px 14px; background: var(--panel); font-size: 13px; font-weight: 600; }
+  .mode button + button { border-left: 1px solid var(--line); }
+  .mode button.active.observe { background: var(--monitored-bg); color: var(--monitored); }
+  .mode button.active.block { background: var(--blocked-bg); color: var(--blocked); }
+  .mode button:disabled { cursor: default; opacity: 0.7; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); display: inline-block; }
   .live-on .dot { background: var(--observed); box-shadow: 0 0 0 3px var(--observed-bg); }
   main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; padding: 16px; max-width: 1500px; margin: 0 auto; }
@@ -64,7 +70,8 @@
   table.grid td.rowlabel { position: sticky; left: 0; background: var(--panel); font-weight: 600; border-right: 1px solid var(--line); white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
   table.grid td.on { text-align: center; background: var(--observed-bg); color: var(--observed); font-weight: 700; }
   table.grid td.off { background: transparent; }
-  .chips.reports .label { color: var(--muted); font-size: 12px; align-self: center; margin-right: 2px; }
+  .picker { margin-top: 10px; }
+  .picker select { max-width: 100%; }
   td.null { color: var(--muted); }
   tr:last-child td { border-bottom: 0; }
   .badge { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; padding: 1px 7px; border-radius: 999px; text-transform: uppercase; }
@@ -107,6 +114,10 @@
 <header>
   <h1>JOT</h1>
   <div class="stats" id="stats"></div>
+  <div class="mode" id="mode" role="group" aria-label="Enforcement mode" hidden>
+    <button type="button" id="modeObserve" title="Rules report what they would stop, and stop nothing">Observe</button>
+    <button type="button" id="modeBlock" title="Rules stop the calls they are written to stop">Block</button>
+  </div>
   <label class="live" id="liveLabel"><input type="checkbox" id="live"><span class="dot"></span> Live</label>
 </header>
 
@@ -129,8 +140,9 @@
                placeholder="Ask about your application, like: which routes use weak ciphers?">
         <button class="primary" id="askBtn" type="submit">Ask</button>
       </form>
-      <div class="chips" id="presets"></div>
-      <div class="chips reports" id="reports"></div>
+      <div class="row picker">
+        <select id="reportSelect" aria-label="Views and reports"><option value="">Views and reports&hellip;</option></select>
+      </div>
       <div class="chips" id="history"></div>
       <div id="notice"></div>
     </div>
@@ -229,6 +241,7 @@ function drawControl(c) {
   if (!c.enabled) return;
   controlWritable = c.writable;
   $("adminToken").hidden = !c.writable;
+  drawMode(c);
   const blocking = c.rules.filter((r) => r.mode === "block").length;
   $("controlSummary").textContent = c.master
     ? blocking + " of " + c.rules.length + " rules blocking"
@@ -269,6 +282,35 @@ function drawControl(c) {
     applied,
     el("div", { class: "applied", text: "An agent started with -Djot.enforce=false ignores these settings." }));
 }
+
+// The header toggle is the master switch. Observe makes every rule report only. Block turns enforcement back on,
+// and a rule that is staged as report only on its own stays that way until it is switched.
+function drawMode(c) {
+  const mode = $("mode");
+  mode.hidden = !c.enabled;
+  const blocking = c.rules.filter((r) => r.mode === "block").length;
+  $("modeObserve").className = c.master ? "" : "active observe";
+  $("modeBlock").className = c.master ? "active block" : "";
+  $("modeBlock").textContent = c.master && blocking < c.rules.length ? "Block (" + blocking + " of " + c.rules.length + ")" : "Block";
+  $("modeBlock").title = c.master && blocking < c.rules.length
+    ? "Enforcement is on. " + (c.rules.length - blocking) + " rule(s) are staged as report only on their own"
+    : "Rules stop the calls they are written to stop";
+  for (const id of ["modeObserve", "modeBlock"]) $(id).disabled = !c.writable;
+  if (!c.writable) mode.title = "Read only. Start the dashboard with JOT_DASHBOARD_ADMIN_TOKEN to allow changes.";
+}
+
+function setMode(master) {
+  if (!$("adminToken").value) {
+    // the token lives in the panel, so open it and ask for it
+    $("controlDetails").open = true;
+    $("adminToken").focus();
+    showControlMessage("Type the admin token, then click " + (master ? "Block" : "Observe") + " again.");
+    return;
+  }
+  changeControl({ master }, master ? null : "Switch to Observe? Every rule will report only and nothing will be blocked.");
+}
+$("modeObserve").addEventListener("click", () => setMode(false));
+$("modeBlock").addEventListener("click", () => setMode(true));
 
 async function refreshControl() {
   try { drawControl(await api("/api/control")); } catch (e) { /* not available */ }
@@ -462,18 +504,32 @@ function drawHistory() {
     el("button", { class: "chip", title: h.sql, text: h.question, onclick: () => { $("question").value = h.question; runSql(h.sql, h); } })));
 }
 
+// One pulldown for the built in views and for the reports defined in the .jot files
+let reportItems = [];     // what each option runs, in the order of the options
+
+function drawPicker(reports) {
+  const select = $("reportSelect");
+  const chosen = select.value;
+  reportItems = [];
+  const group = (label, items) => {
+    const g = el("optgroup", { label });
+    for (const item of items) {
+      reportItems.push(item);
+      g.append(el("option", { value: String(reportItems.length - 1), text: item.label || item.name }));
+    }
+    return g;
+  };
+  select.replaceChildren(el("option", { value: "", text: "Views and reports\u2026" }), group("Views", PRESETS));
+  if (reports.length) select.append(group("Reports from your .jot files", reports));
+  select.value = chosen && reportItems[Number(chosen)] ? chosen : "";
+}
+
 async function drawReports() {
-  try {
-    const reports = await api("/api/reports");
-    if (!reports.length) return;
-    $("reports").replaceChildren(el("span", { class: "label", text: "Reports" }), ...reports.map((p) =>
-      el("button", { class: "chip", title: p.type + " report from your .jot files", text: p.name, onclick: () => runSql(p.sql, p) })));
-  } catch (e) { /* reports are optional */ }
+  try { drawPicker(await api("/api/reports")); } catch (e) { /* reports are optional */ }
 }
 
 function drawPresets() {
-  $("presets").replaceChildren(...PRESETS.map((p) =>
-    el("button", { class: "chip", text: p.label, onclick: () => runSql(p.sql, p) })));
+  drawPicker([]);
 }
 
 async function tick() {
@@ -493,6 +549,10 @@ function setLive(on) {
   try { localStorage.setItem("jot-live", on ? "1" : "0"); } catch (e) { /* ignore */ }
 }
 
+$("reportSelect").addEventListener("change", (ev) => {
+  const item = reportItems[Number(ev.target.value)];
+  if (ev.target.value !== "" && item) runSql(item.sql, item);
+});
 $("askForm").addEventListener("submit", (ev) => { ev.preventDefault(); ask($("question").value); });
 $("live").addEventListener("change", (ev) => setLive(ev.target.checked));
 
