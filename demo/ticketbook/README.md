@@ -8,7 +8,7 @@ attached, so you can watch what it does, see what a rule would stop, and then st
     MODE=monitor demo/ticketbook/run.sh    # the rules only report, the attacks still work
 
 Then browse http://localhost:8080/ticketbook. The script prints the dashboard command to use. Tomcat 11 is downloaded
-on first use and checked against Apache's SHA-512. The application itself, `webapp/`, is not part of the repository.
+on first use and checked against Apache's SHA-512. The application is in `webapp/`, see "The application" below.
 
 ## The policy
 
@@ -46,3 +46,21 @@ Expression injection on `el.jsp`. Put this into the input box, and look for the 
 
 In observe the file appears. With the rules enforcing the page fails and no file is created. `cmd.jsp` is an
 operating system command injection, and `xss.jsp` and `flow.jsp` show other bad patterns.
+
+## The application
+
+`webapp/` is the TicketBook web application, already converted to `jakarta.servlet` for Tomcat 11. It is deliberately
+vulnerable. It has expression injection, cross-site scripting, XXE, command injection, path and parameter problems and
+weak access control, so that there is something for JOT to observe and stop. Run it only on a machine you control and
+never expose it to a network.
+
+- **No Java source.** The repository has the JSPs, the stylesheet and the compiled classes (`WEB-INF/classes`), but not the
+  Java source for those classes. The JSPs and `css/ticketbook.css` can be edited. The classes can only be replaced.
+- **Old libraries.** `WEB-INF/lib` holds about 15 MB of third-party jars, many of them old versions with known
+  vulnerabilities, such as commons-collections 3.2, xalan 2.7.0, log4j 1.2 and spring-security 3.0.5. Dependency
+  scanners will flag them, and they are not to be reused in a real application. They keep their own licenses, which
+  differ from this repository's and include at least one LGPL library (xom), so check each jar before redistributing it.
+- **Demo secrets.** `WEB-INF/classes/esapi/ESAPI.properties` contains an ESAPI master key and salt, and the demo users in
+  `conf/tomcat-users.xml` all have the password `test`. They protect nothing real.
+- **Look.** `css/ticketbook.css` gives it a dark theme over Bootstrap 3, and `menu.jsp` builds the sidebar and highlights the
+  current page.

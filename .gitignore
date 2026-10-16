@@ -43,11 +43,12 @@ jot-events.jsonl
 dashboard/.env
 .env
 
-# TicketBook demo webapp, copied in locally. Not committed until we decide whether to ship it.
-demo/ticketbook/webapp/
-demo/ticketbook/webapp.javax/
 dashboard/control.json
 dashboard/control.json.audit
 hs_err_pid*.log
 /jot-control.json
 /jot-control.json.audit
+
+# TicketBook needs its compiled classes and library jars, the rules above would drop them
+!demo/ticketbook/webapp/**/*.class
+!demo/ticketbook/webapp/**/*.jar
