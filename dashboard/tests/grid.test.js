@@ -9,8 +9,8 @@ test("routes by roles with an X where detected, columns come from the data", () 
   ]);
   assert.deepStrictEqual(g.columns, ["RoleA", "RoleB"]);
   assert.deepStrictEqual(g.rows, [
-    { label: "/buy", cells: ["X", "X"] },
-    { label: "/home", cells: ["X", ""] },
+    { label: "/buy", cells: [["X"], ["X"]] },
+    { label: "/home", cells: [["X"], []] },
   ]);
   assert.strictEqual(g.corner, "route");
 });
@@ -20,12 +20,12 @@ test("a third column supplies the cell values, several are listed together", () 
     ["/a", "get-ciphers", "DES"], ["/a", "get-ciphers", "AES"], ["/a", "get-hashes", "MD5"], ["/a", "get-ciphers", "DES"],
   ]);
   assert.deepStrictEqual(g.columns, ["get-ciphers", "get-hashes"]);
-  assert.deepStrictEqual(g.rows[0].cells, ["AES, DES", "MD5"]);
+  assert.deepStrictEqual(g.rows[0].cells, [["AES", "DES"], ["MD5"]]);
 });
 
 test("an empty or missing value falls back to X", () => {
   const g = pivot(["r", "c", "v"], [["a", "b", ""], ["a", "d", null]]);
-  assert.deepStrictEqual(g.rows[0].cells, ["X", "X"]);
+  assert.deepStrictEqual(g.rows[0].cells, [["X"], ["X"]]);
 });
 
 test("null labels are shown as a dash and numbers sort naturally", () => {
@@ -53,4 +53,9 @@ test("an empty result gives an empty grid", () => {
   const g = pivot(["r", "c"], []);
   assert.deepStrictEqual(g.rows, []);
   assert.deepStrictEqual(g.columns, []);
+});
+
+test("a captured list loses its brackets so each item reads on its own", () => {
+  const g = pivot(["r", "c", "v"], [["a", "q", "[SELECT 1]"], ["a", "q", "[SELECT 2]"], ["a", "w", "[x], [y]"]]);
+  assert.deepStrictEqual(g.rows[0].cells, [["SELECT 1", "SELECT 2"], ["[x], [y]"]]);
 });

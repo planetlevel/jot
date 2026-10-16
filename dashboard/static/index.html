@@ -101,6 +101,9 @@
   table.grid th.col { text-align: center; }
   table.grid td.rowlabel { position: sticky; left: 0; background: var(--panel); font-weight: 600; border-right: 1px solid var(--line); white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
   table.grid td.on { text-align: center; background: var(--observed-bg); color: var(--observed); font-weight: 700; }
+  table.grid td.vals { text-align: left; font-weight: 500; }
+  table.grid td.vals ul { margin: 0; padding-left: 18px; }
+  table.grid td.vals li { margin: 2px 0; }
   table.grid td.off { background: transparent; }
   .picker { margin-top: 10px; }
   .picker select { max-width: 100%; }
@@ -413,13 +416,14 @@ async function refreshControl() {
 // ---- status
 async function refreshStatus() {
   const s = await api("/api/status");
-  $("stats").replaceChildren(
+  $("stats").replaceChildren(...[
     el("span", {}, el("b", { text: s.events.toLocaleString() }), " events"),
     el("span", { class: s.blocked ? "blocked" : "" }, el("b", { text: s.blocked.toLocaleString() }), " blocked"),
     el("span", {}, el("b", { text: s.monitored.toLocaleString() }), " reported only"),
     el("span", { text: "last event " + ago(s.last_ts) }),
     s.since ? el("span", { title: "Cleared, Show all brings the earlier events back",
-      text: "showing since " + clock(s.since) + ", " + s.hidden.toLocaleString() + " earlier hidden" }) : null);
+      text: "showing since " + clock(s.since) + ", " + s.hidden.toLocaleString() + " earlier hidden" }) : null,
+  ].filter(Boolean));
   $("showAllBtn").hidden = !s.since;
   $("notice").replaceChildren(...(s.llm ? [] : [el("div", { class: "notice",
     text: "Natural language is off because ANTHROPIC_API_KEY isn't set. The views and the SQL box still work." })]));
@@ -456,13 +460,21 @@ function tableView(r, hint) {
   return el("div", { class: "tablewrap" }, el("table", {}, el("thead", {}, head), el("tbody", {}, ...body)));
 }
 
+// A lone X is centered, real values are left aligned, and several are bulleted so each can be read on its own.
+function gridCell(values) {
+  if (!values.length) return el("td", { class: "off" });
+  if (values.length === 1 && values[0] === "X") return el("td", { class: "on", text: "X" });
+  if (values.length === 1) return el("td", { class: "on vals", text: values[0] });
+  return el("td", { class: "on vals" }, el("ul", {}, ...values.map((v) => el("li", { text: v }))));
+}
+
 function gridView(r) {
   if (!r.rows.length) return el("div", { class: "empty", text: r.hint || "No matching events" });
   const g = JotGrid.pivot(r.columns, r.rows);
   const head = el("tr", {}, el("th", { text: g.corner }), ...g.columns.map((c) => el("th", { class: "col", text: c })));
   const body = g.rows.map((row) => el("tr", {},
     el("td", { class: "rowlabel", title: row.label, text: row.label }),
-    ...row.cells.map((v) => el("td", { class: v ? "on" : "off", text: v }))));
+    ...row.cells.map(gridCell)));
   const wrap = el("div", { class: "tablewrap" }, el("table", { class: "grid" }, el("thead", {}, head), el("tbody", {}, ...body)));
   if (!g.hiddenColumns) return wrap;
   return el("div", {}, wrap, el("div", { class: "hint", text: g.hiddenColumns + " more columns are not shown" }));

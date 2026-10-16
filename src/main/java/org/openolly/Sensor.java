@@ -104,6 +104,25 @@ public class Sensor {
 	 * Walking the stack is expensive, so it is only done once we know the sensor will really run,
 	 * not for every call to a method that happens to have a sensor on it.
 	 */
+	private static final String AGENT_JAR = agentJar();
+
+	private static String agentJar() {
+		try {
+			// a class on the boot class path has no code source, but its resource URL still names the jar
+			java.net.URL url = Sensor.class.getResource( "Sensor.class" );
+			if ( url == null || !"jar".equals( url.getProtocol() ) ) return null;
+			String spec = url.getPath();
+			return new java.io.File( new java.net.URI( spec.substring( 0, spec.indexOf( "!/" ) ) ) ).getPath();
+		} catch ( Exception e ) {
+			return null;
+		}
+	}
+
+	/** The JVM opens JOT's own jar to load the agent, which says nothing about the application. */
+	static boolean isAgentJar(String path) {
+		return AGENT_JAR != null && AGENT_JAR.equals( path );
+	}
+
 	public List<Object> execute(String advice, String caller, Object obj, Object[] params, Object ret) {
 		return execute( advice, caller, obj, params, ret, null );
 	}
@@ -151,7 +170,7 @@ public class Sensor {
 					if ( o instanceof Collection ) {
 						for ( Object item : (Collection)o ) {
 							String safe = SafeString.format( item, debug );
-							boolean matched = Matcher.eval( safe, getPositiveMatchers(), getNegativeMatchers() );
+							boolean matched = !isAgentJar( safe ) && Matcher.eval( safe, getPositiveMatchers(), getNegativeMatchers() );
 							if ( matched ) {
 								String cleaned = StringUtils.normalizeSpace( safe );
 								Event event = new Event(getName(), cleaned, stack);
@@ -162,7 +181,7 @@ public class Sensor {
 						}
 					} else {
 						String safe = SafeString.format( o, debug );
-						boolean matched = Matcher.eval( safe, getPositiveMatchers(), getNegativeMatchers() );
+						boolean matched = !isAgentJar( safe ) && Matcher.eval( safe, getPositiveMatchers(), getNegativeMatchers() );
 						if ( matched ) {
 							String cleaned = StringUtils.normalizeSpace( safe );
 							Event event = new Event(getName(), cleaned, stack);
