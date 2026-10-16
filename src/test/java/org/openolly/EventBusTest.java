@@ -196,4 +196,106 @@ class EventBusTest {
 		Assertions.assertFalse( none.toString().contains( "\"stack\"" ) );
 	}
 
+
+	// ---- observe, monitor and block
+
+	@org.junit.jupiter.api.AfterEach
+	void restoreEnforcement() {
+		Sensor.enforceAll( true );
+	}
+
+	private Recorder run(Runnable call) {
+		Recorder r = new Recorder();
+		EventBus.configure( List.of( r ), 10 );
+		try {
+			call.run();
+		} finally {
+			EventBus.shutdown();
+		}
+		return r;
+	}
+
+	private Sensor rule() {
+		return new Sensor().method( "a.b.Class.method" ).capture( "#P0" ).exception( "Not allowed" );
+	}
+
+	private List<Object> fire(Sensor s) {
+		return s.execute( "test", "a.b.Class.Method", "foo", new String[] { "bar" }, "zoo" );
+	}
+
+	@Test
+	void testRuleThatIsNotEnforcedReportsAndLetsTheCallGoAhead() {
+		Sensor s = rule().enforce( false );
+		java.util.concurrent.atomic.AtomicReference<List<Object>> out = new java.util.concurrent.atomic.AtomicReference<>();
+		Recorder r = run( () -> out.set( fire( s ) ) );   // no exception escapes
+		Assertions.assertEquals( "[bar]", SafeString.format( out.get(), false ) );
+		Assertions.assertEquals( 1, r.events.size() );
+		Event e = r.events.get( 0 );
+		Assertions.assertEquals( Event.Action.MONITORED, e.getAction() );
+		Assertions.assertEquals( "Not allowed", e.getMessage() );
+		Assertions.assertEquals( "bar", e.getCapture() );
+		Assertions.assertNotNull( e.getStack() );
+	}
+
+	@Test
+	void testRuleIsEnforcedByDefault() {
+		Sensor s = rule();
+		Assertions.assertTrue( s.isEnforced() );
+		Recorder r = run( () -> Assertions.assertThrows( SensorException.class, () -> fire( s ) ) );
+		Assertions.assertEquals( Event.Action.BLOCKED, r.events.get( 0 ).getAction() );
+	}
+
+	@Test
+	void testTheGlobalSwitchMakesEveryRuleReportOnly() {
+		Sensor.enforceAll( false );
+		Sensor s = rule();
+		Assertions.assertFalse( s.isEnforced() );
+		Recorder r = run( () -> fire( s ) );
+		Assertions.assertEquals( List.of( Event.Action.MONITORED ), r.events.stream().map( Event::getAction ).toList() );
+	}
+
+	@Test
+	void testARuleCannotSwitchEnforcementBackOnOverTheGlobalSwitch() {
+		Sensor.enforceAll( false );
+		Sensor s = rule().enforce( true );
+		Assertions.assertFalse( s.isEnforced() );
+		Recorder r = run( () -> fire( s ) );
+		Assertions.assertEquals( Event.Action.MONITORED, r.events.get( 0 ).getAction() );
+	}
+
+	@Test
+	void testOneRuleCanBeStagedWhileOthersStillBlock() {
+		Sensor staged = rule().enforce( false );
+		Sensor live = rule();
+		Recorder r = run( () -> {
+			fire( staged );
+			Assertions.assertThrows( SensorException.class, () -> fire( live ) );
+		} );
+		Assertions.assertEquals( List.of( Event.Action.MONITORED, Event.Action.BLOCKED ),
+				r.events.stream().map( Event::getAction ).toList() );
+	}
+
+	@Test
+	void testSensorsWithoutAnExceptionObserveWhetherOrNotRulesAreEnforced() {
+		Sensor.enforceAll( false );
+		Sensor s = new Sensor().method( "a.b.Class.method" ).capture( "#P0" );
+		Recorder r = run( () -> fire( s ) );
+		Assertions.assertEquals( List.of( Event.Action.OBSERVED ), r.events.stream().map( Event::getAction ).toList() );
+	}
+
+	@Test
+	void testAReportOnlyRuleWithNoCapturesStillReports() {
+		Sensor s = new Sensor().method( "a.b.Class.method" ).exception( "No process creation" ).enforce( false );
+		Recorder r = run( () -> fire( s ) );
+		Assertions.assertEquals( 1, r.events.size() );
+		Assertions.assertEquals( Event.Action.MONITORED, r.events.get( 0 ).getAction() );
+	}
+
+	@Test
+	void testRuleThatDoesNotMatchReportsNothingInAnyMode() {
+		Sensor s = new Sensor().method( "a.b.Class.method" ).capture( "#P0" ).matcher( "nomatch" ).exception( "x" ).enforce( false );
+		Recorder r = run( () -> fire( s ) );
+		Assertions.assertTrue( r.events.isEmpty() );
+	}
+
 }

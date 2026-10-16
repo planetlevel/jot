@@ -83,6 +83,7 @@ Choose where events go with system properties.
 | `jot.output.file` | `jot-events.jsonl` | File for the `json` output |
 | `jot.events` | `all` | `all`, or `violations` to only report monitored and blocked events |
 | `jot.queue.size` | `10000` | Events to buffer. If the queue fills up, new events are dropped and counted. |
+| `jot.enforce` | `true` | `false` makes every rule with an `exception` only report, see below |
 | `jot.output.stack` | `25` | Stack frames to include in each `json` event. `0` leaves the stack out. |
 | `jot.app` | main class | Application name written to each `json` event |
 | `jot.host` | host name | Host name written to each `json` event |
@@ -107,6 +108,34 @@ about the event.
 ## Dashboard
 The `dashboard` directory has a web app that loads the `json` event log into SQLite and answers questions
 about it in plain English, as live or historical tables and charts. See [dashboard/README.md](dashboard/README.md).
+
+## Observe, Monitor and Block
+A sensor with no `exception` observes. It records what it sees and the call carries on. This is how you build an
+inventory such as routes, ciphers or roles, and it is what the reports use.
+
+A sensor with an `exception` is a rule. The `exception` text is its verdict, saying why the call is bad. Whether
+the rule stops the call depends on whether it is enforced.
+
+| Rule has an `exception` | Enforced | Event | Call stopped |
+|---|---|---|---|
+| no | not applicable | `observed` | no |
+| yes | no | `monitored` | no |
+| yes | yes | `blocked` | yes |
+
+By default rules are enforced. To try a rule without risking your application, report only. A `monitored` event
+carries the same message, captures and stack as a `blocked` one would, so you can see everything the rule would
+have stopped and check it for false positives before turning it on.
+
+    # one rule only reports, the others still block
+    - name: "cve-log4shell-no-exec"
+      exception: "CVE-2021-44228 blocked process execution"
+      enforce: false
+
+    # every rule only reports
+    java -Djot.enforce=false -javaagent:jot.jar=my.jot -jar app.jar
+
+`jot.enforce=false` is a master switch. A rule can turn its own enforcement off with `enforce: false`, but it can't
+turn it back on when the master switch is off.
 
 ## Servlet Applications
 JOT works with both `javax` (Tomcat 9 and earlier) and `jakarta` (Tomcat 10 and later) applications. Jakarta EE 9

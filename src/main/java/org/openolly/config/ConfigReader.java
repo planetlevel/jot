@@ -86,6 +86,7 @@ public class ConfigReader {
 						.captures( entry.captures )
 						.matchers( entry.matchers )
 						.exception( entry.exception )
+						.enforce( entry.enforce )
 						.debug( entry.debug );
 				}
 			}
@@ -138,6 +139,7 @@ public class ConfigReader {
 		public List<String> captures = new ArrayList<String>();
 		public List<String> matchers = new ArrayList<String>();
 		public String exception = null;
+		public Boolean enforce = null;
 		public boolean debug = false;
 	}
 

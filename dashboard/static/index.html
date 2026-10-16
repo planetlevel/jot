@@ -123,6 +123,8 @@
 const PRESETS = [
   { label: "Recent events", chart: "table", title: "Recent events",
     sql: "SELECT datetime(ts/1000, 'unixepoch') AS time, action, sensor, capture, call_site_name AS call_site\nFROM events ORDER BY ts DESC LIMIT 100" },
+  { label: "Violations", chart: "table", title: "Violations, blocked and would-have-been-blocked",
+    sql: "SELECT datetime(ts/1000, 'unixepoch') AS time, action, sensor, capture, message, call_site_name AS call_site\nFROM events WHERE action IN ('blocked', 'monitored') ORDER BY ts DESC LIMIT 200" },
   { label: "Blocked", chart: "table", title: "Blocked calls",
     sql: "SELECT datetime(ts/1000, 'unixepoch') AS time, sensor, capture, message, call_site_name AS call_site\nFROM events WHERE action = 'blocked' ORDER BY ts DESC LIMIT 200" },
   { label: "Events by sensor", chart: "bar", title: "Events by sensor",

@@ -20,8 +20,11 @@ javac -cp "$CP" -d $OUT/classes FakeDirectory.java Victim.java
 run() {
   rm -f pwned.txt
   java "$@" -Djava.naming.factory.initial=FakeDirectory -cp "$CP" Victim 2>&1 \
-    | grep -E 'ERROR Victim|pwned|BLOCKED|SEVERE|CVE-2021'
+    | grep -E 'ERROR Victim|pwned|BLOCKED|MONITORED|SEVERE|CVE-2021'
   rm -f pwned.txt
 }
 echo "=== without JOT ==="; run
-echo; echo "=== with JOT (log4shell.jot) ==="; run -Djot.verbose=true -javaagent:$JAR=log4shell.jot
+echo; echo "=== with JOT, monitor only (-Djot.enforce=false). The attack still works and is recorded ==="
+run -Djot.enforce=false -Djot.verbose=true -javaagent:$JAR=log4shell.jot
+echo; echo "=== with JOT, enforcing (log4shell.jot). The attack is stopped ==="
+run -Djot.verbose=true -javaagent:$JAR=log4shell.jot

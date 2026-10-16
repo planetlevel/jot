@@ -52,6 +52,11 @@ public class Sensor {
 	private List<Matcher> positiveMatchers = new ArrayList<Matcher>();
 	private String exception = null;
 	private boolean debug = false;
+	// false stops this rule from being enforced, so it only reports. Null leaves it to jot.enforce
+	private Boolean enforce = null;
+
+	// -Djot.enforce=false makes every rule with an exception only report, nothing is stopped
+	private static volatile boolean enforceAll = !"false".equalsIgnoreCase( System.getProperty( "jot.enforce" ) );
 	private boolean hasReturn = false;
 
 	private Pattern namePattern = Pattern.compile( "([a-z][a-z0-9]*\\-)*[a-z][a-z0-9]*");
@@ -174,9 +179,13 @@ public class Sensor {
 			if ( getException() != null ) {
 				if ( captures.isEmpty() || !results.isEmpty() ) {
 					String details = results.stream().map( String::valueOf ).collect( Collectors.joining( " | " ) );
-					SensorException e = new SensorException( getException() );
-					EventBus.publish( new Event( getName(), details, stack, Event.Action.BLOCKED, getException() ) );
-					throw e;
+					if ( isEnforced() ) {
+						SensorException e = new SensorException( getException() );
+						EventBus.publish( new Event( getName(), details, stack, Event.Action.BLOCKED, getException() ) );
+						throw e;
+					}
+					// not enforced, so say what would have been stopped and let the call go ahead
+					EventBus.publish( new Event( getName(), details, stack, Event.Action.MONITORED, getException() ) );
 				}
 			}			
 		} finally {
@@ -424,6 +433,25 @@ public class Sensor {
 	public Sensor debug( boolean value ) {
 		debug = value;
 		return this;
+	}
+
+	/**
+	 * Setting this to false makes the rule report violations without stopping them. A rule can only turn its
+	 * own enforcement off. It can't turn it on when jot.enforce is false, which switches off every rule.
+	 */
+	public Sensor enforce( Boolean value ) {
+		enforce = value;
+		return this;
+	}
+
+	/** True if a violation of this rule stops the call. */
+	public boolean isEnforced() {
+		return enforceAll && !Boolean.FALSE.equals( enforce );
+	}
+
+	/** Set whether rules are enforced at all, the same as -Djot.enforce. */
+	public static void enforceAll( boolean value ) {
+		enforceAll = value;
 	}
 
 	
