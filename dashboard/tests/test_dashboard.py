@@ -1222,5 +1222,103 @@ class OriginTests(unittest.TestCase):
         self.assertEqual((s["events"], s["hidden"], s["filtered"]), (1, 2, 0), "the start time and the filter are counted apart")
 
 
+class EventViewerTests(unittest.TestCase):
+    STACK = ["java.base/java.lang.Runtime.exec(Runtime.java:678)",
+             "org.apache.jsp.cmd_jsp._jspService(cmd_jsp.java:154)",
+             "org.hsqldb.Foo.bar(Unknown Source)",
+             "org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:164)"]
+
+    def setUp(self):
+        self.env = Env()
+        self.env.ingestor.app_prefixes = ("org.apache.jsp",)
+        self.app = server.App(self.env.db, self.env.ingestor)
+        self.env.write(event(1, sensor="get-routes", capture="/cmd.jsp", trace=7, ts=1792111135000, stack=self.STACK),
+                       event(2, sensor="block-exec", capture="[[open]]", action="blocked", trace=7, ts=1792111135100,
+                             message="stopped", stack=self.STACK),
+                       event(3, sensor="get-routes", capture="/other.jsp", trace=8, stack=self.STACK))
+        self.env.ingestor.poll()
+
+    def pk_of(self, event_id):
+        return self.env.ingestor.db.execute("SELECT pk FROM events_raw WHERE id = ?", (event_id,)).fetchone()[0]
+
+    def test_an_event_comes_back_with_everything_recorded_about_it(self):
+        e = self.app.event(self.pk_of(2))
+        self.assertEqual(("block-exec", "blocked", "[[open]]", "stopped"), (e["sensor"], e["action"], e["capture"], e["message"]))
+        for key in ("run", "host", "pid", "trace", "thread", "method", "call_site", "origin", "app_frame", "time", "ts"):
+            self.assertIn(key, e)
+
+    def test_each_frame_says_whether_it_is_the_application_a_library_or_the_platform(self):
+        kinds = [f["kind"] for f in self.app.event(self.pk_of(1))["stack"]]
+        self.assertEqual(["platform", "app", "library", "platform"], kinds)
+
+    def test_the_other_events_of_the_same_request_are_listed_and_only_those(self):
+        related = self.app.event(self.pk_of(1))["related"]
+        self.assertEqual([(1, "get-routes"), (2, "block-exec")], [(r[0] and self.env.ingestor.db.execute(
+            "SELECT id FROM events_raw WHERE pk = ?", (r[0],)).fetchone()[0], r[3]) for r in related])
+
+    def test_an_event_the_filter_hides_can_still_be_opened(self):
+        self.env.write(event(9, stack=["java.base/a.B.c(B.java:1)"]))
+        self.env.ingestor.poll()
+        hidden = self.pk_of(9)
+        self.assertEqual(0, store.run_query(self.env.db, "SELECT COUNT(*) FROM events WHERE pk = %d" % hidden)["rows"][0][0])
+        self.assertEqual(9, self.app.event(hidden)["id"])
+
+    def test_an_event_that_does_not_exist_is_not_found(self):
+        with self.assertRaises(LookupError):
+            self.app.event(999999)
+
+    def test_over_http(self):
+        httpd = server.make_server(self.app, "127.0.0.1", 0)
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        url = "http://127.0.0.1:%d/api/event?pk=%d" % (port, self.pk_of(2))
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"Host": "127.0.0.1:%d" % port})) as r:
+            self.assertEqual("block-exec", json.load(r)["sensor"])
+        for bad in ("pk=999999", "pk=abc", "pk=1;DROP%20TABLE%20events_raw"):
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:%d/api/event?%s" % (port, bad),
+                                                              headers={"Host": "127.0.0.1:%d" % port}))
+            self.assertIn(ctx.exception.code, (400, 404))
+        self.assertEqual(3, store.run_query(self.env.db, "SELECT COUNT(*) FROM events_raw")["rows"][0][0])
+
+    CHROME = JotsViewChrome = next((c for c in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                               shutil.which("google-chrome") or "", shutil.which("chromium") or "") if c and os.path.exists(c)), None)
+
+    def render(self, address):
+        httpd = server.make_server(self.app, "127.0.0.1", 0)
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        done = subprocess.run([self.CHROME, "--headless=new", "--disable-gpu", "--no-first-run",
+                               "--user-data-dir=" + tempfile.mkdtemp(), "--virtual-time-budget=8000", "--dump-dom",
+                               "http://127.0.0.1:%d/%s" % (port, address)], capture_output=True, text=True, timeout=90)
+        return done.stdout
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_the_viewer_opens_from_a_link_and_shows_the_stack_with_the_application_frame_marked(self):
+        page = self.render("#event/%d" % self.pk_of(2))
+        drawer = re.search(r'<aside id="eventDrawer"([^>]*)>(.*?)</aside>', page, re.S)
+        self.assertNotIn("hidden", drawer.group(1))
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", drawer.group(2)))
+        for expected in ("block-exec", "[[open]]", "stopped", "cmd_jsp._jspService", "Same request (2 events)"):
+            self.assertIn(expected, text)
+        self.assertRegex(drawer.group(2), r'<li class="app"[^>]*>.*?cmd_jsp')
+        self.assertNotIn("null", text.lower())
+        self.assertNotIn("undefined", text.lower())
+        closed = self.render("#events")
+        self.assertRegex(closed, r'<aside id="eventDrawer"[^>]*hidden')
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_rows_with_a_pk_column_are_clickable_and_do_not_show_it(self):
+        page = self.render("")
+        self.assertIn('class="clickable"', page)
+        head = re.search(r"<thead>(.*?)</thead>", page, re.S).group(1)
+        self.assertNotIn(">pk<", head)
+        self.assertIn(">sensor<", head)
+
+
 if __name__ == "__main__":
     unittest.main()

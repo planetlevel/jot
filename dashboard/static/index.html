@@ -168,6 +168,34 @@
   .fact { background: var(--code); border-radius: 8px; padding: 6px 10px; }
   .fact b { display: block; font-size: 16px; }
   .fact span { color: var(--muted); font-size: 12px; }
+  /* the event viewer, a panel that slides over the page */
+  #eventBackdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 40; }
+  #eventDrawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100vw); background: var(--panel);
+    border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0,0,0,.35); z-index: 41; overflow-y: auto; padding: 16px 20px 32px; }
+  #eventDrawer .top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  #eventDrawer .top .spacer { flex: 1; }
+  #eventDrawer h2 { margin: 0; font-size: 18px; overflow-wrap: anywhere; }
+  #eventDrawer h4 { margin: 18px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  #eventDrawer .when { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  #eventDrawer pre.value { margin: 0; padding: 10px 12px; background: var(--code); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere;
+    font-size: 13px; max-height: 260px; overflow: auto; }
+  #eventDrawer dl { display: grid; grid-template-columns: 120px 1fr; gap: 4px 14px; margin: 0; font-size: 13px; }
+  #eventDrawer dt { color: var(--muted); }
+  #eventDrawer dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  #eventDrawer .frames { margin: 0; padding: 0; list-style: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  #eventDrawer .frames li { display: grid; grid-template-columns: 34px 1fr; padding: 2px 6px; border-radius: 4px; overflow-wrap: anywhere; }
+  #eventDrawer .frames .n { color: var(--muted); text-align: right; padding-right: 10px; }
+  #eventDrawer .frames .platform { color: var(--muted); }
+  #eventDrawer .frames .library { }
+  #eventDrawer .frames .app { background: var(--observed-bg); color: var(--observed); font-weight: 600; }
+  #eventDrawer .opt { font-size: 12px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; margin-left: 10px; text-transform: none; letter-spacing: 0; }
+  #eventDrawer table.rel { width: 100%; font-size: 12px; }
+  #eventDrawer table.rel tr { cursor: pointer; }
+  #eventDrawer table.rel tr:hover td { background: var(--code); }
+  #eventDrawer table.rel tr.here td { background: var(--observed-bg); font-weight: 600; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: var(--code); }
+  tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 </style>
 </head>
 <body>
@@ -252,6 +280,8 @@
   </div>
 </main>
 
+<div id="eventBackdrop" hidden></div>
+<aside id="eventDrawer" role="dialog" aria-label="Event details" hidden></aside>
 <script src="/dom.js"></script>
 <script src="/grid.js"></script>
 <script src="/recent.js"></script>
@@ -260,11 +290,11 @@
 
 const PRESETS = [
   { label: "Latest events", chart: "table", title: "Latest events",
-    sql: "SELECT datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, sensor, capture, call_site_name AS call_site, message\nFROM events ORDER BY ts DESC LIMIT 100" },
+    sql: "SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, sensor, capture, call_site_name AS call_site, message\nFROM events ORDER BY ts DESC LIMIT 100" },
   { label: "Violations", chart: "table", title: "Violations, blocked and would-have-been-blocked",
-    sql: "SELECT datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, sensor, capture, message, call_site_name AS call_site\nFROM events WHERE action IN ('blocked', 'monitored') ORDER BY ts DESC LIMIT 200" },
+    sql: "SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, sensor, capture, message, call_site_name AS call_site\nFROM events WHERE action IN ('blocked', 'monitored') ORDER BY ts DESC LIMIT 200" },
   { label: "Blocked", chart: "table", title: "Blocked calls",
-    sql: "SELECT datetime(ts/1000, 'unixepoch', 'localtime') AS time, sensor, capture, message, call_site_name AS call_site\nFROM events WHERE action = 'blocked' ORDER BY ts DESC LIMIT 200" },
+    sql: "SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, sensor, capture, message, call_site_name AS call_site\nFROM events WHERE action = 'blocked' ORDER BY ts DESC LIMIT 200" },
   { label: "Events by sensor", chart: "bar", title: "Events by sensor",
     sql: "SELECT sensor || ' (' || action || ')' AS sensor, COUNT(*) AS events\nFROM events GROUP BY sensor, action ORDER BY events DESC" },
   { label: "Busiest call sites", chart: "bar", title: "Busiest call sites",
@@ -313,7 +343,12 @@ const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour12: false });
 // ---- pages
 function showPage(address) {
   const [name, selected] = (address || "").split("/");
-  if (selected) pendingSelect = decodeURIComponent(selected);
+  if (name === "event") {
+    openEvent(selected);
+  } else {
+    closeEvent();
+    if (selected) pendingSelect = decodeURIComponent(selected);
+  }
   currentPage = name === "policy" ? "policy" : "events";
   $("eventsPage").hidden = currentPage !== "events";
   $("policyPage").hidden = currentPage !== "policy";
@@ -468,8 +503,22 @@ function cell(col, v) {
 
 function tableView(r, hint) {
   if (!r.rows.length) return el("div", { class: "empty", text: hint || "No matching events" });
-  const head = el("tr", {}, ...r.columns.map((c) => el("th", { text: c })));
-  const body = r.rows.map((row) => el("tr", {}, ...row.map((v, i) => cell(r.columns[i], v))));
+  // a column called pk makes each row open that event, and isn't shown itself
+  const pkAt = r.columns.indexOf("pk");
+  const shown = r.columns.map((c, i) => i).filter((i) => i !== pkAt);
+  const head = el("tr", {}, ...shown.map((i) => el("th", { text: r.columns[i] })));
+  const body = r.rows.map((row) => {
+    const tr = el("tr", {}, ...shown.map((i) => cell(r.columns[i], row[i])));
+    if (pkAt >= 0 && row[pkAt] != null) {
+      const open = () => { location.hash = "#event/" + row[pkAt]; };
+      tr.className = "clickable";
+      tr.tabIndex = 0;
+      tr.title = "Open this event";
+      tr.addEventListener("click", (ev) => { if (!window.getSelection().toString()) open(); });
+      tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter") open(); });
+    }
+    return tr;
+  });
   return el("div", { class: "tablewrap" }, el("table", {}, el("thead", {}, head), el("tbody", {}, ...body)));
 }
 
@@ -823,6 +872,92 @@ $("reportSelect").addEventListener("change", (ev) => {
 try { asked = JSON.parse(localStorage.getItem("jot-history") || "[]"); } catch (e) { asked = []; }
 try { $("live").checked = localStorage.getItem("jot-live") !== "0"; } catch (e) { $("live").checked = true; }
 drawPicker([]); drawReports(); drawRecent();
+// ---- the event viewer. #event/<pk> opens it, so an event can be linked to.
+let shownEvent = null;
+let hideRuntime = false;
+
+function closeEvent() {
+  shownEvent = null;
+  $("eventDrawer").hidden = true;
+  $("eventBackdrop").hidden = true;
+}
+
+async function openEvent(pk) {
+  if (!/^\d+$/.test(pk || "")) return closeEvent();
+  try {
+    const e = await api("/api/event?pk=" + pk);
+    if (location.hash !== "#event/" + pk) return;   // moved on while it loaded
+    shownEvent = e;
+    drawEvent();
+  } catch (err) {
+    shownEvent = { error: err.message };
+    $("eventDrawer").replaceChildren(el("button", { class: "small", text: "Close", onclick: () => { location.hash = "#events"; } }),
+      el("div", { class: "error", text: err.message }));
+    $("eventDrawer").hidden = false;
+    $("eventBackdrop").hidden = false;
+  }
+}
+
+function drawEvent() {
+  const e = shownEvent;
+  const fact = (k, v) => v === null || v === undefined || v === "" ? null : [el("dt", { text: k }), el("dd", { text: String(v) })];
+  const facts = [
+    fact("sensor", e.sensor), fact("action", e.action), fact("origin", e.origin), fact("application", e.app),
+    fact("host", e.host), fact("process", e.pid), fact("run", e.run), fact("event", e.id), fact("trace", e.trace),
+    fact("thread", e.thread_id != null ? e.thread + " (" + e.thread_id + ")" : e.thread), fact("method", e.method),
+    fact("call site", e.call_site), fact("app frame", e.app_frame), fact("time (UTC)", e.time),
+  ].filter(Boolean).flat();
+  const frames = e.stack.filter((f) => !(hideRuntime && f.kind === "platform"));
+  const hiddenCount = e.stack.length - frames.length;
+  const when = e.ts ? new Date(e.ts).toLocaleString() + "." + String(e.ts % 1000).padStart(3, "0") : "";
+  const copy = el("button", { class: "small", text: "Copy JSON", onclick: async (ev) => {
+    const plain = { ...e, stack: e.stack.map((f) => f.frame), related: undefined };
+    try { await navigator.clipboard.writeText(JSON.stringify(plain, null, 2)); ev.target.textContent = "Copied"; }
+    catch (x) { ev.target.textContent = "Copy failed"; }
+  } });
+  // replaceChildren turns a null into the text "null", so empty sections are dropped first
+  $("eventDrawer").replaceChildren(...[
+    el("div", { class: "top" },
+      e.action ? el("span", { class: "badge " + e.action, text: e.action }) : null,
+      el("h2", { text: e.sensor || "event" }),
+      el("span", { class: "spacer" }),
+      copy,
+      el("button", { class: "small", text: "Close", title: "Escape", onclick: () => { location.hash = "#events"; } })),
+    el("div", { class: "when", text: when }),
+    el("h4", { text: "Captured" }),
+    el("pre", { class: "value", text: e.capture || "(nothing captured)" }),
+    e.message ? el("h4", { text: "Message" }) : null,
+    e.message ? el("pre", { class: "value", text: e.message }) : null,
+    el("h4", { text: "Details" }),
+    el("dl", {}, ...facts),
+    el("h4", {}, "Stack (" + e.stack.length + " frames)",
+      el("label", { class: "opt" },
+        el("input", { type: "checkbox", checked: hideRuntime ? "" : null, onchange: (ev) => { hideRuntime = ev.target.checked; drawEvent(); } }),
+        "hide JDK and server frames")),
+    e.stack.length
+      ? el("ol", { class: "frames", start: "0" }, ...frames.map((f) => el("li", { class: f.kind, title: f.kind },
+          el("span", { class: "n", text: String(e.stack.indexOf(f)) }), el("span", { text: f.frame }))))
+      : el("div", { class: "hint", text: "This event has no stack." }),
+    hiddenCount ? el("div", { class: "hint", text: hiddenCount + " JDK and server frames hidden" }) : null,
+    e.related.length > 1 ? el("h4", { text: "Same request (" + e.related.length + " events)" }) : null,
+    e.related.length > 1 ? el("table", { class: "rel" }, el("tbody", {}, ...e.related.map(([pk, ts, action, sensor, capture]) => {
+      const tr = el("tr", { class: pk === e.pk ? "here" : "", tabindex: "0" },
+        el("td", { text: new Date(ts).toLocaleTimeString([], { hour12: false }) }),
+        el("td", {}, el("span", { class: "badge " + action, text: action })),
+        el("td", { text: sensor }),
+        el("td", { text: (capture || "").length > 80 ? capture.slice(0, 80) + "…" : (capture || "") }));
+      const go = () => { location.hash = "#event/" + pk; };
+      tr.addEventListener("click", go);
+      tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter") go(); });
+      return tr;
+    }))) : null,
+  ].filter(Boolean));
+  $("eventDrawer").hidden = false;
+  $("eventBackdrop").hidden = false;
+}
+$("eventBackdrop").addEventListener("click", () => { location.hash = "#events"; });
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && shownEvent) location.hash = "#events"; });
+
 showPage(location.hash.slice(1));
 runSql(PRESETS[0].sql, PRESETS[0]);
 tick();

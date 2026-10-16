@@ -19,7 +19,7 @@
                     String line;
                     while ((line = reader.readLine()) != null)
                     {
-                      content.append(line);
+                      content.append(line).append("\n");
                     }
                     reader.close();
                 } catch( Exception e ) {
@@ -49,7 +49,7 @@
 				<div class="panel-body">
 					<form role="form" method="POST" action="ssrf.jsp" autocomplete="off">
 						<div class="form-group">
-							<input name="urlparam" id="cmd" value="Calculator" class="form-control" placeholder="data">
+							<input name="urlparam" id="cmd" value="<%= param == null ? "http://localhost:8080/ticketbook/index.jsp" : param.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;") %>" class="form-control" placeholder="http://host/path">
 						</div>
 						<button name="submit" type="submit" class="btn btn-warning">Submit</button>
 					</form>
@@ -58,7 +58,17 @@
 		</div>
 	</div>
 
-	<pre><%=content.toString()%></pre>
+	<% if ( param != null ) { %>
+	<div class="panel panel-primary">
+		<div class="panel-heading">
+			<h3 class="panel-title">Response (<%= content.length() %> characters)</h3>
+		</div>
+		<div class="panel-body">
+			<%-- shown as text, so a fetched page is read and not rendered --%>
+			<textarea class="form-control" rows="20" readonly spellcheck="false" style="font-family: monospace;"><%= content.toString().replace("&", "&amp;").replace("<", "&lt;") %></textarea>
+		</div>
+	</div>
+	<% } %>
 
 	<%@ include file="/footer.jsp"%>
 </body>

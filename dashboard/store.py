@@ -125,6 +125,16 @@ CLASSIFIER_VERSION = 2
 SERVLET_API = ("javax.servlet.", "jakarta.servlet.")
 
 
+def frame_kind(frame, app_prefixes=()):
+    """platform for JDK and server code, app for the application, library for everything else. With no application
+    packages given, anything that is not the platform counts as the application."""
+    name = frame_name(frame) or ""
+    if name.startswith(PLATFORM_PREFIXES) or frame.startswith(("java.", "jdk.")) and "/" in frame.split("(")[0]:
+        return "platform"
+    prefixes = tuple(p if p.endswith(".") else p + "." for p in app_prefixes)
+    return "app" if not prefixes or name.startswith(prefixes) else "library"
+
+
 def classify(stack, app_prefixes=()):
     """Where an event came from, as (origin, app_frame). The origin is app when any frame is application code,
     library when the stack has code that is neither the application nor the platform, and platform otherwise.
@@ -135,15 +145,12 @@ def classify(stack, app_prefixes=()):
         return "none", None
     if (frame_name(stack[0]) or "").startswith(SERVLET_API):
         return "app", stack[0]
-    prefixes = tuple(p if p.endswith(".") else p + "." for p in app_prefixes)
     library = False
     for frame in stack:
-        name = frame_name(frame) or ""
-        if name.startswith(PLATFORM_PREFIXES) or frame.startswith(("java.", "jdk.")) and "/" in frame.split("(")[0]:
-            continue
-        if not prefixes or name.startswith(prefixes):
+        kind = frame_kind(frame, app_prefixes)
+        if kind == "app":
             return "app", frame
-        library = True
+        library = library or kind == "library"
     return ("library" if library else "platform"), None
 
 

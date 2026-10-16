@@ -35,6 +35,8 @@ Rules for the SQL
   datetime(ts/1000, 'unixepoch', 'localtime'). A relative window such as the last hour is
   ts > (strftime('%s','now') - 3600) * 1000. Bucket with
   strftime('%Y-%m-%d %H:%M', ts/1000, 'unixepoch', 'localtime').
+- When a question lists individual events, rather than counts or groups, include pk as the first column. The
+  dashboard hides it and uses it to open the event when a row is clicked.
 - Give columns short readable aliases. Add ORDER BY, and LIMIT when a question asks for the top few.
 - You can't see the data, only the tables. Never ask the user for values such as role names, route names
   or user names. Write the query so it works for whatever values are there.

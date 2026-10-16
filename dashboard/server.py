@@ -159,6 +159,25 @@ class App:
             store.set_since(self.ingestor.db, value)
         return self.status()
 
+    def event(self, pk):
+        """One event with everything recorded about it, the stack with each frame marked as application, library or
+        platform, and the other events from the same request. Found even when the filters hide it from the views."""
+        pk = int(pk)
+        r = store.run_query(self.db_path, "SELECT * FROM events_raw WHERE pk = %d" % pk)
+        if not r["rows"]:
+            raise LookupError("no event %d" % pk)
+        e = dict(zip(r["columns"], r["rows"][0]))
+        stack = json.loads(e["stack"]) if e.get("stack") else []
+        prefixes = self.ingestor.app_prefixes
+        e["stack"] = [{"frame": f, "kind": store.frame_kind(f, prefixes)} for f in stack]
+        e["related"] = []
+        if e.get("trace") is not None:
+            e["related"] = store.run_query(self.db_path, """
+                SELECT pk, ts, action, sensor, capture FROM events_raw
+                WHERE run = '%s' AND trace = %d ORDER BY ts, pk""" % (str(e["run"]).replace("'", "''"), int(e["trace"])),
+                limit=200)["rows"]
+        return e
+
     def set_app_only(self, on):
         """Leave out observed events that have no frame from the application, which is everything the JDK and the
         application server do on their own. Blocked and reported events always show."""
@@ -345,6 +364,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.control_state())
             if url.path == "/api/sensors":
                 return self._send(200, self.app.sensors())
+            if url.path == "/api/event":
+                try:
+                    return self._send(200, self.app.event(parse_qs(url.query).get("pk", [""])[0]))
+                except LookupError as e:
+                    return self._send(404, {"error": str(e)})
             if url.path == "/api/recent":
                 after = parse_qs(url.query).get("after", [None])[0]
                 return self._send(200, self.app.recent(after))
