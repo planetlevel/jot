@@ -44,6 +44,7 @@ JAR=$ROOT/target/jot-$VERSION.jar
 BASE=$HERE/target/tomcat-base
 mkdir -p "$BASE"/{logs,temp,work,webapps,conf/Catalina/localhost}
 cp -R "$CATALINA_HOME/conf/." "$BASE/conf/"
+cp "$HERE/conf/tomcat-users.xml" "$BASE/conf/tomcat-users.xml"   # the demo accounts, in place of the stock file
 cat > "$BASE/conf/Catalina/localhost/ticketbook.xml" <<XML
 <Context docBase="$HERE/webapp" reloadable="false"/>
 XML

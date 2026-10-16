@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Demo accounts for TicketBook only. The pages log in with the password "test", so these are
+     not secrets, and nothing here gives access to the Tomcat manager. -->
+<tomcat-users xmlns="http://tomcat.apache.org/xml" version="1.0">
+  <role rolename="RoleA"/>
+  <role rolename="RoleB"/>
+  <role rolename="RoleC"/>
+  <role rolename="RoleD"/>
+  <role rolename="RoleE"/>
+  <role rolename="guest"/>
+  <user username="UserA" password="test" roles="RoleA"/>
+  <user username="UserB" password="test" roles="RoleB"/>
+  <user username="UserC" password="test" roles="RoleC"/>
+  <user username="UserD" password="test" roles="RoleD"/>
+  <user username="UserE" password="test" roles="RoleE"/>
+  <user username="guest" password="test" roles="guest"/>
+</tomcat-users>
