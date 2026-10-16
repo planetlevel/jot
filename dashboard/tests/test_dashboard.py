@@ -729,6 +729,13 @@ class ControlStoreTests(unittest.TestCase):
             with self.assertRaises(control.ControlError):
                 self.control.check_token(wrong)
 
+    def test_whitespace_picked_up_when_pasting_is_ignored_but_nothing_else(self):
+        for pasted in ["s3cret-token ", " s3cret-token", "s3cret-token\n", "\ts3cret-token\r\n"]:
+            self.control.check_token(pasted)
+        for wrong in ["s3cret token", "s3cret-token x", "S3CRET-TOKEN", "s3cret-token\ns3cret-token"]:
+            with self.assertRaises(control.ControlError):
+                self.control.check_token(wrong)
+
     def test_without_a_token_nothing_can_change(self):
         read_only = control.ControlStore(self.path, token=None)
         self.assertFalse(read_only.writable)

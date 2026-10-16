@@ -199,7 +199,11 @@
           <button type="button" id="modeObserve">Observe</button>
           <button type="button" id="modeBlock">Block</button>
         </div>
-        <input type="password" id="adminToken" autocomplete="off" placeholder="Admin token" aria-label="Admin token" hidden>
+        <span id="tokenBox" hidden>
+          <input type="password" id="adminToken" name="jot-admin-token" autocomplete="new-password" spellcheck="false"
+                 data-1p-ignore data-lpignore="true" placeholder="Admin token" aria-label="Admin token">
+          <button type="button" id="tokenShow" title="Show what you typed, to check it">Show</button>
+        </span>
       </div>
       <p class="modehelp"><b>Observe</b> rules report what they would stop, and stop nothing.
         <b>Block</b> rules stop the calls they are written to stop. Sensors that aren't rules only ever observe.</p>
@@ -309,7 +313,7 @@ let controlState = null;
 
 async function changeControl(change, confirmText) {
   if (confirmText && !window.confirm(confirmText)) return;
-  const token = $("adminToken").value;
+  const token = $("adminToken").value.trim();
   if (!token) { showControlMessage("Type the admin token first."); $("adminToken").focus(); return; }
   try {
     drawControl(await api("/api/control", change, { "X-JOT-Admin": token }));
@@ -340,7 +344,7 @@ function drawControl(c) {
   $("modeObserve").className = c.master ? "" : "active observe";
   $("modeBlock").className = c.master ? "active block" : "";
   for (const id of ["modeObserve", "modeBlock"]) $(id).disabled = !c.writable;
-  $("adminToken").hidden = !c.writable;
+  $("tokenBox").hidden = !c.writable;
 
   const rows = c.rules.map((r) => {
     const block = r.mode === "block";
@@ -383,6 +387,12 @@ function setMode(master) {
   if (controlState && controlState.master === master) return;
   changeControl({ master }, master ? null : "Switch to Observe? Every rule will report only and nothing will be blocked.");
 }
+$("tokenShow").addEventListener("click", () => {
+  const field = $("adminToken");
+  const hide = field.type === "text";
+  field.type = hide ? "password" : "text";
+  $("tokenShow").textContent = hide ? "Show" : "Hide";
+});
 $("modeObserve").addEventListener("click", () => setMode(false));
 $("modeBlock").addEventListener("click", () => setMode(true));
 

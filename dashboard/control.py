@@ -60,7 +60,8 @@ class ControlStore:
             self._failures = [t for t in self._failures if now - t < LOCKOUT_SECONDS]
             if len(self._failures) >= MAX_FAILURES:
                 raise ControlError("too many wrong tokens, try again in a minute")
-            ok = hmac.compare_digest((supplied or "").encode(), self.token.encode())
+            # a token never contains whitespace, so a space or newline picked up when it was pasted is ignored
+            ok = hmac.compare_digest((supplied or "").strip().encode(), self.token.encode())
             if not ok:
                 self._failures.append(now)
                 raise ControlError("wrong admin token")
