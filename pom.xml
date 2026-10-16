@@ -102,6 +102,12 @@
 				<configuration>
 					<source>17</source>
 					<target>17</target>
+					<compilerArgs>
+						<!-- Advice code is inlined into the instrumented methods, including those of old
+						     libraries compiled for Java 6, which can't hold invokedynamic. Java 9+ compiles
+						     string concatenation to invokedynamic unless told not to. -->
+						<arg>-XDstringConcat=inline</arg>
+					</compilerArgs>
 				</configuration>
 			</plugin>
 
