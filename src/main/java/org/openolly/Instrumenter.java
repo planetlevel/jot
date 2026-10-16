@@ -33,6 +33,7 @@ public class Instrumenter {
 
 	// -Djot.verbose=true reveals instrumentation errors that are otherwise suppressed
 	private static final boolean VERBOSE = Boolean.getBoolean("jot.verbose");
+	private static final boolean RETRANSFORM = Boolean.getBoolean("jot.retransform");
 
 	private static class ErrorLogger extends AgentBuilder.Listener.Adapter {
 		@Override
@@ -62,6 +63,12 @@ public class Instrumenter {
 			//	.with(InitializationStrategy.NoOp.INSTANCE) // for redefine
 			//	.with(TypeStrategy.Default.REDEFINE) // for redefine
 				.disableClassFormatChanges().ignore(none());
+
+			// The JVM has already loaded some classes, such as java.io.File and MessageDigest, by the time the agent starts.
+			// Those are only instrumented if they are transformed again, which costs a little at startup.
+			if ( RETRANSFORM ) {
+				builder = builder.with( AgentBuilder.RedefinitionStrategy.RETRANSFORMATION );
+			}
 
 			builder = builder
 				// add a sensor for every service method to start and stop a trace
