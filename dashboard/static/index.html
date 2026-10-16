@@ -229,6 +229,7 @@
   </div>
 </main>
 
+<script src="/dom.js"></script>
 <script src="/grid.js"></script>
 <script src="/recent.js"></script>
 <script>
@@ -256,18 +257,8 @@ let asked = [];           // questions asked, with the SQL the model wrote
 let timer = null;
 let currentPage = "events";
 
-// ---- tiny DOM helper. Text is only ever added as text, captured values can be hostile.
-function el(tag, props, ...kids) {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(props || {})) {
-    if (k === "class") e.className = v;
-    else if (k === "text") e.textContent = v;
-    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
-    else e.setAttribute(k, v);
-  }
-  for (const kid of kids) if (kid != null) e.append(kid);
-  return e;
-}
+// ---- tiny DOM helper, see dom.js. Text is only ever added as text, captured values can be hostile.
+const el = JotDom.makeEl(document);
 const svgEl = (tag, attrs, text) => {
   const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
   for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
@@ -346,12 +337,12 @@ function drawControl(c) {
   for (const id of ["modeObserve", "modeBlock"]) $(id).disabled = !c.writable;
   $("tokenBox").hidden = !c.writable;
 
-  const rows = c.rules.map((r) => {
+  const rows = c.rules.map((r, index) => {
     const block = r.mode === "block";
     // what the rule is set to by itself, ignoring the master switch
     const intended = r.setting !== null ? r.setting : !r.staged;
     const changed = r.setting !== null && r.setting !== !r.staged;
-    const sw = el("button", { type: "button", class: "switch", role: "switch", "aria-checked": String(intended),
+    const sw = el("button", { type: "button", id: "ruleSwitch" + index, class: "switch", role: "switch", "aria-checked": String(intended),
       "aria-label": r.name + " blocks", disabled: !c.writable || !c.master ? "" : null,
       title: !c.master ? "Observe is on, so no rule blocks" : intended ? "Click to make this rule report only" : "Click to make this rule block",
       onclick: () => {
@@ -366,7 +357,7 @@ function drawControl(c) {
         !c.master ? el("span", { class: "hint", style: "margin:0", text: "(Observe is on)" })
           : changed ? el("span", { class: "hint", style: "margin:0", text: "(changed here, the .jot file says " + (r.staged ? "report only" : "block") + ")" })
           : r.staged ? el("span", { class: "hint", style: "margin:0", text: "(staged as report only in its .jot file)" }) : null),
-      el("div", { class: "sw" }, "Block", sw),
+      el("div", { class: "sw" }, el("label", { for: "ruleSwitch" + index, text: "Block", style: "cursor:pointer" }), sw),
       el("div", { class: "why", text: (r.description ? r.description + ". " : "") + r.message }),
       el("div", { class: "counts", text: r.last_hour.blocked + " blocked, " + r.last_hour.monitored + " reported in the last hour" }));
   });

@@ -22,7 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_BODY = 64 * 1024
 MAX_REPAIRS = 2
 MAX_GRID_ROWS = 5000
-SCRIPTS = {"/grid.js": "grid.js", "/recent.js": "recent.js"}   # the only files served besides the page
+SCRIPTS = {"/dom.js": "dom.js", "/grid.js": "grid.js", "/recent.js": "recent.js"}   # the only files served besides the page
 
 
 def load_env(path):

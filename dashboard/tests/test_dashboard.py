@@ -847,7 +847,8 @@ class ControlApiTests(unittest.TestCase):
 class GridScriptTests(unittest.TestCase):
     def test_grid_pivot_logic(self):
         here = os.path.dirname(__file__)
-        result = subprocess.run(["node", "--test", os.path.join(here, "grid.test.js"), os.path.join(here, "recent.test.js")],
+        result = subprocess.run(["node", "--test", os.path.join(here, "grid.test.js"), os.path.join(here, "recent.test.js"),
+                                 os.path.join(here, "dom.test.js")],
                                 capture_output=True, text=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
@@ -903,6 +904,10 @@ class HttpTests(unittest.TestCase):
         self.assertIn(b'id="recentMenu"', page)
         self.assertNotIn(b'id="history"', page)
         self.assertIn(b'src="/recent.js"', page)
+        self.assertIn(b'src="/dom.js"', page)
+        # the page must build elements with the shared helper, a copy that sets disabled="null" disables controls
+        self.assertIn(b"JotDom.makeEl(document)", page)
+        self.assertNotIn(b"function el(tag, props", page)
         code, script = self.call("/grid.js")
         self.assertEqual(200, code)
         self.assertIn(b"pivot", script)
