@@ -84,7 +84,7 @@ Choose where events go with system properties.
 | `jot.events` | `all` | `all`, or `violations` to only report monitored and blocked events |
 | `jot.queue.size` | `10000` | Events to buffer. If the queue fills up, new events are dropped and counted. |
 | `jot.enforce` | `true` | `false` makes every rule with an `exception` only report, see below |
-| `jot.retransform` | `false` | `true` also instruments classes the JVM had already loaded when JOT started, see below |
+| `jot.retransform` | `true` | Also instruments classes the JVM had already loaded when JOT started. `false` turns it off, see below |
 | `jot.control` | none | Control file the agent polls to switch rules between monitor and block while running, see below |
 | `jot.output.stack` | `25` | Stack frames to include in each `json` event. `0` leaves the stack out. |
 | `jot.app` | main class | Application name written to each `json` event |
@@ -168,13 +168,13 @@ the dashboard. See `demo/ticketbook/run.sh`.
 
 ## Classes the JVM loaded before JOT
 JOT instruments a class when it is loaded. A few classes in the JDK are loaded before any agent starts, among them
-`java.io.File`, `java.security.MessageDigest` and `java.net.Socket`, and a sensor on one of those silently never fires. In a
-demo that is why a sensor such as `get-files` stays at "never" while sensors on `Cipher` and `ProcessBuilder`, which load
-later, work.
+`java.io.File`, `java.security.MessageDigest` and `java.net.Socket`. To reach those, JOT also transforms classes that are
+already loaded, which the JVM calls retransforming. It only rewrites the classes a sensor targets, but it has to look at
+every loaded class, so it adds a delay at startup, about a tenth of a second for a small program and more for an
+application server with thousands of classes.
 
-Start the JVM with `-Djot.retransform=true` and JOT transforms the classes that are already loaded too. It adds a short
-delay at startup, a tenth of a second for a small program, and more for an application server that has thousands of classes
-loaded. `demo/retransform/run.sh` shows both behaviours.
+It is on by default. Start the JVM with `-Djot.retransform=false` to turn it off, and sensors on those early classes then
+never fire. `demo/retransform/run.sh` shows both behaviours.
 
 ## Advanced Options
 Set `-Djot.verbose=true` to report instrumentation errors. By default JOT suppresses them so that

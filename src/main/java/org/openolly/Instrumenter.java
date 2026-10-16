@@ -33,7 +33,8 @@ public class Instrumenter {
 
 	// -Djot.verbose=true reveals instrumentation errors that are otherwise suppressed
 	private static final boolean VERBOSE = Boolean.getBoolean("jot.verbose");
-	private static final boolean RETRANSFORM = Boolean.getBoolean("jot.retransform");
+	// on unless -Djot.retransform=false, see the comment where it is used
+	private static final boolean RETRANSFORM = !"false".equalsIgnoreCase(System.getProperty("jot.retransform"));
 
 	private static class ErrorLogger extends AgentBuilder.Listener.Adapter {
 		@Override
@@ -58,6 +59,7 @@ public class Instrumenter {
 			//	.with(AgentBuilder.Listener.StreamWriting.toSystemError().withTransformationsOnly())
 				.with(VERBOSE ? InstallationListener.StreamWriting.toSystemError() : InstallationListener.ErrorSuppressing.INSTANCE)  // prevent errors from breaking app
 				.with(VERBOSE ? new ErrorLogger() : AgentBuilder.Listener.NoOp.INSTANCE)
+				.with(new JotScopeListener())      // sensors must not see JOT reading class files while it decides what to instrument
 				.with(LocationStrategy.ForClassLoader.STRONG.withFallbackTo(ClassFileLocator.ForClassLoader.ofBootLoader()))
 			//	.with(RedefinitionStrategy.RETRANSFORMATION) // for redefine, for java. classes too?
 			//	.with(InitializationStrategy.NoOp.INSTANCE) // for redefine
@@ -65,7 +67,8 @@ public class Instrumenter {
 				.disableClassFormatChanges().ignore(none());
 
 			// The JVM has already loaded some classes, such as java.io.File and MessageDigest, by the time the agent starts.
-			// Those are only instrumented if they are transformed again, which costs a little at startup.
+			// Those are only instrumented if they are transformed again, which costs a little at startup, so it is on
+			// unless -Djot.retransform=false.
 			if ( RETRANSFORM ) {
 				builder = builder.with( AgentBuilder.RedefinitionStrategy.RETRANSFORMATION );
 			}

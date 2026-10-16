@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Shows why a sensor on a class the JVM loads at startup, like java.io.File, never fires, and how
-# -Djot.retransform=true fixes it. Runs the same program twice and counts what each sensor saw.
+# Shows that sensors on classes the JVM loads at startup, like java.io.File, fire by default, and that they
+# never do with -Djot.retransform=false. Runs the same program twice and counts what each sensor saw.
 # Set JAR to use a jar other than target/jot-<version>.jar.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -16,13 +16,13 @@ count() { grep -c "\"sensor\":\"$1\"" $OUT/events.jsonl || true; }
 run() {
   : > $OUT/events.jsonl
   java "$@" -Djot.output=json -Djot.output.file=$OUT/events.jsonl -javaagent:$JAR=watch.jot -cp $OUT Demo 2>/dev/null
-  printf "  %-18s %s\n" file-created "$(count file-created)" digest-requested "$(count digest-requested)" \
+  printf "  %-18s %s\n" file-created "$(count file-created)" file-path "$(count file-path)" digest-requested "$(count digest-requested)" \
     process-created "$(count process-created)" cipher-requested "$(count cipher-requested)"
 }
-echo "=== default, classes loaded before the agent are not instrumented"; run
-default_files=$(count file-created)
-echo "=== -Djot.retransform=true"; run -Djot.retransform=true
-retransformed_files=$(count file-created)
+echo "=== default, which also instruments classes the JVM loaded before the agent"; run
+default_files=$(count file-created); default_path=$(count file-path); default_digest=$(count digest-requested)
+echo "=== -Djot.retransform=false, those classes are never instrumented"; run -Djot.retransform=false
+off_files=$(count file-created)
 
-[ "$default_files" = 0 ] && [ "$retransformed_files" = 1 ] && [ "$(count digest-requested)" = 1 ] \
+[ "$default_files" = 1 ] && [ "$default_path" = 1 ] && [ "$default_digest" = 1 ] && [ "$off_files" = 0 ] \
   && echo "PASS" || { echo "FAIL" >&2; exit 1; }

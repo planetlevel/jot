@@ -6,6 +6,13 @@ sensors:
   - "#ARGS"
   matchers:
   - "var/data"
+- name: "file-path"
+  methods:
+  - "java.io.File.<init>"
+  captures:
+  - "#OBJ.getCanonicalPath()"
+  matchers:
+  - "var/data"
 - name: "digest-requested"
   methods:
   - "java.security.MessageDigest.getInstance"
