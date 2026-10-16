@@ -160,4 +160,52 @@ class SensorTest {
 		Assertions.assertEquals("[bar]", SafeString.format(ret, false));
 	}
 
+
+	/** Stands in for application code that has a sensor on one of its methods. */
+	public static class Probe {
+		Sensor watcher;
+		java.util.List<Object> seen;
+
+		public String get() {
+			seen = watcher.execute( "test", "Probe.get", this, new Object[0], null );
+			return "from-probe";
+		}
+	}
+
+	@Test
+	void testNoSensorFiresWhileAnotherSensorRuns() {
+		Sensor watcher = new Sensor().capture("'watched'");
+		Sensor outer = new Sensor().capture("#P0.get()");
+		Probe probe = new Probe();
+		probe.watcher = watcher;
+
+		Object ret = outer.execute( "test", "sig", null, new Object[] { probe }, null );
+
+		Assertions.assertEquals( "[from-probe]", SafeString.format( ret, false ) );
+		Assertions.assertEquals( "[]", SafeString.format( probe.seen, false ), "the nested sensor must not fire" );
+		Assertions.assertFalse( JotScope.active(), "the guard must be released" );
+		Assertions.assertEquals( "[watched]", SafeString.format( watcher.execute( "test", "sig", null, new Object[0], null ), false ) );
+	}
+
+	@Test
+	void testGuardIsReleasedWhenASensorBlocks() {
+		Sensor blocker = new Sensor().capture("#P0").exception("blocked");
+		Assertions.assertThrows( SensorException.class,
+			() -> blocker.execute( "test", "sig", null, new Object[] { "x" }, null ) );
+		Assertions.assertFalse( JotScope.active() );
+	}
+
+	@Test
+	void testSensorsDoNotFireOnAThreadThatRunsJotCode() throws Exception {
+		Sensor s = new Sensor().capture("#P0");
+		java.util.concurrent.atomic.AtomicReference<java.util.List<Object>> result = new java.util.concurrent.atomic.AtomicReference<>();
+		Thread t = new Thread( () -> {
+			JotScope.enterForThread();
+			result.set( s.execute( "test", "sig", null, new Object[] { "x" }, null ) );
+		} );
+		t.start();
+		t.join();
+		Assertions.assertTrue( result.get().isEmpty() );
+	}
+
 }

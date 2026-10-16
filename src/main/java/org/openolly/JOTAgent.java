@@ -23,6 +23,7 @@ public class JOTAgent {
 	}
 
 	public static void transform(String yaml, Instrumentation inst) {
+		JotScope.enter();
 		try {
 			EventBus.configureFromSystemProperties();
 			ConfigReader.init(yaml);
@@ -30,6 +31,8 @@ public class JOTAgent {
 		} catch (Exception e) {
 			//e.printStackTrace();
 			logger.atWarning().log( ExceptionUtils.getStackTrace(e) );
+		} finally {
+			JotScope.exit();
 		}
 		//System.err.println("[SENSOR] Java Observability Toolkit Installed");
 		logger.atInfo().log("[SENSOR] Java Observability Toolkit Installed");

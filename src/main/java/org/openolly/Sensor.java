@@ -25,7 +25,6 @@ import org.openolly.advice.MVNEAdvice;
 import org.openolly.advice.ScopeAdvice;
 import org.openolly.advice.ScopeCtorWrapper;
 import org.openolly.advice.SensorException;
-import org.openolly.advice.scope.BinaryScope;
 import org.openolly.reporting.Event;
 import org.openolly.reporting.EventBus;
 
@@ -39,10 +38,6 @@ public class Sensor {
 
 	private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 	private static List<Sensor> sensors = new ArrayList<Sensor>();
-
-	// protect against ANY sensor firing inside ANY other sensor
-	// a threadlocal scope for *this* sensor for *this* thread
-	private BinaryScope globalScope = new BinaryScope();
 
 	// an index to use to look up the right Sensor from within an instrumented method
 	private int index;
@@ -121,18 +116,13 @@ public class Sensor {
 
 	public List<Object> execute(String advice, String caller, Object obj, Object[] params, Object ret, StackTraceElement[] stack) {			
 
-		// protect against calling execute from itself
-		if ( globalScope.inScope() ) {
-			
-			// FIXME: add if ( debug ) before all logger calls? Or figure out how to do it right
-			logger.atWarning().log( "[JOT %s] Skipping sensor - already in scope %s", this, globalScope.value() );
-			return new ArrayList<Object>();
-		}
+		// no sensor fires while JOT's own code is running, in this sensor or any other
+		if ( JotScope.active() ) return new ArrayList<Object>();
 
 		// return results for making tests easier
 		List<Object> results = new ArrayList<Object>();
 		try {
-			globalScope.enterScope();
+			JotScope.enter();
 			
 			// if there are scopes, and none are in scope, quit
 			if ( !scopes.isEmpty() ) {
@@ -190,7 +180,7 @@ public class Sensor {
 				}
 			}			
 		} finally {
-			globalScope.leaveScope();
+			JotScope.exit();
 		}
 		return results;
 	}
@@ -460,12 +450,6 @@ public class Sensor {
 	public boolean inOutermostMethodScope(int methodIndex) {
 		MethodLocator loc = methods.get(methodIndex);
 		return loc.inOutermostScope();
-	}
-	
-//=========== stop reentry into sensors
-
-	public void enterGlobalScope() {
-		globalScope.enterScope();
 	}
 	
 //=========== FIXME: ScopeScope is a stupid name

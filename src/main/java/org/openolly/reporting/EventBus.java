@@ -9,6 +9,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.openolly.JotScope;
+
 /**
  * Delivers events to sinks on a background thread, so the application's threads never format
  * or write output. The queue is bounded. If sinks can't keep up, new events are dropped and
@@ -60,7 +62,10 @@ public final class EventBus {
 
 		if ( !hookInstalled ) {
 			hookInstalled = true;
-			Runtime.getRuntime().addShutdownHook( new Thread( EventBus::shutdown, "jot-events-shutdown" ) );
+			Runtime.getRuntime().addShutdownHook( new Thread( () -> {
+				JotScope.enterForThread();
+				shutdown();
+			}, "jot-events-shutdown" ) );
 		}
 	}
 
@@ -122,6 +127,7 @@ public final class EventBus {
 	}
 
 	private static void run() {
+		JotScope.enterForThread();
 		while ( running ) {
 			try {
 				Event event = queue.poll( 100, TimeUnit.MILLISECONDS );
