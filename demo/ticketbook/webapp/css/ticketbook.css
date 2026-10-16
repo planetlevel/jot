@@ -68,11 +68,13 @@ hr { border-top: 1px solid var(--border); }
   padding: 10px 10px 14px;
 }
 .col-sm-10 > .well { background: transparent; border: 0; padding: 0; margin: 0; }
-@media (min-width: 768px) { .col-sm-2 > .well { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; } }
+/* the sidebar scrolls with the page. It only stays in view when the window is tall enough to show all of it,
+   otherwise it would become a small scrolling box of its own, which hides the last links. */
+@media (min-width: 768px) and (min-height: 1100px) { .col-sm-2 > .well { position: sticky; top: 16px; } }
 .nav-pills > li > a {
   color: var(--muted);
   border-radius: 8px;
-  padding: 6px 12px;
+  padding: 5px 12px;
   margin: 1px 0;
   font-size: 14px;
 }
