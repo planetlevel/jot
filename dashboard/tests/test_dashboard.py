@@ -904,6 +904,8 @@ class HttpTests(unittest.TestCase):
         # times are shown in local time, a UTC column next to local clock times looked like a bug
         self.assertNotIn(b"'unixepoch')", page)
         self.assertIn(b"white-space: nowrap; display: inline-block;", page)     # badges must not wrap
+        # the token field keeps its own width, a full width text input pushed the Show and Hide button down a line
+        self.assertIn(b"#tokenBox input { width: 240px;", page)
         # recent questions live in the top menu, not on the page
         self.assertIn(b'id="recentMenu"', page)
         self.assertNotIn(b'id="history"', page)

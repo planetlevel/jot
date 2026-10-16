@@ -134,6 +134,11 @@
   button.switch[aria-checked="true"] { background: var(--blocked); }
   button.switch[aria-checked="true"]::after { left: 23px; }
   .applied { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  /* the token field switches between password and text when Show is clicked, so give it a size of its own,
+     otherwise the rule that makes text inputs full width pushes the button onto the next line */
+  #tokenBox { display: inline-flex; flex-wrap: nowrap; gap: 8px; align-items: center; }
+  #tokenBox input { width: 240px; padding: 8px 10px; }
+  #tokenBox button { padding: 8px 14px; }
   .jotbar { display: flex; gap: 8px; }
   .jotbar input { flex: 1; }
   table.list tbody tr { cursor: pointer; }
