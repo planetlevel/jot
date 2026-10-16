@@ -146,10 +146,11 @@
   #tokenBox { display: inline-flex; flex-wrap: nowrap; gap: 8px; align-items: center; }
   #tokenBox input { width: 240px; padding: 8px 10px; }
   #tokenBox button { padding: 8px 14px; }
+  .stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
   .jotbar { display: flex; gap: 8px; }
   .jotbar input { flex: 1; }
   table.list tbody tr { cursor: pointer; }
-  table.list td:nth-child(4) { white-space: nowrap; }
+  #jotList table.list td:nth-child(4) { white-space: nowrap; }
   table.list tbody tr:hover td { background: var(--code); }
   table.list tbody tr.selected td { background: var(--observed-bg); }
   .issue { padding: 6px 10px; border-radius: 6px; margin-top: 6px; font-size: 13px; background: var(--monitored-bg); color: var(--monitored); overflow-wrap: anywhere; }
@@ -328,18 +329,28 @@
       <div id="controlBody"></div>
     </div>
 
-    <div class="card" id="definitions">
-      <h2 class="section">Sensors, rules and reports</h2>
-      <div class="jotbar" style="margin-top:8px">
-        <input type="text" id="jotFilter" autocomplete="off" aria-label="Filter" placeholder="Filter by name, method, file or description">
-        <select id="jotKind" aria-label="Show">
-          <option value="">Everything</option><option value="sensor">Sensors</option>
-          <option value="rule">Rules</option><option value="report">Reports</option>
-        </select>
+    <div class="stack" id="definitions">
+      <div class="card" id="sensorsCard">
+        <h2 class="section">Sensors and rules</h2>
+        <div class="jotbar" style="margin-top:8px">
+          <input type="text" id="jotFilter" autocomplete="off" aria-label="Filter sensors and rules" placeholder="Filter by name, method, file or description">
+          <select id="jotKind" aria-label="Show">
+            <option value="">Sensors and rules</option><option value="sensor">Sensors only</option><option value="rule">Rules only</option>
+          </select>
+        </div>
+        <div class="hint" id="jotSummary"></div>
+        <div id="jotIssues"></div>
+        <div class="tablewrap" id="jotList" style="margin-top:12px"></div>
       </div>
-      <div class="hint" id="jotSummary"></div>
-      <div id="jotIssues"></div>
-      <div class="tablewrap" id="jotList" style="margin-top:12px"></div>
+      <div class="card" id="reportsCard">
+        <h2 class="section">Reports</h2>
+        <div class="hint">A report turns what sensors recorded into a grid, like which routes use which ciphers.</div>
+        <div class="jotbar" style="margin-top:8px">
+          <input type="text" id="reportFilter" autocomplete="off" aria-label="Filter reports" placeholder="Filter by name, sensor or file">
+        </div>
+        <div class="hint" id="reportSummary"></div>
+        <div class="tablewrap" id="reportList" style="margin-top:12px"></div>
+      </div>
     </div>
     <aside class="card" id="jotDetail" hidden></aside>
   </div>
@@ -829,40 +840,64 @@ function kindBadge(item) {
 
 function drawJots() {
   if (!jots) return;
-  const filter = $("jotFilter").value.trim().toLowerCase();
-  const kind = $("jotKind").value;
   const all = jotItems();
   if (pendingSelect) {
     const wanted = all.find((i) => i.name === pendingSelect);
     pendingSelect = null;
     if (wanted) { jotSelected = wanted.key; $("policyGrid").classList.add("has-detail"); $("jotDetail").hidden = false; }
   }
-  const shown = all.filter((i) => (!kind || i.kind === kind) && (!filter || i.search.includes(filter)));
-  const rules = jots.sensors.filter((s) => s.kind === "rule").length;
-  $("jotSummary").textContent = (jots.sensors.length - rules) + " sensors, " + rules + " rules and " + jots.reports.length
-    + " reports from " + jots.files.length + " files" + (shown.length !== all.length ? ". Showing " + shown.length : "");
+  drawSensors(all);
+  drawReportList(all);
+  const open = all.find((i) => i.key === jotSelected);
+  if (open) drawJotDetail(open);
+}
+
+function drawSensors(all) {
+  const filter = $("jotFilter").value.trim().toLowerCase();
+  const kind = $("jotKind").value;
+  const mine = all.filter((i) => i.kind !== "report");
+  const shown = mine.filter((i) => (!kind || i.kind === kind) && (!filter || i.search.includes(filter)));
+  const rules = mine.filter((i) => i.kind === "rule").length;
+  $("jotSummary").textContent = (mine.length - rules) + " sensors and " + rules + " rules from " + jots.files.length + " files"
+    + (shown.length !== mine.length ? ". Showing " + shown.length : "");
 
   const issues = jots.issues;
   $("jotIssues").replaceChildren(...(issues.length > 3
     ? [el("details", {}, el("summary", { class: "hint", text: issues.length + " things to look at" }), ...issues.map(issueRow))]
     : issues.map(issueRow)));
 
-  const head = el("tr", {}, ...["Name", "Kind", "Watches or uses", "File", "Last hour", "Total", "Last fired"].map((t) => el("th", { text: t })));
+  const head = el("tr", {}, ...["Name", "Kind", "Watches", "File", "Last hour", "Total", "Last fired"].map((t) => el("th", { text: t })));
   const body = shown.map((i) => {
-    const watches = i.kind === "report"
-      ? i.type + (i.rows ? ", " + i.rows + " by " : ", ") + (i.cols || "")
-      : (i.methods[0] || "") + (i.methods.length > 1 ? " +" + (i.methods.length - 1) : "");
-    const num = (v) => el("td", { class: "num", text: i.kind === "report" ? "" : String(v) });
+    const watches = (i.methods[0] || "") + (i.methods.length > 1 ? " +" + (i.methods.length - 1) : "");
     return el("tr", { class: i.key === jotSelected ? "selected" : "", onclick: () => selectJot(i.key, i.name) },
       el("td", { text: i.name }), el("td", {}, kindBadge(i)), el("td", {}, ...dotted(watches)), el("td", { text: i.file || "" }),
-      num(i.last_hour), num(i.events),
-      el("td", { class: i.kind !== "report" && !i.events ? "null" : "", text: i.kind === "report" ? "" : (i.events ? ago(i.last_ts) : "never") }));
+      el("td", { class: "num", text: String(i.last_hour) }), el("td", { class: "num", text: String(i.events) }),
+      el("td", { class: !i.events ? "null" : "", text: i.events ? ago(i.last_ts) : "never" }));
   });
   $("jotList").replaceChildren(shown.length
     ? el("table", { class: "list" }, el("thead", {}, head), el("tbody", {}, ...body))
     : el("div", { class: "empty", text: "Nothing matches" }));
-  const open = all.find((i) => i.key === jotSelected);
-  if (open) drawJotDetail(open);
+}
+
+function openReport(r) {
+  location.hash = "#events";
+  runSql(r.sql, { title: r.name, chart: "grid", sql: r.sql });
+}
+
+function drawReportList(all) {
+  const filter = $("reportFilter").value.trim().toLowerCase();
+  const mine = all.filter((i) => i.kind === "report");
+  const shown = mine.filter((i) => !filter || i.search.includes(filter));
+  $("reportSummary").textContent = mine.length + " reports" + (shown.length !== mine.length ? ". Showing " + shown.length : "");
+  const head = el("tr", {}, ...["Name", "Type", "Rows", "Columns", "File", ""].map((t) => el("th", { text: t })));
+  const body = shown.map((i) => el("tr", { class: i.key === jotSelected ? "selected" : "", onclick: () => selectJot(i.key, i.name) },
+    el("td", { text: i.name }), el("td", { text: i.type || "" }), el("td", {}, ...dotted(i.rows || "")), el("td", {}, ...dotted(i.cols || "")),
+    el("td", { text: i.file || "" }),
+    el("td", {}, i.sql ? el("button", { type: "button", class: "small", text: "Open", title: "Run this report on the Events page",
+      onclick: (ev) => { ev.stopPropagation(); openReport(i); } }) : null)));
+  $("reportList").replaceChildren(mine.length
+    ? (shown.length ? el("table", { class: "list" }, el("thead", {}, head), el("tbody", {}, ...body)) : el("div", { class: "empty", text: "Nothing matches" }))
+    : el("div", { class: "empty", text: "No reports are defined. Add a report to a .jot file and it shows up here." }));
 }
 
 function issueRow(i) {
@@ -890,7 +925,7 @@ function drawJotDetail(i) {
           ? "Columns come from the captures of " + i.cols + ", with an X where it was seen in the same request."
           : "One column for each of " + i.cols + ", showing what it captured in the same request.") }),
       listSection("Rows", i.rows ? [i.rows] : null), listSection(i.type === "table" ? "Columns" : "Column source", (i.cols || "").split(",").map((c) => c.trim()).filter(Boolean)),
-      i.sql ? el("button", { class: "primary", text: "Open this report", onclick: () => { location.hash = "#events"; runSql(i.sql, { title: i.name, chart: "grid", sql: i.sql }); } }) : null));
+      i.sql ? el("button", { class: "primary", text: "Open this report", onclick: () => openReport(i) }) : null));
     return;
   }
   const never = !i.events;
@@ -913,6 +948,7 @@ function drawJotDetail(i) {
 
 $("jotFilter").addEventListener("input", drawJots);
 $("jotKind").addEventListener("change", drawJots);
+$("reportFilter").addEventListener("input", drawJots);
 
 // ---- the path graph. Every event is a path from the route of its request, through the application methods that were
 // running, to what the sensor saw. Drawn together they show where the application does what.

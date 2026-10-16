@@ -693,6 +693,40 @@ class JotsViewTests(unittest.TestCase):
         self.assertIn("hidden", detail.group(1), "with nothing selected there is no detail panel")
         self.assertNotIn("has-detail", re.search(r'<div class="policy[^"]*" id="policyGrid"', page).group(0))
 
+    def console(self, address):
+        """What the page wrote to the browser console, which is where a script error shows up."""
+        httpd = server.make_server(self.app, "127.0.0.1", 0)
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        done = subprocess.run([self.CHROME, "--headless=new", "--disable-gpu", "--no-first-run", "--enable-logging=stderr",
+                               "--log-level=0", "--user-data-dir=" + tempfile.mkdtemp(), "--virtual-time-budget=8000",
+                               "--dump-dom", "http://127.0.0.1:%d/%s" % (port, address)], capture_output=True, text=True, timeout=90)
+        return [l for l in done.stderr.splitlines() if "CONSOLE" in l]
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_no_page_has_a_script_error(self):
+        for address in ("", "#policy", "#graph", "#event/1"):
+            errors = [l for l in self.console(address) if "Uncaught" in l or "TypeError" in l or "ReferenceError" in l]
+            self.assertEqual([], errors, "script error on " + (address or "the events page"))
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_reports_are_in_their_own_section_apart_from_sensors_and_rules(self):
+        page = self.render("#policy")
+        sensors = re.search(r'<div class="card" id="sensorsCard">(.*?)<div class="card" id="reportsCard">', page, re.S).group(1)
+        reports = re.search(r'<div class="card" id="reportsCard">(.*)', page, re.S).group(1)
+        reports = reports[:reports.index("jotDetail")]
+        report_names = [r["name"] for r in self.view["reports"]]
+        self.assertTrue(report_names)
+        for name in report_names:
+            self.assertIn(name, reports, "the report is listed in the Reports section")
+            self.assertNotIn(">%s<" % name, sensors, "and not among the sensors and rules")
+        self.assertIn("Open</button>", reports)
+        self.assertNotIn('value="report"', page, "there is no longer a report choice in the kind list")
+        self.assertRegex(re.sub(r"<[^>]+>", "", reports), r"\d+ reports")
+        self.assertRegex(re.sub(r"<[^>]+>", "", sensors), r"\d+ sensors and \d+ rules")
+
     def test_rule_modes_follow_the_control_file_when_there_is_one(self):
         path = os.path.join(self.env.dir, "control.json")
         control_store = control.ControlStore(path, token="t")
