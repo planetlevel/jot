@@ -43,6 +43,17 @@
   #policyPill.partial { background: var(--monitored-bg); color: var(--monitored); }
   #policyPill.observe { background: var(--monitored-bg); color: var(--monitored); }
 
+  .menu { position: relative; }
+  #recentBtn { border: 0; background: transparent; color: var(--muted); font-weight: 600; padding: 14px 10px 11px; border-radius: 0; }
+  #recentBtn:hover, #recentBtn[aria-expanded="true"] { color: var(--text); }
+  .menulist { position: absolute; right: 0; top: 100%; z-index: 20; width: 440px; max-width: 92vw; max-height: 60vh; overflow: auto;
+              background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.25); padding: 6px; }
+  .menulist button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 8px 10px; border-radius: 6px;
+                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .menulist button:hover, .menulist button:focus { background: var(--code); outline: none; }
+  .menulist .none { color: var(--muted); font-size: 13px; padding: 8px 10px; }
+  .menulist .sep { border-top: 1px solid var(--line); margin: 6px 0; }
+  .menulist .clear { color: var(--muted); font-size: 13px; }
   main { padding: 16px; max-width: 1400px; margin: 0 auto; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
   .card + .card, .card + div, div + .card { margin-top: 16px; }
@@ -148,6 +159,10 @@
     <a href="#events" id="navEvents" class="active">Events</a>
     <a href="#policy" id="navPolicy">Policy</a>
   </nav>
+  <div class="menu" id="recentMenu">
+    <button type="button" id="recentBtn" aria-haspopup="true" aria-expanded="false">Recent questions &#9662;</button>
+    <div class="menulist" id="recentList" role="menu" hidden></div>
+  </div>
   <a href="#policy" id="policyPill" hidden></a>
 </header>
 
@@ -162,7 +177,6 @@
     <div class="row picker">
       <select id="reportSelect" aria-label="Views and reports"><option value="">Views and reports&hellip;</option></select>
     </div>
-    <div class="chips" id="history"></div>
     <div id="notice"></div>
   </div>
   <div class="toolbar">
@@ -212,6 +226,7 @@
 </main>
 
 <script src="/grid.js"></script>
+<script src="/recent.js"></script>
 <script>
 "use strict";
 
@@ -514,22 +529,46 @@ async function ask(question) {
       $("results").replaceChildren(el("div", { class: "card" }, el("h2", { text: r.title }), el("p", { class: "explain", text: r.explanation })));
     } else {
       show(entry, r);
-      remember({ question, sql: r.sql, title: r.title, chart: r.chart, explanation: r.explanation });
+      // a question that found nothing isn't kept, it would only be clutter and wrong context for the next question
+      remember({ question, sql: r.sql, title: r.title, chart: r.chart, explanation: r.explanation }, r.rows.length);
     }
   } catch (e) { showError(e.message); }
   finally { busy = false; $("askBtn").disabled = false; $("askBtn").textContent = "Ask"; }
 }
 
-function remember(item) {
-  asked = asked.filter((h) => h.question !== item.question).concat(item).slice(-8);
+// ---- recent questions, in the top menu. Only questions that returned something are kept.
+function remember(item, rowCount) {
+  asked = JotRecent.remember(asked, item, rowCount);
   try { localStorage.setItem("jot-history", JSON.stringify(asked)); } catch (e) { /* private mode */ }
-  drawHistory();
+  drawRecent();
 }
 
-function drawHistory() {
-  $("history").replaceChildren(...asked.slice().reverse().map((h) =>
-    el("button", { class: "chip", title: h.sql, text: h.question, onclick: () => { $("question").value = h.question; runSql(h.sql, h); } })));
+function closeRecent() {
+  $("recentList").hidden = true;
+  $("recentBtn").setAttribute("aria-expanded", "false");
 }
+
+function drawRecent() {
+  $("recentBtn").textContent = "Recent questions" + (asked.length ? " (" + asked.length + ")" : "") + " \u25BE";
+  const items = asked.slice().reverse().map((h) => el("button", { type: "button", role: "menuitem", title: h.question + "\n\n" + h.sql, text: h.question,
+    onclick: () => { closeRecent(); location.hash = "#events"; $("question").value = h.question; runSql(h.sql, h); } }));
+  $("recentList").replaceChildren(...(items.length
+    ? [...items, el("div", { class: "sep" }), el("button", { type: "button", class: "clear", text: "Clear this list", onclick: () => {
+        asked = [];
+        try { localStorage.setItem("jot-history", "[]"); } catch (e) { /* ignore */ }
+        drawRecent();
+      } })]
+    : [el("div", { class: "none", text: "Questions you ask will be listed here, when they find something." })]));
+}
+
+$("recentBtn").addEventListener("click", (ev) => {
+  ev.stopPropagation();
+  const open = $("recentList").hidden;
+  $("recentList").hidden = !open;
+  $("recentBtn").setAttribute("aria-expanded", String(open));
+});
+document.addEventListener("click", (ev) => { if (!$("recentMenu").contains(ev.target)) closeRecent(); });
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeRecent(); });
 
 // One pulldown for the built in views and for the reports defined in the .jot files
 let reportItems = [];     // what each option runs, in the order of the options
@@ -690,7 +729,7 @@ $("reportSelect").addEventListener("change", (ev) => {
 
 try { asked = JSON.parse(localStorage.getItem("jot-history") || "[]"); } catch (e) { asked = []; }
 try { $("live").checked = localStorage.getItem("jot-live") !== "0"; } catch (e) { $("live").checked = true; }
-drawPicker([]); drawReports(); drawHistory();
+drawPicker([]); drawReports(); drawRecent();
 showPage(location.hash.slice(1));
 runSql(PRESETS[0].sql, PRESETS[0]);
 tick();

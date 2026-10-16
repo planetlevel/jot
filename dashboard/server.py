@@ -22,6 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_BODY = 64 * 1024
 MAX_REPAIRS = 2
 MAX_GRID_ROWS = 5000
+SCRIPTS = {"/grid.js": "grid.js", "/recent.js": "recent.js"}   # the only files served besides the page
 
 
 def load_env(path):
@@ -299,8 +300,8 @@ class Handler(BaseHTTPRequestHandler):
             if url.path in ("/", "/index.html"):
                 with open(os.path.join(HERE, "static", "index.html"), "rb") as f:
                     return self._send(200, f.read(), "text/html; charset=utf-8")
-            if url.path == "/grid.js":
-                with open(os.path.join(HERE, "static", "grid.js"), "rb") as f:
+            if url.path in SCRIPTS:
+                with open(os.path.join(HERE, "static", SCRIPTS[url.path]), "rb") as f:
                     return self._send(200, f.read(), "text/javascript; charset=utf-8")
             if url.path == "/api/status":
                 return self._send(200, self.app.status())

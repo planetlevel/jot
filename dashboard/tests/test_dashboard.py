@@ -840,7 +840,8 @@ class ControlApiTests(unittest.TestCase):
 class GridScriptTests(unittest.TestCase):
     def test_grid_pivot_logic(self):
         here = os.path.dirname(__file__)
-        result = subprocess.run(["node", "--test", os.path.join(here, "grid.test.js")], capture_output=True, text=True)
+        result = subprocess.run(["node", "--test", os.path.join(here, "grid.test.js"), os.path.join(here, "recent.test.js")],
+                                capture_output=True, text=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
 
@@ -891,9 +892,16 @@ class HttpTests(unittest.TestCase):
         self.assertIn(b'id="eventsPage"', page)
         self.assertIn(b'id="policyPage" hidden', page)
         self.assertNotIn(b'id="feed"', page)       # the Latest events panel became a view
+        # recent questions live in the top menu, not on the page
+        self.assertIn(b'id="recentMenu"', page)
+        self.assertNotIn(b'id="history"', page)
+        self.assertIn(b'src="/recent.js"', page)
         code, script = self.call("/grid.js")
         self.assertEqual(200, code)
         self.assertIn(b"pivot", script)
+        code, script = self.call("/recent.js")
+        self.assertEqual(200, code)
+        self.assertIn(b"remember", script)
 
     def test_ask_and_sql(self):
         code, r = self.call("/api/ask", {"question": "how many?"})
