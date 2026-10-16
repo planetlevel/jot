@@ -266,6 +266,7 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(5000, len(self.app.sql("SELECT 1 FROM events e, events f", limit=10**6)["rows"]))
 
     def test_the_model_is_told_about_grids_and_the_reports(self):
+        self.assertIn("'localtime'", llm.SYSTEM)
         self.assertIn("grid", llm.SYSTEM)
         self.assertIn("Never ask the user for values", llm.SYSTEM)
         self.assertIn("grid", llm.TOOL["input_schema"]["properties"]["chart"]["enum"])
@@ -900,6 +901,9 @@ class HttpTests(unittest.TestCase):
         self.assertIn(b'id="eventsPage"', page)
         self.assertIn(b'id="policyPage" hidden', page)
         self.assertNotIn(b'id="feed"', page)       # the Latest events panel became a view
+        # times are shown in local time, a UTC column next to local clock times looked like a bug
+        self.assertNotIn(b"'unixepoch')", page)
+        self.assertIn(b"white-space: nowrap; display: inline-block;", page)     # badges must not wrap
         # recent questions live in the top menu, not on the page
         self.assertIn(b'id="recentMenu"', page)
         self.assertNotIn(b'id="history"', page)

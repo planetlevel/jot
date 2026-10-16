@@ -31,9 +31,10 @@ Rules for the SQL
   attack or violation was prevented) or 'monitored' (it would have blocked, but only watched).
 - Prefer method_name and call_site_name for grouping, they have no line numbers. Use call_site when
   the line number matters. The stack column is a JSON array, use json_each(stack) to search it.
-- Times. ts is epoch milliseconds. Show times as datetime(ts/1000, 'unixepoch'). A relative window
-  such as the last hour is ts > (strftime('%s','now') - 3600) * 1000. Bucket with
-  strftime('%Y-%m-%d %H:%M', ts/1000, 'unixepoch').
+- Times. ts is epoch milliseconds. Show times in the viewer's local time, as
+  datetime(ts/1000, 'unixepoch', 'localtime'). A relative window such as the last hour is
+  ts > (strftime('%s','now') - 3600) * 1000. Bucket with
+  strftime('%Y-%m-%d %H:%M', ts/1000, 'unixepoch', 'localtime').
 - Give columns short readable aliases. Add ORDER BY, and LIMIT when a question asks for the top few.
 - You can't see the data, only the tables. Never ask the user for values such as role names, route names
   or user names. Write the query so it works for whatever values are there.

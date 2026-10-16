@@ -100,7 +100,7 @@
   table.grid td.off { background: transparent; }
   .picker { margin-top: 10px; }
   .picker select { max-width: 100%; }
-  .badge { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; padding: 1px 7px; border-radius: 999px; text-transform: uppercase; }
+  .badge { white-space: nowrap; display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; padding: 1px 7px; border-radius: 999px; text-transform: uppercase; }
   .badge.blocked { background: var(--blocked-bg); color: var(--blocked); }
   .badge.monitored { background: var(--monitored-bg); color: var(--monitored); }
   .badge.observed, .badge.sensor { background: var(--observed-bg); color: var(--observed); }
@@ -137,6 +137,7 @@
   .jotbar { display: flex; gap: 8px; }
   .jotbar input { flex: 1; }
   table.list tbody tr { cursor: pointer; }
+  table.list td:nth-child(4) { white-space: nowrap; }
   table.list tbody tr:hover td { background: var(--code); }
   table.list tbody tr.selected td { background: var(--observed-bg); }
   .issue { padding: 6px 10px; border-radius: 6px; margin-top: 6px; font-size: 13px; background: var(--monitored-bg); color: var(--monitored); overflow-wrap: anywhere; }
@@ -237,11 +238,11 @@
 
 const PRESETS = [
   { label: "Latest events", chart: "table", title: "Latest events",
-    sql: "SELECT datetime(ts/1000, 'unixepoch') AS time, action, sensor, capture, call_site_name AS call_site, message\nFROM events ORDER BY ts DESC LIMIT 100" },
+    sql: "SELECT datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, sensor, capture, call_site_name AS call_site, message\nFROM events ORDER BY ts DESC LIMIT 100" },
   { label: "Violations", chart: "table", title: "Violations, blocked and would-have-been-blocked",
-    sql: "SELECT datetime(ts/1000, 'unixepoch') AS time, action, sensor, capture, message, call_site_name AS call_site\nFROM events WHERE action IN ('blocked', 'monitored') ORDER BY ts DESC LIMIT 200" },
+    sql: "SELECT datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, sensor, capture, message, call_site_name AS call_site\nFROM events WHERE action IN ('blocked', 'monitored') ORDER BY ts DESC LIMIT 200" },
   { label: "Blocked", chart: "table", title: "Blocked calls",
-    sql: "SELECT datetime(ts/1000, 'unixepoch') AS time, sensor, capture, message, call_site_name AS call_site\nFROM events WHERE action = 'blocked' ORDER BY ts DESC LIMIT 200" },
+    sql: "SELECT datetime(ts/1000, 'unixepoch', 'localtime') AS time, sensor, capture, message, call_site_name AS call_site\nFROM events WHERE action = 'blocked' ORDER BY ts DESC LIMIT 200" },
   { label: "Events by sensor", chart: "bar", title: "Events by sensor",
     sql: "SELECT sensor || ' (' || action || ')' AS sensor, COUNT(*) AS events\nFROM events GROUP BY sensor, action ORDER BY events DESC" },
   { label: "Busiest call sites", chart: "bar", title: "Busiest call sites",
@@ -691,7 +692,7 @@ function drawJotDetail(i) {
     el("h4", { text: "As written" }), el("pre", { text: i.definition || "" }),
     el("div", { class: "row" }, el("button", { class: "primary", text: "Show its events", onclick: () => {
       location.hash = "#events";
-      runSql("SELECT datetime(ts/1000, 'unixepoch') AS time, action, capture, call_site_name AS call_site, message\nFROM events WHERE sensor = '"
+      runSql("SELECT datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, capture, call_site_name AS call_site, message\nFROM events WHERE sensor = '"
         + i.name.replace(/'/g, "''") + "' ORDER BY ts DESC LIMIT 200", { title: "Events from " + i.name, chart: "table" });
     } })));
 }
