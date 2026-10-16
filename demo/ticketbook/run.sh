@@ -73,7 +73,7 @@ export CATALINA_HOME
 ENFORCE_OPT=""
 [ "$MODE" = monitor ] && ENFORCE_OPT="-Djot.enforce=false"
 # Remove -Djot.verbose=true to quiet instrumentation errors.
-export CATALINA_OPTS="-Djot.verbose=true -Djot.output=json -Djot.output.file=$LOG -Djot.app=ticketbook \
+export CATALINA_OPTS="-Djot.verbose=true -Djot.output=json -Djot.output.stack=500 -Djot.output.file=$LOG -Djot.app=ticketbook \
   -Djot.control=$CONTROL $ENFORCE_OPT -javaagent:$JAR=$ACTIVE"
 
 echo "Mode $MODE. JOT events go to $LOG"
