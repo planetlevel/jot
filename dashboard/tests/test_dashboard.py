@@ -3,6 +3,7 @@ import http.server
 import io
 import json
 import os
+import re
 import shutil
 import ssl
 import subprocess
@@ -656,6 +657,40 @@ class JotsViewTests(unittest.TestCase):
         with urllib.request.urlopen(req) as r:
             served = json.load(r)
         self.assertEqual(len(self.view["sensors"]), len(served["sensors"]))
+
+    CHROME = next((c for c in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                               shutil.which("google-chrome") or "", shutil.which("chromium") or "") if c and os.path.exists(c)), None)
+
+    def render(self, address):
+        """The page after its scripts have run, from a real headless browser with a throwaway profile."""
+        httpd = server.make_server(self.app, "127.0.0.1", 0)
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        profile = tempfile.mkdtemp()
+        done = subprocess.run([self.CHROME, "--headless=new", "--disable-gpu", "--no-first-run", "--user-data-dir=" + profile,
+                               "--virtual-time-budget=8000", "--dump-dom", "http://127.0.0.1:%d/%s" % (port, address)],
+                              capture_output=True, text=True, timeout=90)
+        return done.stdout
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_a_selected_sensor_is_shown_without_stray_null_text_and_nothing_shows_before_a_selection(self):
+        page = self.render("#policy/never-fires")
+        detail = re.search(r'<aside class="card" id="jotDetail"([^>]*)>(.*?)</aside>', page, re.S)
+        self.assertIsNotNone(detail, "the detail panel is not on the page")
+        self.assertNotIn("hidden", detail.group(1), "the detail panel should be showing")
+        text = re.sub(r"<[^>]+>", " ", detail.group(2))
+        self.assertIn("never-fires", text)
+        self.assertIn("No events in the log yet", text)
+        self.assertNotIn("null", text.lower(), "an empty section was passed to the DOM as null, which prints the word null")
+        self.assertNotIn("Select a sensor", page, "the empty placeholder panel is gone")
+        self.assertIn("has-detail", page)
+
+        page = self.render("#policy")
+        detail = re.search(r'<aside class="card" id="jotDetail"([^>]*)>', page)
+        self.assertIn("hidden", detail.group(1), "with nothing selected there is no detail panel")
+        self.assertNotIn("has-detail", re.search(r'<div class="policy[^"]*" id="policyGrid"', page).group(0))
 
     def test_rule_modes_follow_the_control_file_when_there_is_one(self):
         path = os.path.join(self.env.dir, "control.json")

@@ -57,10 +57,11 @@
   main { padding: 16px; max-width: 1400px; margin: 0 auto; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
   .card + .card, .card + div, div + .card { margin-top: 16px; }
-  .policy { display: grid; grid-template-columns: minmax(0, 1fr) 440px; gap: 16px; align-items: start; }
+  .policy { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+  .policy.has-detail { grid-template-columns: minmax(0, 1fr) 440px; }
   .policy > .wide { grid-column: 1 / -1; }
   .policy > * + * { margin-top: 0; }
-  @media (max-width: 960px) { .policy { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 960px) { .policy.has-detail { grid-template-columns: minmax(0, 1fr); } }
 
   form.ask { display: flex; gap: 8px; }
   input[type=text], input[type=password], textarea, select {
@@ -147,6 +148,11 @@
   table.list tbody tr.selected td { background: var(--observed-bg); }
   .issue { padding: 6px 10px; border-radius: 6px; margin-top: 6px; font-size: 13px; background: var(--monitored-bg); color: var(--monitored); overflow-wrap: anywhere; }
   .issue.info { background: var(--code); color: var(--muted); }
+  #jotDetail { position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 32px); overflow: auto; }
+  #jotDetail .close { float: right; border: 0; background: transparent; color: var(--muted); font-size: 22px; line-height: 1; padding: 0 4px; }
+  #jotDetail .close:hover { color: var(--text); }
+  table.list td { overflow-wrap: normal; }
+  table.list td:first-child { white-space: nowrap; }
   #jotDetail h2 { margin: 0 0 4px; font-size: 17px; overflow-wrap: anywhere; }
   #jotDetail h4 { margin: 14px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
   #jotDetail ul { margin: 0; padding-left: 18px; }
@@ -196,7 +202,7 @@
 
 <!-- ============ policy ============ -->
 <main id="policyPage" hidden>
-  <div class="policy">
+  <div class="policy" id="policyGrid">
     <div class="card wide" id="enforcementCard">
       <h2 class="section">Enforcement</h2>
       <div class="hint" id="enforceStatus" style="margin-top:2px"></div>
@@ -216,22 +222,20 @@
       <div id="controlBody"></div>
     </div>
 
-    <div>
-      <div class="card">
-        <h2 class="section">Sensors, rules and reports</h2>
-        <div class="jotbar" style="margin-top:8px">
-          <input type="text" id="jotFilter" autocomplete="off" aria-label="Filter" placeholder="Filter by name, method, file or description">
-          <select id="jotKind" aria-label="Show">
-            <option value="">Everything</option><option value="sensor">Sensors</option>
-            <option value="rule">Rules</option><option value="report">Reports</option>
-          </select>
-        </div>
-        <div class="hint" id="jotSummary"></div>
-        <div id="jotIssues"></div>
+    <div class="card" id="definitions">
+      <h2 class="section">Sensors, rules and reports</h2>
+      <div class="jotbar" style="margin-top:8px">
+        <input type="text" id="jotFilter" autocomplete="off" aria-label="Filter" placeholder="Filter by name, method, file or description">
+        <select id="jotKind" aria-label="Show">
+          <option value="">Everything</option><option value="sensor">Sensors</option>
+          <option value="rule">Rules</option><option value="report">Reports</option>
+        </select>
       </div>
-      <div class="card" style="margin-top:16px"><div class="tablewrap" id="jotList"></div></div>
+      <div class="hint" id="jotSummary"></div>
+      <div id="jotIssues"></div>
+      <div class="tablewrap" id="jotList" style="margin-top:12px"></div>
     </div>
-    <aside class="card" id="jotDetail"><div class="empty">Select a sensor, rule or report to see how it is defined</div></aside>
+    <aside class="card" id="jotDetail" hidden></aside>
   </div>
 </main>
 
@@ -294,7 +298,9 @@ function ago(ms) {
 const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour12: false });
 
 // ---- pages
-function showPage(name) {
+function showPage(address) {
+  const [name, selected] = (address || "").split("/");
+  if (selected) pendingSelect = decodeURIComponent(selected);
   currentPage = name === "policy" ? "policy" : "events";
   $("eventsPage").hidden = currentPage !== "events";
   $("policyPage").hidden = currentPage !== "policy";
@@ -604,6 +610,24 @@ async function drawReports() {
 // ---- sensors, rules and reports, read only. How each is defined and whether it fires.
 let jots = null;
 let jotSelected = null;       // "kind:name"
+let pendingSelect = null;     // a name from the address, like #policy/get-routes, selected once the list has loaded
+
+function selectJot(key, name) {
+  jotSelected = key;
+  $("policyGrid").classList.add("has-detail");
+  $("jotDetail").hidden = false;
+  try { history.replaceState(null, "", "#policy/" + encodeURIComponent(name)); } catch (e) { /* ignore */ }
+  drawJots();
+}
+
+function closeDetail() {
+  jotSelected = null;
+  $("policyGrid").classList.remove("has-detail");
+  $("jotDetail").hidden = true;
+  try { history.replaceState(null, "", "#policy"); } catch (e) { /* ignore */ }
+  drawJots();
+}
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && jotSelected) closeDetail(); });
 
 async function loadJots() {
   try { jots = await api("/api/jots"); drawJots(); } catch (e) { $("jotList").replaceChildren(el("div", { class: "error", text: e.message })); }
@@ -618,6 +642,16 @@ function jotItems() {
   return items;
 }
 
+// a name like javax.servlet.ServletRequest.isUserInRole may break after a dot, and nowhere else
+function dotted(text) {
+  const out = [];
+  String(text || "").split(".").forEach((part, n, all) => {
+    out.push(part + (n < all.length - 1 ? "." : ""));
+    if (n < all.length - 1) out.push(document.createElement("wbr"));
+  });
+  return out;
+}
+
 function kindBadge(item) {
   if (item.kind === "report") return el("span", { class: "badge report", text: "report" });
   if (item.kind === "sensor") return el("span", { class: "badge sensor", text: "observe" });
@@ -629,6 +663,11 @@ function drawJots() {
   const filter = $("jotFilter").value.trim().toLowerCase();
   const kind = $("jotKind").value;
   const all = jotItems();
+  if (pendingSelect) {
+    const wanted = all.find((i) => i.name === pendingSelect);
+    pendingSelect = null;
+    if (wanted) { jotSelected = wanted.key; $("policyGrid").classList.add("has-detail"); $("jotDetail").hidden = false; }
+  }
   const shown = all.filter((i) => (!kind || i.kind === kind) && (!filter || i.search.includes(filter)));
   const rules = jots.sensors.filter((s) => s.kind === "rule").length;
   $("jotSummary").textContent = (jots.sensors.length - rules) + " sensors, " + rules + " rules and " + jots.reports.length
@@ -645,15 +684,15 @@ function drawJots() {
       ? i.type + (i.rows ? ", " + i.rows + " by " : ", ") + (i.cols || "")
       : (i.methods[0] || "") + (i.methods.length > 1 ? " +" + (i.methods.length - 1) : "");
     const num = (v) => el("td", { class: "num", text: i.kind === "report" ? "" : String(v) });
-    return el("tr", { class: i.key === jotSelected ? "selected" : "", onclick: () => { jotSelected = i.key; drawJots(); drawJotDetail(i); } },
-      el("td", { text: i.name }), el("td", {}, kindBadge(i)), el("td", { text: watches }), el("td", { text: i.file || "" }),
+    return el("tr", { class: i.key === jotSelected ? "selected" : "", onclick: () => selectJot(i.key, i.name) },
+      el("td", { text: i.name }), el("td", {}, kindBadge(i)), el("td", {}, ...dotted(watches)), el("td", { text: i.file || "" }),
       num(i.last_hour), num(i.events),
       el("td", { class: i.kind !== "report" && !i.events ? "null" : "", text: i.kind === "report" ? "" : (i.events ? ago(i.last_ts) : "never") }));
   });
   $("jotList").replaceChildren(shown.length
     ? el("table", { class: "list" }, el("thead", {}, head), el("tbody", {}, ...body))
     : el("div", { class: "empty", text: "Nothing matches" }));
-  const open = shown.find((i) => i.key === jotSelected);
+  const open = all.find((i) => i.key === jotSelected);
   if (open) drawJotDetail(open);
 }
 
@@ -672,21 +711,22 @@ function fact(value, label) {
 
 function drawJotDetail(i) {
   const d = $("jotDetail");
+  const close = el("button", { type: "button", class: "close", "aria-label": "Close", title: "Close", text: "\u00d7", onclick: closeDetail });
   if (i.kind === "report") {
-    d.replaceChildren(
-      el("h2", { text: i.name }), kindBadge(i), " ", el("span", { class: "hint", text: i.file }),
+    d.replaceChildren(el("div", {},
+      close, el("h2", { text: i.name }), kindBadge(i), " ", el("span", { class: "hint", text: i.file }),
       el("p", { class: "explain", text: i.type === "list"
         ? "One row per call site, with what " + i.cols + " captured there."
         : "Rows are the captures of " + i.rows + ". " + (i.type === "compare"
           ? "Columns come from the captures of " + i.cols + ", with an X where it was seen in the same request."
           : "One column for each of " + i.cols + ", showing what it captured in the same request.") }),
       listSection("Rows", i.rows ? [i.rows] : null), listSection(i.type === "table" ? "Columns" : "Column source", (i.cols || "").split(",").map((c) => c.trim()).filter(Boolean)),
-      i.sql ? el("button", { class: "primary", text: "Open this report", onclick: () => { location.hash = "#events"; runSql(i.sql, { title: i.name, chart: "grid", sql: i.sql }); } }) : null);
+      i.sql ? el("button", { class: "primary", text: "Open this report", onclick: () => { location.hash = "#events"; runSql(i.sql, { title: i.name, chart: "grid", sql: i.sql }); } }) : null));
     return;
   }
   const never = !i.events;
-  d.replaceChildren(
-    el("h2", { text: i.name }), kindBadge(i), " ", el("span", { class: "hint", text: i.file }),
+  d.replaceChildren(el("div", {},
+    close, el("h2", { text: i.name }), kindBadge(i), " ", el("span", { class: "hint", text: i.file }),
     i.description ? el("p", { class: "explain", text: i.description }) : null,
     el("div", { class: "facts" }, fact(i.events, "events"), fact(i.last_hour, "last hour"), fact(i.events ? ago(i.last_ts) : "never", "last fired"),
       ...(i.kind === "rule" ? [fact(i.blocked, "blocked"), fact(i.monitored, "reported only")] : [])),
@@ -699,7 +739,7 @@ function drawJotDetail(i) {
       location.hash = "#events";
       runSql("SELECT datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, capture, call_site_name AS call_site, message\nFROM events WHERE sensor = '"
         + i.name.replace(/'/g, "''") + "' ORDER BY ts DESC LIMIT 200", { title: "Events from " + i.name, chart: "table" });
-    } })));
+    } }))));
 }
 
 $("jotFilter").addEventListener("input", drawJots);
