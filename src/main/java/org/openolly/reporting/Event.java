@@ -27,6 +27,7 @@ public class Event implements Comparable<Event> {
 	private final Action action;
 	private final String message;
 	private final String thread;
+	private final long threadId;
 	private final long trace;
 
 	public Event(String rule, String capture, StackTraceElement[] stack) {
@@ -42,6 +43,7 @@ public class Event implements Comparable<Event> {
 		this.id = counter.getAndIncrement();
 		this.timestamp = System.currentTimeMillis();
 		this.thread = Thread.currentThread().getName();
+		this.threadId = Thread.currentThread().getId();
 		this.trace = Trace.currentId();
 	}
 
@@ -69,6 +71,10 @@ public class Event implements Comparable<Event> {
 
 	public String getThread() {
 		return thread;
+	}
+
+	public long getThreadId() {
+		return threadId;
 	}
 
 	/** Identifies the request, or thread, this event was observed in. See Trace. */

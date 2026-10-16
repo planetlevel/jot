@@ -83,6 +83,26 @@ Choose where events go with system properties.
 | `jot.output.file` | `jot-events.jsonl` | File for the `json` output |
 | `jot.events` | `all` | `all`, or `violations` to only report monitored and blocked events |
 | `jot.queue.size` | `10000` | Events to buffer. If the queue fills up, new events are dropped and counted. |
+| `jot.output.stack` | `25` | Stack frames to include in each `json` event. `0` leaves the stack out. |
+| `jot.app` | main class | Application name written to each `json` event |
+| `jot.host` | host name | Host name written to each `json` event |
+
+The `json` output is meant for loading into a database. Each line is a flat object with everything known
+about the event.
+
+| Field | Description |
+|-------|-------------|
+| `v` | Format version, currently `1` |
+| `time`, `ts` | When it happened, as ISO 8601 and as epoch milliseconds |
+| `run`, `host`, `pid`, `app` | Which JVM it came from. `run` is a random id for each start of the JVM |
+| `id` | Event number, unique within a `run` |
+| `trace` | Events with the same `trace` and `run` came from the same request, or from the same thread outside a request |
+| `thread`, `thread_id` | The thread that triggered it |
+| `sensor`, `action` | The sensor name, and `observed`, `monitored` or `blocked` |
+| `capture`, `message` | What the sensor captured, and for blocks the sensor's exception message |
+| `method` | The instrumented method that was called |
+| `call_site` | The code that called it |
+| `stack` | The stack from the instrumented method up to `jot.output.stack` frames |
 
 ## Advanced Options
 Set `-Djot.verbose=true` to report instrumentation errors. By default JOT suppresses them so that

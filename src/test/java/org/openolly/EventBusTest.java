@@ -106,7 +106,7 @@ class EventBusTest {
 	}
 
 	@Test
-	void testJsonSinkEscapesAndIncludesStackOnlyForViolations() {
+	void testJsonSinkEscapesAndIncludesContextAndStack() {
 		StringWriter out = new StringWriter();
 		JsonSink sink = new JsonSink( out );
 		StackTraceElement[] stack = { new StackTraceElement( "java.lang.Thread", "getStackTrace", "Thread.java", 1 ),
@@ -117,8 +117,11 @@ class EventBusTest {
 		Assertions.assertEquals( 2, lines.length );
 		Assertions.assertTrue( lines[0].contains( "\"capture\":\"say \\\"hi\\\"\\n\\tback\\\\slash\"" ), lines[0] );
 		Assertions.assertTrue( lines[0].contains( "\"action\":\"observed\"" ) );
-		Assertions.assertTrue( lines[0].contains( "\"caller\":\"com.acme.Foo.bar(Foo.java:7)\"" ) );
-		Assertions.assertFalse( lines[0].contains( "\"stack\"" ) );
+		Assertions.assertTrue( lines[0].contains( "\"method\":\"com.acme.Foo.bar(Foo.java:7)\"" ) );
+		Assertions.assertTrue( lines[0].contains( "\"stack\":[\"com.acme.Foo.bar(Foo.java:7)\"]" ), lines[0] );
+		for ( String field : List.of( "v", "time", "ts", "run", "host", "pid", "app", "id", "trace", "thread", "thread_id", "sensor" ) ) {
+			Assertions.assertTrue( lines[0].contains( "\"" + field + "\":" ), field + " in " + lines[0] );
+		}
 		Assertions.assertTrue( lines[1].contains( "\"action\":\"blocked\"" ) );
 		Assertions.assertTrue( lines[1].contains( "\"message\":\"denied\"" ) );
 		Assertions.assertTrue( lines[1].contains( "\"stack\":[\"com.acme.Foo.bar(Foo.java:7)\"]" ), lines[1] );
@@ -173,6 +176,24 @@ class EventBusTest {
 		EventBus.publish( event( "late" ) );
 		EventBus.shutdown();
 		Assertions.assertEquals( 1, r.events.size() );
+	}
+
+
+	@Test
+	void testJsonSinkCallSiteAndStackLimit() {
+		StringWriter out = new StringWriter();
+		StackTraceElement[] stack = { new StackTraceElement( "java.lang.Thread", "getStackTrace", "Thread.java", 1 ),
+				new StackTraceElement( "com.acme.Foo", "bar", "Foo.java", 7 ),
+				new StackTraceElement( "com.acme.Main", "main", "Main.java", 3 ),
+				new StackTraceElement( "com.acme.Boot", "run", "Boot.java", 9 ) };
+		new JsonSink( out, 2 ).accept( new Event( "rule", "x", stack ) );
+		String line = out.toString();
+		Assertions.assertTrue( line.contains( "\"call_site\":\"com.acme.Main.main(Main.java:3)\"" ), line );
+		Assertions.assertTrue( line.contains( "\"stack\":[\"com.acme.Foo.bar(Foo.java:7)\",\"com.acme.Main.main(Main.java:3)\"]" ), line );
+
+		StringWriter none = new StringWriter();
+		new JsonSink( none, 0 ).accept( new Event( "rule", "x", stack ) );
+		Assertions.assertFalse( none.toString().contains( "\"stack\"" ) );
 	}
 
 }
