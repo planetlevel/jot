@@ -35,12 +35,33 @@ Rules for the SQL
   such as the last hour is ts > (strftime('%s','now') - 3600) * 1000. Bucket with
   strftime('%Y-%m-%d %H:%M', ts/1000, 'unixepoch').
 - Give columns short readable aliases. Add ORDER BY, and LIMIT when a question asks for the top few.
-- Don't guess at values you can't see. Use LIKE and lower() for text matches the user phrases loosely.
+- You can't see the data, only the tables. Never ask the user for values such as role names, route names
+  or user names. Write the query so it works for whatever values are there.
+- Use LIKE and lower() for text matches the user phrases loosely.
+
+Grids (crosstabs)
+- SQLite can't turn data values into columns, so don't try. For any matrix or crosstab, such as "routes as
+  rows and roles as columns with an X where detected", return one row per cell with three columns, in
+  this order, a row label, a column label and optionally a value. Use SELECT DISTINCT. Set chart to "grid".
+  The dashboard builds the columns from the values it finds. A cell shows the value, or X when there is no
+  value column. Example for routes by role, relating events from the same request
+    SELECT DISTINCT r.capture AS route, c.capture AS role
+    FROM events r JOIN events c ON r.run = c.run AND r.trace = c.trace
+    WHERE r.sensor = 'get-routes' AND c.sensor = 'get-role' ORDER BY 1, 2
+- The reports section lists the reports the user defined in their .jot files, which they may ask you to
+  recreate or adapt. The types are
+    list     rows are the code that called the instrumented method (call_site), one column for the sensor
+             in cols, cells hold what it captured
+    compare  rows are the captures of the rows sensor, columns come from the captures of the cols sensor,
+             related when they share a run and trace. A capture written name:value gives the column
+             name and the cell value, and a capture without a colon gives just the name with an X
+    table    rows are the captures of the rows sensor, one column per sensor in cols, cells hold what
+             that sensor captured, related by run and trace
 
 Always answer by calling the report tool.
 - title is a short heading for the result.
-- chart is "bar" when the result is a label column followed by a count or number, "line" when it is
-  a time bucket column followed by a number, and otherwise "table".
+- chart is "grid" for a matrix as described above, "bar" when the result is a label column followed by
+  a count or number, "line" when it is a time bucket column followed by a number, and otherwise "table".
 - explanation is one or two plain sentences saying what the query shows and any assumption you made.
 - If the question can't be answered from these tables, leave sql empty and say why in explanation.
 """
@@ -53,7 +74,7 @@ TOOL = {
         "properties": {
             "title": {"type": "string"},
             "sql": {"type": "string", "description": "One SQLite SELECT, or empty if it can't be answered"},
-            "chart": {"type": "string", "enum": ["table", "bar", "line"]},
+            "chart": {"type": "string", "enum": ["table", "bar", "line", "grid"]},
             "explanation": {"type": "string"},
         },
         "required": ["title", "sql", "chart", "explanation"],
@@ -87,7 +108,7 @@ def model():
     return os.environ.get("JOT_DASHBOARD_MODEL", DEFAULT_MODEL)
 
 
-def build_prompt(question, schema, sensors, history=(), error=None):
+def build_prompt(question, schema, sensors, history=(), error=None, reports=()):
     """The user message. Sensors is a list of dicts with name, description, methods, scopes, blocks."""
     lines = ["Tables", schema, "", "Sensors"]
     if sensors:
@@ -104,6 +125,10 @@ def build_prompt(question, schema, sensors, history=(), error=None):
             lines.append(line)
     else:
         lines.append("(no sensor definitions were loaded, use the sensor values in the events table)")
+    if reports:
+        lines += ["", "Reports defined in the .jot files"]
+        for r in reports:
+            lines.append("- %s (%s, rows %s, cols %s)" % (r["name"], r["type"], r.get("rows_sensor") or "none", r.get("cols")))
     if history:
         lines += ["", "Earlier in this conversation, oldest first"]
         for h in history[-5:]:
@@ -116,7 +141,7 @@ def build_prompt(question, schema, sensors, history=(), error=None):
     return "\n".join(lines)
 
 
-def generate(question, schema, sensors, history=(), error=None, timeout=60):
+def generate(question, schema, sensors, history=(), error=None, timeout=60, reports=()):
     """Ask the model. Returns {"title", "sql", "chart", "explanation"}."""
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
@@ -126,7 +151,7 @@ def generate(question, schema, sensors, history=(), error=None, timeout=60):
         "model": model(),
         "max_tokens": 1500,
         "system": SYSTEM,
-        "messages": [{"role": "user", "content": build_prompt(question, schema, sensors, history, error)}],
+        "messages": [{"role": "user", "content": build_prompt(question, schema, sensors, history, error, reports)}],
         "tools": [TOOL],
     }
     req = urllib.request.Request(api_url(), data=json.dumps(body).encode(), method="POST", headers={
@@ -150,7 +175,7 @@ def generate(question, schema, sensors, history=(), error=None, timeout=60):
             return {
                 "title": str(out.get("title") or question)[:200],
                 "sql": str(out.get("sql") or "").strip(),
-                "chart": out.get("chart") if out.get("chart") in ("table", "bar", "line") else "table",
+                "chart": out.get("chart") if out.get("chart") in ("table", "bar", "line", "grid") else "table",
                 "explanation": str(out.get("explanation") or ""),
             }
     raise LLMError("the model did not return a query")

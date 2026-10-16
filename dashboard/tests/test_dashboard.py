@@ -3,7 +3,9 @@ import http.server
 import io
 import json
 import os
+import shutil
 import ssl
+import subprocess
 import sys
 import tempfile
 import threading
@@ -170,6 +172,123 @@ class QueryTests(unittest.TestCase):
         self.assertNotIn("sources", schema)
 
 
+REPORTS_JOT = """
+sensors:
+- name: 'get-routes'
+reports:
+- name: 'Access Control Matrix'
+  type: 'compare'
+  rows: 'get-routes'
+  cols: 'get-role'
+- name: 'Test Coverage Matrix'
+  type: 'compare'
+  rows: 'get-routes'
+  cols: 'get-users'
+- name: 'Encryption Usage'
+  type: 'list'
+  cols: 'get-ciphers'
+- name: 'Cipher Table'
+  type: 'table'
+  rows: 'get-routes'
+  cols: 'get-ciphers, get-hashes'
+- name: 'Old Timeseries'
+  type: 'series'
+  rows: 'x'
+  cols: 'y'
+- name: 'Broken'
+  type: 'table'
+  cols: 'get-ciphers'
+"""
+
+
+class ReportTests(unittest.TestCase):
+    """The original JOT reports, rebuilt from events."""
+
+    def setUp(self):
+        self.env = Env()
+        jot = os.path.join(self.env.dir, "r.jot")
+        with open(jot, "w") as f:
+            f.write(REPORTS_JOT)
+        store.load_reports(self.env.ingestor.db, [jot])
+        self.app = server.App(self.env.db, self.env.ingestor)
+        # two requests. /buy has two roles and a cipher, /home has one role and none
+        self.env.write(
+            event(1, sensor="get-routes", capture="/buy", trace=7),
+            event(2, sensor="get-role", capture="RoleA", trace=7),
+            event(3, sensor="get-role", capture="RoleB", trace=7),
+            event(4, sensor="get-role", capture="RoleB", trace=7),
+            event(5, sensor="get-ciphers", capture="DES", trace=7),
+            event(6, sensor="get-routes", capture="/home", trace=8),
+            event(7, sensor="get-role", capture="RoleA", trace=8),
+            event(8, sensor="get-users", capture="alice:Role1", trace=8),
+            event(9, sensor="get-routes", capture="/other", trace=9, run="r2"),
+            event(10, sensor="get-role", capture="RoleC", trace=9, run="r1"))  # a different run, must not join
+        self.env.ingestor.poll()
+
+    def report(self, name):
+        return next(r for r in self.app.reports() if r["name"] == name)
+
+    def rows(self, name):
+        r = self.app.sql(self.report(name)["sql"], limit=5000)
+        return sorted(tuple(x) for x in r["rows"])
+
+    def test_only_reports_that_can_be_built_are_listed(self):
+        names = [r["name"] for r in self.app.reports()]
+        self.assertEqual(["Access Control Matrix", "Test Coverage Matrix", "Encryption Usage", "Cipher Table"], names)
+        self.assertTrue(all(r["chart"] == "grid" for r in self.app.reports()))
+
+    def test_compare_is_routes_by_roles_with_x_where_detected(self):
+        self.assertEqual([("/buy", "RoleA", "X"), ("/buy", "RoleB", "X"), ("/home", "RoleA", "X")],
+                         self.rows("Access Control Matrix"))
+
+    def test_compare_uses_name_and_value_from_a_name_colon_value_capture(self):
+        self.assertEqual([("/home", "alice", "Role1")], self.rows("Test Coverage Matrix"))
+
+    def test_list_is_call_sites_with_what_they_captured(self):
+        self.assertEqual([("com.acme.Ticket.encrypt(Ticket.java:125)", "get-ciphers", "DES")], self.rows("Encryption Usage"))
+
+    def test_table_has_a_column_per_sensor(self):
+        self.assertEqual([("/buy", "get-ciphers", "DES")], self.rows("Cipher Table"))
+
+    def test_sensor_names_with_quotes_cannot_break_the_query(self):
+        sql = store.report_sql("compare", "a'b", "c'); DROP TABLE events; --")
+        self.assertEqual([], self.app.sql(sql)["rows"])
+        self.assertEqual(10, self.app.sql("SELECT COUNT(*) FROM events")["rows"][0][0])
+
+    def test_a_grid_can_return_more_rows_than_an_ordinary_query(self):
+        many = [event(100 + i, sensor="get-roles-many", capture="R%d" % i, trace=50) for i in range(1200)]
+        self.env.write(*many)
+        self.env.ingestor.poll()
+        self.assertEqual(1000, len(self.app.sql("SELECT capture FROM events WHERE sensor='get-roles-many'")["rows"]))
+        self.assertEqual(1200, len(self.app.sql("SELECT capture FROM events WHERE sensor='get-roles-many'", limit=5000)["rows"]))
+        self.assertEqual(5000, len(self.app.sql("SELECT 1 FROM events e, events f", limit=10**6)["rows"]))
+
+    def test_the_model_is_told_about_grids_and_the_reports(self):
+        self.assertIn("grid", llm.SYSTEM)
+        self.assertIn("Never ask the user for values", llm.SYSTEM)
+        self.assertIn("grid", llm.TOOL["input_schema"]["properties"]["chart"]["enum"])
+        prompt = llm.build_prompt("recreate it", "s", [], reports=self.app.report_summaries())
+        self.assertIn("Access Control Matrix (compare, rows get-routes, cols get-role)", prompt)
+        self.assertIn("Encryption Usage (list, rows none, cols get-ciphers)", prompt)
+
+    def test_report_definitions_sent_to_the_model_contain_no_event_data(self):
+        sent = json.dumps(self.app.report_summaries())
+        for value in ("/buy", "RoleA", "DES", "alice"):
+            self.assertNotIn(value, sent)
+
+    def test_reports_endpoint(self):
+        httpd = server.make_server(self.app, "127.0.0.1", 0)
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        req = urllib.request.Request("http://127.0.0.1:%d/api/reports" % port, headers={"Host": "127.0.0.1:%d" % port})
+        with urllib.request.urlopen(req) as r:
+            listed = json.load(r)
+        self.assertEqual("Access Control Matrix", listed[0]["name"])
+        self.assertIn("SELECT DISTINCT", listed[0]["sql"])
+
+
 class AskTests(unittest.TestCase):
     def setUp(self):
         self.env = Env()
@@ -182,8 +301,9 @@ class AskTests(unittest.TestCase):
     def app(self, *answers):
         queue = list(answers)
 
-        def generate(question, schema, sensors, history, error):
-            self.calls.append({"question": question, "schema": schema, "history": history, "error": error})
+        def generate(question, schema, sensors, history, error, reports=()):
+            self.calls.append({"question": question, "schema": schema, "history": history, "error": error,
+                               "reports": reports})
             return queue.pop(0)
         return server.App(self.env.db, self.env.ingestor, generate)
 
@@ -218,7 +338,7 @@ class AskTests(unittest.TestCase):
 
     def test_an_empty_result_with_no_events_at_all_points_at_the_log(self):
         env = Env()
-        app = server.App(env.db, env.ingestor, lambda *a: self.answer("SELECT 1 WHERE 0"))
+        app = server.App(env.db, env.ingestor, lambda *a, **k: self.answer("SELECT 1 WHERE 0"))
         self.assertIn("No events have been loaded", app.ask("anything")["hint"])
 
     def test_no_sql_means_the_question_could_not_be_answered(self):
@@ -400,13 +520,21 @@ class EnvFileTests(unittest.TestCase):
         self.assertNotIn("abc", err.getvalue())
 
 
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class GridScriptTests(unittest.TestCase):
+    def test_grid_pivot_logic(self):
+        here = os.path.dirname(__file__)
+        result = subprocess.run(["node", "--test", os.path.join(here, "grid.test.js")], capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+
 class HttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.env = Env()
         cls.env.write(event(1, action="blocked", message="denied"), event(2))
         cls.env.ingestor.poll()
-        app = server.App(cls.env.db, cls.env.ingestor, lambda *a: {
+        app = server.App(cls.env.db, cls.env.ingestor, lambda *a, **k: {
             "title": "Count", "sql": "SELECT COUNT(*) AS n FROM events", "chart": "bar", "explanation": "x"})
         cls.httpd = server.make_server(app, "127.0.0.1", 0)
         cls.port = cls.httpd.server_address[1]
@@ -437,10 +565,14 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(200, code)
         self.assertEqual((2, 1), (s["events"], s["blocked"]))
 
-    def test_serves_the_page(self):
+    def test_serves_the_page_and_the_grid_script_it_uses(self):
         code, page = self.call("/")
         self.assertEqual(200, code)
         self.assertIn(b"JOT Dashboard", page)
+        self.assertIn(b'src="/grid.js"', page)
+        code, script = self.call("/grid.js")
+        self.assertEqual(200, code)
+        self.assertIn(b"pivot", script)
 
     def test_ask_and_sql(self):
         code, r = self.call("/api/ask", {"question": "how many?"})

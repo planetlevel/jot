@@ -48,6 +48,14 @@ CREATE TABLE IF NOT EXISTS sensors (
   source TEXT
 );
 
+CREATE TABLE IF NOT EXISTS reports (
+  name TEXT PRIMARY KEY,
+  type TEXT,            -- list, compare, table or graph
+  rows TEXT,            -- the sensor whose captures are the rows
+  cols TEXT,            -- the sensor, or comma separated sensors, for the columns
+  source TEXT
+);
+
 CREATE TABLE IF NOT EXISTS sources (
   path TEXT PRIMARY KEY,
   inode INTEGER,
@@ -182,24 +190,31 @@ class Ingestor:
             self._thread.join(2)
 
 
-def load_sensors(db, paths):
-    """Read sensor definitions from .jot files, or directories of them, so the model knows what they mean."""
+def jot_files(paths):
     files = []
     for p in paths:
         if os.path.isdir(p):
             files.extend(sorted(glob.glob(os.path.join(p, "*.jot"))))
         elif os.path.exists(p):
             files.append(p)
+    return files
+
+
+def _read_jot(path):
+    try:
+        with open(path) as fh:
+            return yaml.safe_load(fh) or {}
+    except (OSError, yaml.YAMLError) as e:
+        print("[dashboard] can't read", path, e)
+        return {}
+
+
+def load_sensors(db, paths):
+    """Read sensor definitions from .jot files, or directories of them, so the model knows what they mean."""
     db.execute("DELETE FROM sensors")
     loaded = 0
-    for f in files:
-        try:
-            with open(f) as fh:
-                doc = yaml.safe_load(fh) or {}
-        except (OSError, yaml.YAMLError) as e:
-            print("[dashboard] can't read", f, e)
-            continue
-        for s in doc.get("sensors") or []:
+    for f in jot_files(paths):
+        for s in _read_jot(f).get("sensors") or []:
             if not isinstance(s, dict) or not s.get("name") or s["name"] == "example":
                 continue
             db.execute("INSERT OR REPLACE INTO sensors VALUES (?,?,?,?,?,?,?)", (
@@ -209,6 +224,58 @@ def load_sensors(db, paths):
             loaded += 1
     db.commit()
     return loaded
+
+
+def load_reports(db, paths):
+    """Read the reports: sections of .jot files. Each becomes a view the dashboard can build from events.
+    The old series type has no equivalent, the event log does that job."""
+    db.execute("DELETE FROM reports")
+    loaded = 0
+    for f in jot_files(paths):
+        for r in _read_jot(f).get("reports") or []:
+            if not isinstance(r, dict) or not r.get("name") or r["name"] == "example":
+                continue
+            if str(r.get("type", "")).lower() not in ("list", "compare", "table"):
+                continue
+            db.execute("INSERT OR REPLACE INTO reports VALUES (?,?,?,?,?)", (
+                r["name"], str(r["type"]).lower(), r.get("rows"), r.get("cols"), os.path.basename(f)))
+            loaded += 1
+    db.commit()
+    return loaded
+
+
+def _lit(text):
+    """A SQL string literal."""
+    return "'" + str(text).replace("'", "''") + "'"
+
+
+# the name:value convention of the original compare report. A capture with no colon is all name.
+_NAME = "CASE WHEN instr({c}, ':') > 0 THEN substr({c}, 1, instr({c}, ':') - 1) ELSE {c} END"
+_VALUE = "CASE WHEN instr({c}, ':') > 0 THEN substr({c}, instr({c}, ':') + 1) ELSE 'X' END"
+
+
+def report_sql(rtype, rows, cols):
+    """The query for a report, as rows of (row, column, value) which the dashboard turns into a grid.
+    These are the original JOT reports. A row and a column are related when they were observed in the
+    same request, which is the same run and trace."""
+    sensors = [c.strip() for c in (cols or "").split(",") if c.strip()]
+    if not sensors:
+        raise ValueError("a report needs cols")
+    if rtype == "list":
+        return ("SELECT DISTINCT call_site AS call_site, sensor AS sensor, capture AS value\n"
+                "FROM events WHERE sensor = %s AND call_site IS NOT NULL AND capture <> ''\n"
+                "ORDER BY call_site" % _lit(sensors[0]))
+    if not rows:
+        raise ValueError("a %s report needs rows" % rtype)
+    join = "FROM events r JOIN events c ON r.run = c.run AND r.trace = c.trace\nWHERE r.sensor = %s" % _lit(rows)
+    row = _NAME.format(c="r.capture")
+    if rtype == "compare":
+        return ("SELECT DISTINCT %s AS row, %s AS col, %s AS value\n%s AND c.sensor = %s\nORDER BY 1, 2"
+                % (row, _NAME.format(c="c.capture"), _VALUE.format(c="c.capture"), join, _lit(sensors[0])))
+    if rtype == "table":
+        return ("SELECT DISTINCT %s AS row, c.sensor AS col, c.capture AS value\n%s AND c.sensor IN (%s)\nORDER BY 1, 2"
+                % (row, join, ", ".join(_lit(x) for x in sensors)))
+    raise ValueError("unknown report type %s" % rtype)
 
 
 # ---------------------------------------------------------------------------- queries

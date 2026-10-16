@@ -1,0 +1,56 @@
+"use strict";
+const test = require("node:test");
+const assert = require("node:assert");
+const { pivot } = require("../static/grid.js");
+
+test("routes by roles with an X where detected, columns come from the data", () => {
+  const g = pivot(["route", "role"], [
+    ["/buy", "RoleB"], ["/buy", "RoleA"], ["/home", "RoleA"], ["/buy", "RoleA"],
+  ]);
+  assert.deepStrictEqual(g.columns, ["RoleA", "RoleB"]);
+  assert.deepStrictEqual(g.rows, [
+    { label: "/buy", cells: ["X", "X"] },
+    { label: "/home", cells: ["X", ""] },
+  ]);
+  assert.strictEqual(g.corner, "route");
+});
+
+test("a third column supplies the cell values, several are listed together", () => {
+  const g = pivot(["route", "sensor", "value"], [
+    ["/a", "get-ciphers", "DES"], ["/a", "get-ciphers", "AES"], ["/a", "get-hashes", "MD5"], ["/a", "get-ciphers", "DES"],
+  ]);
+  assert.deepStrictEqual(g.columns, ["get-ciphers", "get-hashes"]);
+  assert.deepStrictEqual(g.rows[0].cells, ["AES, DES", "MD5"]);
+});
+
+test("an empty or missing value falls back to X", () => {
+  const g = pivot(["r", "c", "v"], [["a", "b", ""], ["a", "d", null]]);
+  assert.deepStrictEqual(g.rows[0].cells, ["X", "X"]);
+});
+
+test("null labels are shown as a dash and numbers sort naturally", () => {
+  const g = pivot(["r", "c"], [[null, "col10"], ["row2", "col2"], ["row10", "col1"]]);
+  assert.deepStrictEqual(g.columns, ["col1", "col2", "col10"]);
+  assert.deepStrictEqual(g.rows.map((r) => r.label), ["row2", "row10", "—"].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })));
+});
+
+test("too many columns are cut and counted", () => {
+  const rows = [];
+  for (let i = 0; i < 10; i++) rows.push(["r", "c" + String(i).padStart(2, "0")]);
+  const g = pivot(["r", "c"], rows, { maxCols: 4 });
+  assert.strictEqual(g.columns.length, 4);
+  assert.strictEqual(g.hiddenColumns, 6);
+  assert.strictEqual(g.rows[0].cells.length, 4);
+});
+
+test("html in values stays text, the grid only returns strings", () => {
+  const g = pivot(["r", "c"], [["<img src=x onerror=alert(1)>", "<b>"]]);
+  assert.strictEqual(typeof g.rows[0].label, "string");
+  assert.strictEqual(g.rows[0].label, "<img src=x onerror=alert(1)>");
+});
+
+test("an empty result gives an empty grid", () => {
+  const g = pivot(["r", "c"], []);
+  assert.deepStrictEqual(g.rows, []);
+  assert.deepStrictEqual(g.columns, []);
+});

@@ -59,6 +59,11 @@
   th { position: sticky; top: 0; background: var(--panel); text-align: left; border-bottom: 1px solid var(--line); padding: 6px 10px; white-space: nowrap; }
   td { padding: 5px 10px; border-bottom: 1px solid var(--line); vertical-align: top; max-width: 460px; overflow-wrap: anywhere; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.grid th.col { text-align: center; }
+  table.grid td.rowlabel { position: sticky; left: 0; background: var(--panel); font-weight: 600; border-right: 1px solid var(--line); white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+  table.grid td.on { text-align: center; background: var(--observed-bg); color: var(--observed); font-weight: 700; }
+  table.grid td.off { background: transparent; }
+  .chips.reports .label { color: var(--muted); font-size: 12px; align-self: center; margin-right: 2px; }
   td.null { color: var(--muted); }
   tr:last-child td { border-bottom: 0; }
   .badge { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; padding: 1px 7px; border-radius: 999px; text-transform: uppercase; }
@@ -99,6 +104,7 @@
         <button class="primary" id="askBtn" type="submit">Ask</button>
       </form>
       <div class="chips" id="presets"></div>
+      <div class="chips reports" id="reports"></div>
       <div class="chips" id="history"></div>
       <div id="notice"></div>
     </div>
@@ -110,6 +116,7 @@
   </aside>
 </main>
 
+<script src="/grid.js"></script>
 <script>
 "use strict";
 
@@ -237,6 +244,18 @@ function tableView(r, hint) {
   return el("div", { class: "tablewrap" }, el("table", {}, el("thead", {}, head), el("tbody", {}, ...body)));
 }
 
+function gridView(r) {
+  if (!r.rows.length) return el("div", { class: "empty", text: r.hint || "No matching events" });
+  const g = JotGrid.pivot(r.columns, r.rows);
+  const head = el("tr", {}, el("th", { text: g.corner }), ...g.columns.map((c) => el("th", { class: "col", text: c })));
+  const body = g.rows.map((row) => el("tr", {},
+    el("td", { class: "rowlabel", title: row.label, text: row.label }),
+    ...row.cells.map((v) => el("td", { class: v ? "on" : "off", text: v }))));
+  const wrap = el("div", { class: "tablewrap" }, el("table", { class: "grid" }, el("thead", {}, head), el("tbody", {}, ...body)));
+  if (!g.hiddenColumns) return wrap;
+  return el("div", {}, wrap, el("div", { class: "hint", text: g.hiddenColumns + " more columns are not shown" }));
+}
+
 function chartable(r) {
   return r.columns.length >= 2 && r.rows.length > 0 && r.rows.every((x) => isNumber(x[1]));
 }
@@ -285,12 +304,15 @@ function lineView(r) {
 function show(entry, r) {
   current = entry;
   let chart = entry.chart;
-  if (chart !== "table" && !chartable(r)) chart = "table";
-  const view = !r.rows.length ? tableView(r, r.hint) : chart === "bar" ? barView(r) : chart === "line" ? lineView(r) : tableView(r);
+  if (chart === "grid" && r.columns.length < 2) chart = "table";
+  else if ((chart === "bar" || chart === "line") && !chartable(r)) chart = "table";
+  const view = chart === "grid" ? gridView(r)
+    : !r.rows.length ? tableView(r, r.hint)
+    : chart === "bar" ? barView(r) : chart === "line" ? lineView(r) : tableView(r);
 
   const sqlBox = el("textarea", { spellcheck: "false", "aria-label": "SQL" });
   sqlBox.value = entry.sql;
-  const chartSel = el("select", { "aria-label": "chart type" }, ...["table", "bar", "line"].map((c) => {
+  const chartSel = el("select", { "aria-label": "chart type" }, ...["table", "grid", "bar", "line"].map((c) => {
     const o = el("option", { value: c, text: c }); if (c === chart) o.selected = true; return o; }));
   chartSel.addEventListener("change", () => { current.chart = chartSel.value; show(current, r); });
   const run = el("button", { text: "Run SQL", onclick: () => runSql(sqlBox.value, current) });
@@ -314,7 +336,7 @@ async function runSql(sql, entry) {
   if (busy) return;
   busy = true;
   try {
-    const r = await api("/api/sql", { sql });
+    const r = await api("/api/sql", { sql, limit: entry.chart === "grid" ? 5000 : undefined });
     show({ ...entry, sql }, r);
   } catch (e) { showError(e.message); } finally { busy = false; }
 }
@@ -346,6 +368,15 @@ function drawHistory() {
     el("button", { class: "chip", title: h.sql, text: h.question, onclick: () => { $("question").value = h.question; runSql(h.sql, h); } })));
 }
 
+async function drawReports() {
+  try {
+    const reports = await api("/api/reports");
+    if (!reports.length) return;
+    $("reports").replaceChildren(el("span", { class: "label", text: "Reports" }), ...reports.map((p) =>
+      el("button", { class: "chip", title: p.type + " report from your .jot files", text: p.name, onclick: () => runSql(p.sql, p) })));
+  } catch (e) { /* reports are optional */ }
+}
+
 function drawPresets() {
   $("presets").replaceChildren(...PRESETS.map((p) =>
     el("button", { class: "chip", text: p.label, onclick: () => runSql(p.sql, p) })));
@@ -355,7 +386,7 @@ async function tick() {
   try {
     await Promise.all([refreshStatus(), refreshFeed()]);
     if ($("live").checked && current && !busy) {
-      const r = await api("/api/sql", { sql: current.sql });
+      const r = await api("/api/sql", { sql: current.sql, limit: current.chart === "grid" ? 5000 : undefined });
       show(current, r);
     }
   } catch (e) { /* the server may be restarting, try again next tick */ }
@@ -373,7 +404,7 @@ $("live").addEventListener("change", (ev) => setLive(ev.target.checked));
 
 try { asked = JSON.parse(localStorage.getItem("jot-history") || "[]"); } catch (e) { asked = []; }
 try { $("live").checked = localStorage.getItem("jot-live") === "1"; } catch (e) { /* ignore */ }
-drawPresets(); drawHistory(); setLive($("live").checked);
+drawPresets(); drawReports(); drawHistory(); setLive($("live").checked);
 runSql(PRESETS[0].sql, PRESETS[0]);
 tick();
 </script>

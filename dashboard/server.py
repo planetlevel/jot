@@ -20,6 +20,7 @@ import store
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_BODY = 64 * 1024
 MAX_REPAIRS = 2
+MAX_GRID_ROWS = 5000
 
 
 def load_env(path):
@@ -72,6 +73,30 @@ class App:
         finally:
             db.close()
 
+    def reports(self):
+        """The reports from the .jot files, each with the query that builds it and how to show it."""
+        db = sqlite3.connect(self.db_path)
+        try:
+            out = []
+            for name, rtype, rows, cols in db.execute("SELECT name, type, rows, cols FROM reports ORDER BY rowid"):
+                try:
+                    out.append({"name": name, "type": rtype, "title": name, "chart": "grid",
+                                "sql": store.report_sql(rtype, rows, cols)})
+                except ValueError:
+                    continue
+            return out
+        finally:
+            db.close()
+
+    def report_summaries(self):
+        """Report definitions for the model. Names and sensor names only, no data."""
+        db = sqlite3.connect(self.db_path)
+        try:
+            return [{"name": n, "type": t, "rows_sensor": r, "cols": c}
+                    for n, t, r, c in db.execute("SELECT name, type, rows, cols FROM reports ORDER BY rowid")]
+        finally:
+            db.close()
+
     def status(self):
         r = store.run_query(self.db_path, """
             SELECT COUNT(*) AS events,
@@ -96,8 +121,13 @@ class App:
                    "WHERE pk > %d ORDER BY pk DESC LIMIT %d" % (int(after), limit))
         return store.run_query(self.db_path, sql, limit=limit)
 
-    def sql(self, sql):
-        return store.run_query(self.db_path, sql)
+    def sql(self, sql, limit=None):
+        """Run a query. A grid may be wide in rows because it is made of one row per cell, so it can ask for more."""
+        limit = min(int(limit), MAX_GRID_ROWS) if limit else 1000
+        result = store.run_query(self.db_path, sql, limit=limit)
+        if not result["rows"]:
+            result["hint"] = self.empty_hint()
+        return result
 
     def empty_hint(self):
         """Said when a question matched nothing, so it is clear whether the data is missing or the question is."""
@@ -119,14 +149,12 @@ class App:
         sensors = self.sensors()
         error = None
         for attempt in range(MAX_REPAIRS + 1):
-            answer = self.generate(question, schema, sensors, history, error)
+            answer = self.generate(question, schema, sensors, history, error, reports=self.report_summaries())
             if not answer["sql"]:
                 answer.update(columns=[], rows=[], truncated=False, ms=0)
                 return answer
             try:
-                answer.update(self.sql(answer["sql"]))
-                if not answer["rows"]:
-                    answer["hint"] = self.empty_hint()
+                answer.update(self.sql(answer["sql"], limit=MAX_GRID_ROWS if answer["chart"] == "grid" else None))
                 return answer
             except store.QueryError as e:
                 error = "%s\nSQL: %s" % (e, answer["sql"])
@@ -169,8 +197,13 @@ class Handler(BaseHTTPRequestHandler):
             if url.path in ("/", "/index.html"):
                 with open(os.path.join(HERE, "static", "index.html"), "rb") as f:
                     return self._send(200, f.read(), "text/html; charset=utf-8")
+            if url.path == "/grid.js":
+                with open(os.path.join(HERE, "static", "grid.js"), "rb") as f:
+                    return self._send(200, f.read(), "text/javascript; charset=utf-8")
             if url.path == "/api/status":
                 return self._send(200, self.app.status())
+            if url.path == "/api/reports":
+                return self._send(200, self.app.reports())
             if url.path == "/api/sensors":
                 return self._send(200, self.app.sensors())
             if url.path == "/api/recent":
@@ -195,7 +228,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == "/api/ask":
                 return self._send(200, self.app.ask(body.get("question"), body.get("history") or []))
             if url.path == "/api/sql":
-                return self._send(200, self.app.sql(body.get("sql")))
+                return self._send(200, self.app.sql(body.get("sql"), body.get("limit")))
         except store.QueryError as e:
             return self._send(400, {"error": str(e)})
         except llm.LLMError as e:
@@ -232,13 +265,15 @@ def main(argv=None):
 
     ingestor = store.Ingestor(args.db, args.log or ["jot-events.jsonl"])
     loaded = store.load_sensors(ingestor.db, args.jot)
+    reports = store.load_reports(ingestor.db, args.jot)
     first = ingestor.poll()
     ingestor.start()
     app = App(args.db, ingestor)
 
     server = make_server(app, args.host, args.port)
     print("JOT dashboard on http://%s:%d" % (args.host, args.port))
-    print("  following %s, %d events so far, %d sensor definitions" % (", ".join(ingestor.patterns), first, loaded))
+    print("  following %s, %d events so far, %d sensor definitions, %d reports"
+          % (", ".join(ingestor.patterns), first, loaded, reports))
     if llm.configured():
         print("  questions go to %s. Only the table definitions, sensor descriptions and your questions are sent."
               % llm.model())
