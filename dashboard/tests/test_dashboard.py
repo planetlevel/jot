@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import sqlite3
 import shutil
 import ssl
 import subprocess
@@ -1106,6 +1107,119 @@ class HttpTests(unittest.TestCase):
     def test_oversized_bodies_are_refused(self):
         code, _ = self.call("/api/sql", {"sql": "SELECT 1", "pad": "x" * (server.MAX_BODY + 10)})
         self.assertEqual(413, code)
+
+
+JDK_ONLY = ["java.base/java.security.MessageDigest.getInstance(MessageDigest.java:182)",
+            "java.base/java.util.jar.JarFile.getInputStream(JarFile.java:845)",
+            "org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:164)",
+            "java.base/java.lang.Thread.run(Thread.java:833)"]
+VIA_LIBRARY = ["java.base/java.security.MessageDigest.getInstance(MessageDigest.java:182)",
+               "org.hsqldb.rights.GranteeManager.getDigester(Unknown Source)",
+               "com.acme.ticketbook.Ticket.save(Ticket.java:40)",
+               "org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:164)"]
+LIBRARY_ONLY = ["java.base/java.security.MessageDigest.getInstance(MessageDigest.java:182)",
+                "org.hsqldb.rights.GranteeManager.getDigester(Unknown Source)",
+                "java.base/java.lang.Thread.run(Thread.java:833)"]
+JSP = ["java.base/javax.crypto.Cipher.getInstance(Cipher.java:534)",
+       "org.apache.jsp.accessE_jsp._jspService(accessE_jsp.java:249)",
+       "org.apache.jasper.runtime.HttpJspBase.service(HttpJspBase.java:67)"]
+
+
+class OriginTests(unittest.TestCase):
+    PREFIXES = ["com.acme", "org.apache.jsp"]
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.log = os.path.join(self.dir, "e.jsonl")
+        self.db = os.path.join(self.dir, "t.db")
+        open(self.log, "w").close()
+
+    def ingestor(self, prefixes=None):
+        return store.Ingestor(self.db, [self.log], app_prefixes=self.PREFIXES if prefixes is None else prefixes)
+
+    def write(self, *events):
+        with open(self.log, "a") as f:
+            for e in events:
+                f.write(json.dumps(e) + "\n")
+
+    def origins(self, view="events_raw"):
+        return dict(store.run_query(self.db, "SELECT id, origin FROM %s ORDER BY id" % view)["rows"])
+
+    def test_classify(self):
+        c = lambda stack: store.classify(stack, self.PREFIXES)
+        self.assertEqual(c(JDK_ONLY), ("platform", None))
+        self.assertEqual(c(LIBRARY_ONLY), ("library", None))
+        self.assertEqual(c(VIA_LIBRARY)[0], "app")
+        self.assertEqual(c(VIA_LIBRARY)[1], "com.acme.ticketbook.Ticket.save(Ticket.java:40)")
+        self.assertEqual(c(JSP)[0], "app", "a compiled page is the application, not the server")
+        self.assertEqual(c(None), ("none", None))
+        self.assertEqual(c([]), ("none", None))
+        request = ["jakarta.servlet.http.HttpServlet.service(HttpServlet.java:710)",
+                   "org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:132)"]
+        self.assertEqual(c(request)[0], "app", "a request handed to a servlet is the application's")
+
+    def test_without_packages_anything_but_the_platform_is_the_application(self):
+        self.assertEqual(store.classify(LIBRARY_ONLY)[0], "app")
+        self.assertEqual(store.classify(JDK_ONLY)[0], "platform")
+
+    def test_events_are_tagged_when_stored(self):
+        ing = self.ingestor()
+        self.write(event(1, stack=JDK_ONLY), event(2, stack=VIA_LIBRARY), event(3, stack=LIBRARY_ONLY), event(4, stack=JSP))
+        ing.poll()
+        self.assertEqual(self.origins(), {1: "platform", 2: "app", 3: "library", 4: "app"})
+
+    def test_app_only_is_on_by_default_and_hides_only_observed_events_without_an_app_frame(self):
+        ing = self.ingestor()
+        self.write(event(1, stack=JDK_ONLY), event(2, stack=VIA_LIBRARY), event(3, stack=LIBRARY_ONLY),
+                   event(4, stack=JDK_ONLY, action="blocked", sensor="block-x"),
+                   event(5, stack=JDK_ONLY, action="monitored", sensor="block-y"),
+                   event(6, stack=None, sensor="jot-control"))
+        ing.poll()
+        self.assertTrue(store.get_app_only(self.db))
+        self.assertEqual(sorted(self.origins("events")), [2, 4, 5, 6])
+        store.set_app_only(ing.db, False)
+        self.assertEqual(sorted(self.origins("events")), [1, 2, 3, 4, 5, 6])
+        store.set_app_only(ing.db, True)
+        self.assertEqual(sorted(self.origins("events")), [2, 4, 5, 6])
+
+    def test_changing_the_packages_tags_the_stored_events_again(self):
+        self.write(event(1, stack=VIA_LIBRARY), event(2, stack=LIBRARY_ONLY))
+        self.ingestor(["com.acme"]).poll()
+        self.assertEqual(self.origins(), {1: "app", 2: "library"})
+        ing = self.ingestor(["org.hsqldb"])
+        self.assertEqual(self.origins(), {1: "app", 2: "app"})
+        self.assertEqual(ing.db.execute("SELECT app_frame FROM events_raw WHERE id = 2").fetchone()[0],
+                         "org.hsqldb.rights.GranteeManager.getDigester(Unknown Source)")
+
+    def test_a_database_from_before_the_origin_existed_is_tagged_on_start(self):
+        db = sqlite3.connect(self.db)
+        db.executescript("""CREATE TABLE events_raw (pk INTEGER PRIMARY KEY, time TEXT, ts INTEGER, run TEXT, host TEXT,
+            pid INTEGER, app TEXT, id INTEGER, trace INTEGER, thread TEXT, thread_id INTEGER, sensor TEXT, action TEXT,
+            capture TEXT, message TEXT, method TEXT, method_name TEXT, call_site TEXT, call_site_name TEXT, stack TEXT,
+            UNIQUE (run, id));""")
+        db.execute("INSERT INTO events_raw (ts, run, id, sensor, action, stack) VALUES (1, 'r', 1, 's', 'observed', ?)",
+                   (json.dumps(JDK_ONLY),))
+        db.execute("INSERT INTO events_raw (ts, run, id, sensor, action, stack) VALUES (2, 'r', 2, 's', 'observed', ?)",
+                   (json.dumps(JSP),))
+        db.commit()
+        db.close()
+        self.ingestor()
+        self.assertEqual(self.origins(), {1: "platform", 2: "app"})
+        self.assertEqual(sorted(self.origins("events")), [2])
+
+    def test_the_toggle_and_the_counts_over_http(self):
+        ing = self.ingestor()
+        self.write(event(1, stack=JDK_ONLY), event(2, stack=JDK_ONLY), event(3, stack=JSP))
+        ing.poll()
+        app = server.App(self.db, ing)
+        s = app.status()
+        self.assertEqual((s["events"], s["filtered"], s["app_only"]), (1, 2, True))
+        s = app.set_app_only(False)
+        self.assertEqual((s["events"], s["filtered"], s["app_only"]), (3, 0, False))
+        app.set_since(1792111134000 + 3)
+        app.set_app_only(True)
+        s = app.status()
+        self.assertEqual((s["events"], s["hidden"], s["filtered"]), (1, 2, 0), "the start time and the filter are counted apart")
 
 
 if __name__ == "__main__":

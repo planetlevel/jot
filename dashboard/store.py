@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS events_raw (
   call_site TEXT,       -- the code that called it, as a stack frame with line
   call_site_name TEXT,  -- the code that called it, like com.acme.Ticket.encrypt
   stack TEXT,           -- JSON array of stack frames, starting at the instrumented method
+  origin TEXT,          -- app if the stack has a frame from the application, library if it has only library frames, platform if it is all JDK and server, none if there is no stack
+  app_frame TEXT,       -- the innermost application frame, like com.acme.Ticket.encrypt(Ticket.java:125)
   UNIQUE (run, id)
 );
 CREATE INDEX IF NOT EXISTS events_ts ON events_raw (ts);
@@ -45,8 +47,13 @@ CREATE TABLE IF NOT EXISTS settings (
 
 -- What every query and view reads. Everything recorded since the start time, or all of it if none is set.
 -- The start time is how the dashboard is cleared, nothing is deleted and Show all brings it back.
+-- Unless the app_only setting is 0, an observed event that has no frame from the application is left out.
+-- Blocked and reported events are never left out.
 CREATE VIEW IF NOT EXISTS events AS
-  SELECT * FROM events_raw WHERE ts >= COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'since'), 0);
+  SELECT * FROM events_raw
+  WHERE ts >= COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'since'), 0)
+    AND (COALESCE((SELECT value FROM settings WHERE key = 'app_only'), '1') <> '1'
+         OR origin IS NULL OR origin IN ('app', 'none') OR action <> 'observed');
 
 CREATE TABLE IF NOT EXISTS sensors (
   name TEXT PRIMARY KEY,
@@ -92,7 +99,8 @@ HEAD_BYTES = 256
 MODEL_TABLES = ("events", "sensors")
 
 EVENT_COLUMNS = ("time", "ts", "run", "host", "pid", "app", "id", "trace", "thread", "thread_id", "sensor",
-                 "action", "capture", "message", "method", "method_name", "call_site", "call_site_name", "stack")
+                 "action", "capture", "message", "method", "method_name", "call_site", "call_site_name", "stack",
+                 "origin", "app_frame")
 
 _FRAME = re.compile(r"^(?:[\w.@-]+/)?([^(]*)\(")
 
@@ -103,6 +111,40 @@ def frame_name(frame):
         return None
     m = _FRAME.match(frame)
     return m.group(1) if m else frame
+
+
+# Code that belongs to the JDK or the application server, never to the application. Everything else is the
+# application or a library it uses. Jasper compiles a page to org.apache.jsp, which is the application.
+PLATFORM_PREFIXES = ("java.", "javax.", "jdk.", "sun.", "com.sun.", "jakarta.", "org.w3c.", "org.xml.", "org.ietf.",
+                     "org.apache.catalina.", "org.apache.coyote.", "org.apache.tomcat.", "org.apache.jasper.",
+                     "org.apache.el.", "org.apache.naming.", "org.eclipse.jdt.", "org.openolly.")
+
+
+# raise this when classify changes, so events stored under the old rules are tagged again
+CLASSIFIER_VERSION = 2
+SERVLET_API = ("javax.servlet.", "jakarta.servlet.")
+
+
+def classify(stack, app_prefixes=()):
+    """Where an event came from, as (origin, app_frame). The origin is app when any frame is application code,
+    library when the stack has code that is neither the application nor the platform, and platform otherwise.
+    With no application packages given, any frame that is not the platform counts as the application.
+    A servlet's service method is the application being asked to handle a request. The container calls it, so the
+    stack holds only server frames, but the request is the application's. Those events count as the application."""
+    if not stack:
+        return "none", None
+    if (frame_name(stack[0]) or "").startswith(SERVLET_API):
+        return "app", stack[0]
+    prefixes = tuple(p if p.endswith(".") else p + "." for p in app_prefixes)
+    library = False
+    for frame in stack:
+        name = frame_name(frame) or ""
+        if name.startswith(PLATFORM_PREFIXES) or frame.startswith(("java.", "jdk.")) and "/" in frame.split("(")[0]:
+            continue
+        if not prefixes or name.startswith(prefixes):
+            return "app", frame
+        library = True
+    return ("library" if library else "platform"), None
 
 
 def connect(path):
@@ -121,14 +163,38 @@ def init(db):
     db.execute("DROP TABLE IF EXISTS sensors")
     db.execute("DROP TABLE IF EXISTS reports")
     db.execute("DROP TABLE IF EXISTS jot_issues")
+    # the view is rebuilt every start, so a changed definition takes effect
+    db.execute("DROP VIEW IF EXISTS events")
     db.executescript(SCHEMA)
+    have = {r[1] for r in db.execute("PRAGMA table_info(events_raw)")}
+    for column in ("origin", "app_frame"):
+        if column not in have:
+            db.execute("ALTER TABLE events_raw ADD COLUMN %s TEXT" % column)
     db.commit()
 
 
-def row_from_event(e):
+def retag(db, app_prefixes):
+    """Work out the origin of every stored event again. Done when the application packages change and for events that
+    were stored before the origin was recorded. Returns the number of events tagged."""
+    wanted = json.dumps([CLASSIFIER_VERSION] + sorted(app_prefixes))
+    row = db.execute("SELECT value FROM settings WHERE key = 'app_prefixes'").fetchone()
+    where = "WHERE origin IS NULL" if row and row[0] == wanted else ""
+    rows = db.execute("SELECT pk, stack FROM events_raw %s" % where).fetchall()
+    updates = []
+    for pk, stack in rows:
+        origin, frame = classify(json.loads(stack) if stack else None, app_prefixes)
+        updates.append((origin, frame, pk))
+    db.executemany("UPDATE events_raw SET origin = ?, app_frame = ? WHERE pk = ?", updates)
+    db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('app_prefixes', ?)", (wanted,))
+    db.commit()
+    return len(updates)
+
+
+def row_from_event(e, app_prefixes=()):
     """The values for EVENT_COLUMNS from one parsed JSON log line."""
     stack = e.get("stack")
     values = {k: e.get(k) for k in EVENT_COLUMNS}
+    values["origin"], values["app_frame"] = classify(stack, app_prefixes)
     values["stack"] = json.dumps(stack) if stack is not None else None
     values["method_name"] = frame_name(e.get("method"))
     values["call_site_name"] = frame_name(e.get("call_site"))
@@ -142,9 +208,11 @@ class Ingestor:
     """Follows one or more JSONL event logs and stores each new event. Safe to restart, it remembers
     how far it read each file, and ignores events it has already stored."""
 
-    def __init__(self, db_path, log_patterns, interval=1.0):
+    def __init__(self, db_path, log_patterns, interval=1.0, app_prefixes=()):
         self.db = connect(db_path)
         init(self.db)
+        self.app_prefixes = tuple(app_prefixes)
+        retag(self.db, self.app_prefixes)
         self.patterns = log_patterns
         self.interval = interval
         self.lock = threading.Lock()
@@ -192,7 +260,7 @@ class Ingestor:
             if not line:
                 continue
             try:
-                rows.append(row_from_event(json.loads(line)))
+                rows.append(row_from_event(json.loads(line), self.app_prefixes))
             except (ValueError, AttributeError):
                 bad += 1
         self.db.executemany(INSERT, rows)
@@ -417,4 +485,20 @@ def set_since(db, value):
         db.execute("DELETE FROM settings WHERE key = 'since'")
     else:
         db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('since', ?)", (str(int(value)),))
+    db.commit()
+
+
+def get_app_only(db_path):
+    """True unless the application only filter has been switched off."""
+    db = sqlite3.connect(db_path)
+    try:
+        row = db.execute("SELECT value FROM settings WHERE key = 'app_only'").fetchone()
+        return not row or row[0] == "1"
+    finally:
+        db.close()
+
+
+def set_app_only(db, on):
+    """Leave out observed events that have no frame from the application, or show them again."""
+    db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('app_only', ?)", ("1" if on else "0",))
     db.commit()

@@ -31,7 +31,7 @@ off. To show the microsandbox on its own, start without `block-native-process`.
 
 The agent polls a control file, so the dashboard can flip the rules without a restart. Nothing connects to the agent.
 
-    JOT_DASHBOARD_ADMIN_TOKEN=<choose one> python3 dashboard/server.py --log jot-events.jsonl \
+    JOT_DASHBOARD_ADMIN_TOKEN=<choose one> python3 dashboard/server.py --app com.acme --app org.apache.jsp --log jot-events.jsonl \
         --jot demo/ticketbook/jots --jot demo/ticketbook/rules --control jot-control.json
 
 The header has an Observe and Block toggle, and the Enforcement panel has a switch per rule. `run.sh` starts each run

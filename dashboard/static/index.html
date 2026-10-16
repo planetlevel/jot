@@ -202,6 +202,9 @@
     <div class="toolbar-right">
       <button type="button" class="small" id="clearBtn" title="Hide everything recorded so far, so the page only shows what happens from now on. The events stay in the log, and Show all brings them back.">Clear</button>
       <button type="button" class="small" id="showAllBtn" title="Show everything again, including what was hidden by Clear" hidden>Show all</button>
+      <label class="refresh" title="Leave out what the JDK and the application server do on their own. An event stays if any frame of its stack is the application, even when libraries are in between. Blocked and reported events always show.">
+        <input type="checkbox" id="appOnly"> App events only
+      </label>
       <label class="refresh" title="Run the current view again every 3 seconds, so new events show up on their own">
         <input type="checkbox" id="live"> Refresh every 3 seconds
       </label>
@@ -421,10 +424,13 @@ async function refreshStatus() {
     el("span", { class: s.blocked ? "blocked" : "" }, el("b", { text: s.blocked.toLocaleString() }), " blocked"),
     el("span", {}, el("b", { text: s.monitored.toLocaleString() }), " reported only"),
     el("span", { text: "last event " + ago(s.last_ts) }),
+    s.filtered ? el("span", { title: "Observed events with no frame from the application, like the JDK checking a jar signature. Untick App events only to see them.",
+      text: s.filtered.toLocaleString() + " JDK and server events left out" }) : null,
     s.since ? el("span", { title: "Cleared, Show all brings the earlier events back",
       text: "showing since " + clock(s.since) + ", " + s.hidden.toLocaleString() + " earlier hidden" }) : null,
   ].filter(Boolean));
   $("showAllBtn").hidden = !s.since;
+  $("appOnly").checked = s.app_only;
   $("notice").replaceChildren(...(s.llm ? [] : [el("div", { class: "notice",
     text: "Natural language is off because ANTHROPIC_API_KEY isn't set. The views and the SQL box still work." })]));
 }
@@ -439,6 +445,13 @@ async function setSince(value) {
 }
 $("clearBtn").addEventListener("click", () => setSince("now"));
 $("showAllBtn").addEventListener("click", () => setSince(null));
+$("appOnly").addEventListener("change", async (ev) => {
+  try {
+    await api("/api/app-only", { on: ev.target.checked });
+    await refreshStatus();
+    if (current) await runSql(current.sql, current);
+  } catch (e) { showError(e.message); }
+});
 
 // ---- rendering results
 function isNumber(v) { return typeof v === "number" && isFinite(v); }

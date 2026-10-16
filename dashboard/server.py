@@ -159,6 +159,13 @@ class App:
             store.set_since(self.ingestor.db, value)
         return self.status()
 
+    def set_app_only(self, on):
+        """Leave out observed events that have no frame from the application, which is everything the JDK and the
+        application server do on their own. Blocked and reported events always show."""
+        with self.ingestor.lock:
+            store.set_app_only(self.ingestor.db, bool(on))
+        return self.status()
+
     def rule_names(self):
         """The sensors that are rules, meaning they have an exception. Only these can be switched."""
         return [r["name"] for r in self.rules_declared()]
@@ -224,8 +231,12 @@ class App:
         keys = r["columns"]
         status = dict(zip(keys, r["rows"][0]))
         status["since"] = store.get_since(self.db_path)
-        raw = store.run_query(self.db_path, "SELECT COUNT(*) FROM events_raw")["rows"][0][0]
-        status["hidden"] = raw - status["events"]
+        since = status["since"] or 0
+        counts = store.run_query(self.db_path, """
+            SELECT COALESCE(SUM(ts < %d), 0), COALESCE(SUM(ts >= %d), 0) FROM events_raw""" % (since, since))["rows"][0]
+        status["hidden"] = counts[0]                       # before the start time
+        status["app_only"] = store.get_app_only(self.db_path)
+        status["filtered"] = counts[1] - status["events"]  # JDK and server events left out
         status["llm"] = llm.configured()
         status["model"] = llm.model() if llm.configured() else None
         status["known_sensors"] = len(self.sensors())
@@ -359,6 +370,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.sql(body.get("sql"), body.get("limit")))
             if url.path == "/api/since":
                 return self._send(200, self.app.set_since(body.get("since")))
+            if url.path == "/api/app-only":
+                return self._send(200, self.app.set_app_only(body.get("on")))
             if url.path == "/api/control":
                 token = self.headers.get("X-JOT-Admin")
                 return self._send(200, self.app.change_control(token, body.get("master"), body.get("rules")))
@@ -402,6 +415,9 @@ def main(argv=None):
     p.add_argument("--host", default="127.0.0.1", help="address to listen on. There is no login, "
                    "so only change this on a network you trust")
     p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--app", action="append", help="a package of the application, like com.acme, may be repeated. "
+                   "Events whose stack has no frame from these packages are left out by App events only. "
+                   "Without it, anything that is not the JDK or the server counts as the application.")
     p.add_argument("--since", help="show only events from this time on, now, or a date and time like 2026-10-16T09:30. "
                    "Nothing is deleted, the Clear and Show all buttons on the Events page change it later")
     p.add_argument("--control", help="control file that agents poll, to switch rules between monitor and block. "
@@ -413,7 +429,7 @@ def main(argv=None):
     if loaded_env:
         print("  read %s from %s" % (", ".join(loaded_env), args.env))
 
-    ingestor = store.Ingestor(args.db, args.log or ["jot-events.jsonl"])
+    ingestor = store.Ingestor(args.db, args.log or ["jot-events.jsonl"], app_prefixes=args.app or [])
     loaded = store.load_sensors(ingestor.db, args.jot)
     reports = store.load_reports(ingestor.db, args.jot)
     first = ingestor.poll()

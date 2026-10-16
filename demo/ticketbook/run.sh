@@ -2,7 +2,7 @@
 # Runs the TicketBook demo app under Tomcat 11 with JOT attached, writing JSON events for the dashboard.
 #
 #   demo/ticketbook/run.sh            start Tomcat on port 8080, then browse http://localhost:8080/ticketbook
-#   python3 dashboard/server.py --log jot-events.jsonl --jot demo/ticketbook/jots
+#   python3 dashboard/server.py --app com.acme --app org.apache.jsp --log jot-events.jsonl --jot demo/ticketbook/jots
 #
 # Tomcat 11 is downloaded into demo/ticketbook/target on first use and checked against Apache's SHA-512.
 # To use an install you already have, set CATALINA_HOME. Needs Java 17 or newer, found through JAVA_HOME or the PATH.
@@ -77,5 +77,5 @@ export CATALINA_OPTS="-Djot.verbose=true -Djot.output=json -Djot.output.stack=50
   -Djot.control=$CONTROL $ENFORCE_OPT -javaagent:$JAR=$ACTIVE"
 
 echo "Mode $MODE. JOT events go to $LOG"
-echo "Dashboard: python3 dashboard/server.py --log $LOG --jot jots --jot rules --control $CONTROL"
+echo "Dashboard: python3 dashboard/server.py --app com.acme --app org.apache.jsp --log $LOG --jot jots --jot rules --control $CONTROL"
 exec "$CATALINA_HOME/bin/catalina.sh" run

@@ -26,6 +26,7 @@ Without a key the dashboard still works. The preset views and the SQL box don't 
 | `--log` | JSON event log to follow. May be a glob such as `'logs/*.jsonl'`, and may be given more than once. Default `jot-events.jsonl` |
 | `--jot` | A `.jot` file or a directory of them. The sensor names and descriptions help the model understand your questions. May be given more than once |
 | `--db` | SQLite file that holds the events. Default `jot-dashboard.db`. Delete it to start fresh |
+| `--app` | A package of your application, like `com.acme`. May be given more than once. See App events only below |
 | `--since` | Show only events from this time on. `now`, or a date and time like `2026-10-16T09:30`. Nothing is deleted |
 | `--control` | Control file agents poll, to switch rules between monitor and block. See below |
 | `--port`, `--host` | Where to listen. Default `127.0.0.1:8765`. See the note on access below |
@@ -58,6 +59,27 @@ everyone looking at this dashboard. Internally the table of events is called `ev
 reads, is a view over it that applies the start time. An older database is converted the first time the dashboard
 starts on it, and keeps all its events. Start with `--since now` to begin clear, or delete the database file to start
 completely fresh, after which it is rebuilt from the whole log.
+
+## App events only
+
+The JDK and the application server do plenty on their own, like checking the signature of a jar they load, and
+JOT's sensors see all of it. The **App events only** box, on by default, leaves those out. An observed event stays
+when any frame of its stack is code from your application, even with libraries in between. So a hash made by
+`hsqldb` on behalf of `com.acme.Ticket` stays, and the same hash made while Tomcat starts up doesn't.
+
+Each event is tagged as it is stored, so the filter is cheap and the model and the SQL box can use it too.
+
+| Column | Meaning |
+|--------|---------|
+| `origin` | `app` when a frame is application code, `library` when the stack has libraries but nothing of yours, `platform` when it is all JDK and server, `none` when the event has no stack |
+| `app_frame` | The innermost frame of the application, like `com.acme.Ticket.encrypt(Ticket.java:125)` |
+
+Which code is yours comes from `--app`, for example `--app com.acme --app org.apache.jsp` (Tomcat compiles a page to
+`org.apache.jsp`, which is your code). Without it, anything that isn't the JDK or the server counts as yours, and
+nothing is tagged `library`. A servlet's `service` method counts as the application, since the container calls it
+on the application's behalf, which keeps the route and user sensors. Blocked and reported events are never left out.
+The stats line says how many events are left out, and unticking the box brings them back. Nothing is deleted.
+If you change `--app` the stored events are tagged again at the next start.
 
 ## What the model sees
 
