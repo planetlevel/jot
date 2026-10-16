@@ -109,10 +109,12 @@ The `dashboard` directory has a web app that loads the `json` event log into SQL
 about it in plain English, as live or historical tables and charts. See [dashboard/README.md](dashboard/README.md).
 
 ## Servlet Applications
-JOT works with both `javax.servlet` (Tomcat 9 and earlier) and `jakarta.servlet` (Tomcat 10 and later). A sensor
-written with `javax.servlet.Servlet.service` also applies to `jakarta.servlet.Servlet.service`, and the other way
-round, so one .jot file works on either. The same goes for positive scopes. A negative scope such as
-`!javax.servlet.Servlet.service` is not mirrored, because "not inside javax" would be true inside the Jakarta one.
+JOT works with both `javax` (Tomcat 9 and earlier) and `jakarta` (Tomcat 10 and later) applications. Jakarta EE 9
+renamed packages such as `servlet`, `el`, `websocket`, `persistence`, `mail`, `jms` and `validation` from `javax.*` to
+`jakarta.*`. A sensor written with `javax.servlet.Servlet.service` also applies to `jakarta.servlet.Servlet.service`,
+and the other way round, so one .jot file works on either. The same goes for positive scopes. Packages that belong to
+the JDK, such as `javax.crypto`, `javax.naming` and `javax.sql`, were not renamed and are left alone. A negative scope
+such as `!javax.servlet.Servlet.service` is not mirrored, because "not inside javax" would be true inside the Jakarta one.
 
 The `demo/ticketbook` directory runs a sample servlet application under Tomcat 11 with JOT attached, for use with
 the dashboard. See `demo/ticketbook/run.sh`.

@@ -266,4 +266,32 @@ class SensorTest {
 		Assertions.assertEquals( "[bar]", SafeString.format( ret, false ) );
 	}
 
+
+	@Test
+	void testElAndOtherRenamedPackagesAreAliasedToo() {
+		Sensor s = new Sensor().method( "javax.el.ValueExpression.getValue" )
+				.scope( "javax.websocket.Session.getBasicRemote" ).method( "javax.mail.Transport.send" );
+		Assertions.assertEquals( java.util.List.of( "javax.el.ValueExpression.getValue", "jakarta.el.ValueExpression.getValue",
+				"javax.mail.Transport.send", "jakarta.mail.Transport.send" ), names( s.getMethods() ) );
+		Assertions.assertEquals( java.util.List.of( "javax.websocket.Session.getBasicRemote", "jakarta.websocket.Session.getBasicRemote" ),
+				names( s.getScopes() ) );
+	}
+
+	@Test
+	void testJdkPackagesThatStartWithJavaxAreNotAliased() {
+		for ( String jdk : java.util.List.of( "javax.crypto.Cipher.getInstance", "javax.naming.Context.lookup",
+				"javax.sql.DataSource.getConnection", "javax.net.ssl.SSLContext.getInstance", "javax.xml.parsers.DocumentBuilder.parse",
+				"javax.script.ScriptEngine.eval", "javax.security.auth.Subject.doAs", "javax.transaction.xa.XAResource.start",
+				"javax.annotation.processing.Processor.process", "javax.management.MBeanServer.invoke" ) ) {
+			Sensor s = new Sensor().method( jdk );
+			Assertions.assertEquals( java.util.List.of( jdk ), names( s.getMethods() ), jdk );
+		}
+	}
+
+	@Test
+	void testPackageNamesThatOnlyStartLikeARenamedOneAreNotAliased() {
+		Sensor s = new Sensor().method( "javax.electric.Meter.read" ).method( "javax.servletx.Foo.bar" );
+		Assertions.assertEquals( 2, s.getMethods().size() );
+	}
+
 }

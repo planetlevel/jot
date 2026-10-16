@@ -224,7 +224,7 @@ public class Sensor {
 			logger.atWarning().log( "[JOT %s] YAML error: malformed method (" + value + ") must match " + methodPattern.pattern() + ". Continuing", this );
 		}
 		addMethod( value );
-		String alias = servletAlias( value );
+		String alias = jakartaAlias( value );
 		if ( alias != null ) addMethod( alias );
 		return this;
 	}
@@ -245,13 +245,42 @@ public class Sensor {
 	}
 
 	/**
-	 * The jakarta.servlet name for a javax.servlet one, and the other way round, so a JOT written
-	 * for either works on both. Applications before Servlet 6 use javax.servlet, later ones jakarta.servlet.
+	 * The packages Jakarta EE 9 renamed from javax to jakarta. Applications on Tomcat 9 and earlier use
+	 * the javax names and Tomcat 10 and later the jakarta ones. Most javax packages are part of the JDK
+	 * and were not renamed, such as javax.crypto, javax.naming and javax.sql, so this is a list and not a rule.
 	 */
-	static String servletAlias(String sig) {
+	private static final String[] JAKARTA_PACKAGES = { "servlet", "el", "websocket", "persistence", "validation",
+			"ws.rs", "mail", "jms", "transaction", "ejb", "faces", "inject", "enterprise", "json", "jws",
+			"xml.bind", "xml.ws", "activation", "annotation", "interceptor", "batch", "resource",
+			"security.enterprise", "security.auth.message" };
+
+	/** Packages under a renamed one that belong to the JDK and keep their javax name. */
+	private static final String[] STAYS_JAVAX = { "transaction.xa", "annotation.processing" };
+
+	/**
+	 * The jakarta name for a javax name, and the other way round, so a JOT written for either works on
+	 * both. Returns null if the name isn't in a package that was renamed.
+	 */
+	static String jakartaAlias(String sig) {
 		if ( sig == null ) return null;
-		if ( sig.startsWith( "javax.servlet." ) ) return "jakarta" + sig.substring( "javax".length() );
-		if ( sig.startsWith( "jakarta.servlet." ) ) return "javax" + sig.substring( "jakarta".length() );
+		String from;
+		String to;
+		if ( sig.startsWith( "javax." ) ) {
+			from = "javax.";
+			to = "jakarta.";
+		} else if ( sig.startsWith( "jakarta." ) ) {
+			from = "jakarta.";
+			to = "javax.";
+		} else {
+			return null;
+		}
+		String rest = sig.substring( from.length() );
+		for ( String stays : STAYS_JAVAX ) {
+			if ( rest.startsWith( stays + "." ) ) return null;
+		}
+		for ( String pkg : JAKARTA_PACKAGES ) {
+			if ( rest.startsWith( pkg + "." ) ) return to + rest;
+		}
 		return null;
 	}
 	public Sensor methods( List<String> list ) {
@@ -278,7 +307,7 @@ public class Sensor {
 		}
 		addScope( value, negative );
 		// a negative scope isn't aliased, "not in javax" or "not in jakarta" would be true inside either
-		String alias = negative ? null : servletAlias( value );
+		String alias = negative ? null : jakartaAlias( value );
 		if ( alias != null ) addScope( alias, false );
 		return this;
 	}
