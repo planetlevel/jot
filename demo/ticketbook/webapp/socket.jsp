@@ -9,7 +9,7 @@
 <html>
 
 <head>
-<title>Path Injection</title>
+<title>Socket</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <link href="/ticketbook/css/bootstrap.min.css" rel="stylesheet">
@@ -18,7 +18,7 @@
 
 <body>
 	<%@ include file="/menu.jsp"%>
-	<H1>Path Injection</H1>
+	<H1>Socket</H1>
 
 	<%
 		Socket s = new Socket( "localhost", 8080 );
