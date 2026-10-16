@@ -4,7 +4,7 @@
 vulnpoint is the source of truth for where a CVE lives and what its code must not do there.
   shields/java/CVE-*.json   one file per CVE. Each shield names the scope methods, which are where the
                             vulnerable code runs, and the capabilities that are disallowed inside them
-  resources/capabilities.json
+  vulnpoint/callgraph/java/capabilities-policy.json, or resources/capabilities.json in older checkouts
                             the catalog that says which JDK and library methods perform each capability
 
 A shield with disallowed capabilities becomes one JOT rule. Inside the scope methods, calling any method that
@@ -28,6 +28,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -43,18 +44,40 @@ def q(text):
     return json.dumps(text, ensure_ascii=False)
 
 
+# where the Java sink mappings are. Newer vulnpoint keeps them with the call graph code, and resources/capabilities.json
+# is only the vocabulary. Older vulnpoint has the sinks in resources/capabilities.json.
+CATALOGS = (os.path.join("vulnpoint", "callgraph", "java", "capabilities-policy.json"),
+            os.path.join("resources", "capabilities.json"))
+METHOD = re.compile(r"^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*\.(<init>|<clinit>|[A-Za-z_$][\w$]*)$")
+
+
 def load_catalog(vulnpoint):
-    with open(os.path.join(vulnpoint, "resources", "capabilities.json")) as f:
-        catalog = json.load(f)["capabilities"]
-    # a key like comment_reflection is a note in the file, not a capability
-    return {k: v for k, v in catalog.items() if not k.startswith("comment_")}
+    """capability -> the methods that perform it. Refuses a file that isn't that, so a change in vulnpoint's layout
+    stops the generator and does not turn into rules full of nonsense."""
+    for relative in CATALOGS:
+        path = os.path.join(vulnpoint, relative)
+        if not os.path.exists(path):
+            continue
+        with open(path) as f:
+            catalog = json.load(f).get("capabilities", {})
+        # a key like comment_reflection is a note in the file, not a capability
+        catalog = {k: v for k, v in catalog.items() if not k.startswith(("comment_", "_"))}
+        bad = [k for k, v in catalog.items() if not (isinstance(v, list) and all(isinstance(m, str) and METHOD.match(m) for m in v))]
+        if len(bad) == len(catalog):
+            continue          # this one is only the vocabulary, the sinks are in the next
+        if bad:
+            sys.exit("%s has entries that are not lists of methods, %s" % (relative, ", ".join(bad[:5])))
+        return catalog
+    sys.exit("no capability catalog with sink methods in %s, looked for %s" % (vulnpoint, " and ".join(CATALOGS)))
 
 
 def load_policy(vulnpoint, cve):
     """The active policy entries for a CVE, as (entry method, capabilities). An entry that denies nothing, or one
     that isn't active, is left out."""
-    path = os.path.join(vulnpoint, "data", "policies", cve + ".json")
-    if not os.path.exists(path):
+    # the file is named for the CVE, and newer vulnpoint adds the language, like CVE-2021-44228_java.json
+    folder = os.path.join(vulnpoint, "data", "policies")
+    path = next((p for p in (os.path.join(folder, cve + suffix + ".json") for suffix in ("_java", "")) if os.path.exists(p)), None)
+    if not path:
         return []
     with open(path) as f:
         policy = json.load(f)
@@ -163,6 +186,9 @@ def main():
     p.add_argument("--deny", default="", help="capabilities to disallow for a shield that has none, comma separated")
     args = p.parse_args()
 
+    if not os.path.isdir(os.path.join(args.vulnpoint, "data", "policies")) or \
+            not glob.glob(os.path.join(args.vulnpoint, "data", "policies", "CVE-*.json")):
+        sys.exit("no policies in %s/data/policies, is --vulnpoint a vulnpoint checkout?" % args.vulnpoint)
     catalog = load_catalog(args.vulnpoint)
     deny = [c for c in args.deny.split(",") if c]
     unknown = [c for c in deny if c not in catalog]

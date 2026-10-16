@@ -111,11 +111,50 @@ class Vulnpoint2JotTests(unittest.TestCase):
             self.assertEqual([], v.load_policy(root, "CVE-2"))
             self.assertEqual([], v.load_policy(root, "CVE-3"))
             self.assertEqual([], v.load_policy(root, "CVE-4"))
+            os.rename(os.path.join(root, "data", "policies", "CVE-1.json"), os.path.join(root, "data", "policies", "CVE-1_java.json"))
+            self.assertEqual([("a.B.c", ["jndi", "process"])], v.load_policy(root, "CVE-1"), "the newer name has the language in it")
+
+    def test_the_catalog_comes_from_the_call_graph_folder_when_resources_is_only_the_vocabulary(self):
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "resources"))
+            os.makedirs(os.path.join(root, "vulnpoint", "callgraph", "java"))
+            with open(os.path.join(root, "resources", "capabilities.json"), "w") as f:
+                json.dump({"capabilities": {"process": {"description": "starts a process", "supported_languages": ["java"]}}}, f)
+            with open(os.path.join(root, "vulnpoint", "callgraph", "java", "capabilities-policy.json"), "w") as f:
+                json.dump({"capabilities": CATALOG}, f)
+            self.assertEqual(["java.lang.ProcessBuilder.start", "java.lang.Runtime.exec", "java.lang.ProcessImpl.forkAndExec"],
+                             v.load_catalog(root)["process"])
+
+    def test_a_catalog_that_is_only_descriptions_stops_the_generator_and_does_not_write_nonsense(self):
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "resources"))
+            with open(os.path.join(root, "resources", "capabilities.json"), "w") as f:
+                json.dump({"capabilities": {"process": {"description": "starts a process", "supported_languages": ["java"]}}}, f)
+            with self.assertRaises(SystemExit) as stop:
+                v.load_catalog(root)
+            self.assertIn("no capability catalog with sink methods", str(stop.exception))
+
+    def test_constructors_are_valid_sinks(self):
+        for sink in ("java.io.FileOutputStream.<init>", "a.Outer$Inner.run", "java.lang.Runtime.exec"):
+            self.assertRegex(sink, v.METHOD)
+        for bad in ("description", "a.b c", "", "java.lang."):
+            self.assertNotRegex(bad, v.METHOD)
+
+    def test_a_catalog_with_some_entries_that_are_not_methods_is_refused(self):
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "resources"))
+            with open(os.path.join(root, "resources", "capabilities.json"), "w") as f:
+                json.dump({"capabilities": {"process": ["java.lang.Runtime.exec"], "jndi": {"description": "x"}}}, f)
+            with self.assertRaises(SystemExit) as stop:
+                v.load_catalog(root)
+            self.assertIn("jndi", str(stop.exception))
 
     def test_files_are_written_from_a_vulnpoint_checkout(self):
         with tempfile.TemporaryDirectory() as root:
             os.makedirs(os.path.join(root, "shields", "java"))
             os.makedirs(os.path.join(root, "resources"))
+            os.makedirs(os.path.join(root, "data", "policies"))
+            json.dump({"cve_id": "CVE-2021-44228", "status": "active", "methods": []}, open(os.path.join(root, "data", "policies", "CVE-2021-44228_java.json"), "w"))
             json.dump({"capabilities": {**CATALOG, "comment_x": ["ignored"]}}, open(os.path.join(root, "resources", "capabilities.json"), "w"))
             json.dump({"language": "JAVA", "shields": [shield()]}, open(os.path.join(root, "shields", "java", "CVE-2021-44228.json"), "w"))
             out = os.path.join(root, "out")
