@@ -886,6 +886,11 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(200, code)
         self.assertIn(b"JOT Dashboard", page)
         self.assertIn(b'src="/grid.js"', page)
+        # hidden pages must stay hidden, an earlier layout showed two pages at once because a display rule won
+        self.assertIn(b"[hidden] { display: none !important; }", page)
+        self.assertIn(b'id="eventsPage"', page)
+        self.assertIn(b'id="policyPage" hidden', page)
+        self.assertNotIn(b'id="feed"', page)       # the Latest events panel became a view
         code, script = self.call("/grid.js")
         self.assertEqual(200, code)
         self.assertIn(b"pivot", script)

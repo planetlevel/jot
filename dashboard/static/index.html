@@ -24,33 +24,110 @@
     --monitored: #ffc078; --monitored-bg: #3a2e1a; --observed: #7ed08f; --observed-bg: #1d3023; --code: #232a33;
   }
   * { box-sizing: border-box; }
+  /* a page or card with hidden must really disappear, even when a rule gives it a display */
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 14px 16px;
-           background: var(--panel); border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 18px; margin: 0; letter-spacing: 0.5px; }
-  .stats { display: flex; flex-wrap: wrap; gap: 8px 18px; flex: 1; color: var(--muted); font-size: 13px; }
-  .stats b { color: var(--text); font-size: 15px; }
+
+  /* top menu */
+  header { display: flex; align-items: center; gap: 4px 24px; padding: 0 16px; background: var(--panel);
+           border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: 0.5px; padding: 12px 0; }
+  header nav { display: flex; gap: 4px; flex: 1; }
+  header nav a { padding: 14px 14px 11px; border-bottom: 3px solid transparent; font-weight: 600; color: var(--muted);
+                 text-decoration: none; }
+  header nav a.active { color: var(--text); border-bottom-color: var(--accent); }
+  header nav a:hover { color: var(--text); }
+  #policyPill { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; text-decoration: none; }
+  #policyPill.block { background: var(--blocked-bg); color: var(--blocked); }
+  #policyPill.partial { background: var(--monitored-bg); color: var(--monitored); }
+  #policyPill.observe { background: var(--monitored-bg); color: var(--monitored); }
+
+  main { padding: 16px; max-width: 1400px; margin: 0 auto; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card + .card, .card + div, div + .card { margin-top: 16px; }
+  .policy { display: grid; grid-template-columns: minmax(0, 1fr) 440px; gap: 16px; align-items: start; }
+  .policy > .wide { grid-column: 1 / -1; }
+  .policy > * + * { margin-top: 0; }
+  @media (max-width: 960px) { .policy { grid-template-columns: minmax(0, 1fr); } }
+
+  form.ask { display: flex; gap: 8px; }
+  input[type=text], input[type=password], textarea, select {
+    font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  input[type=text], textarea { width: 100%; padding: 10px 12px; }
+  input[type=text]:focus, input[type=password]:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+           border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: 0.55; cursor: default; }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip { font-size: 13px; padding: 4px 10px; border-radius: 999px; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .notice { margin-top: 10px; padding: 8px 12px; border-radius: 8px; background: var(--monitored-bg); color: var(--monitored); font-size: 13px; }
+  .error { margin-top: 10px; padding: 8px 12px; border-radius: 8px; background: var(--blocked-bg); color: var(--blocked); font-size: 14px; white-space: pre-wrap; }
+  .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+
+  /* events page */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 6px 20px; align-items: center; justify-content: space-between; margin: 14px 2px 0; }
+  .stats { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--muted); font-size: 13px; }
+  .stats b { color: var(--text); }
   .stats .blocked b { color: var(--blocked); }
-  label.live { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
-  .mode { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-  .mode button { border: 0; border-radius: 0; padding: 6px 14px; background: var(--panel); font-size: 13px; font-weight: 600; }
-  .mode button + button { border-left: 1px solid var(--line); }
-  .mode button.active.observe { background: var(--monitored-bg); color: var(--monitored); }
-  .mode button.active.block { background: var(--blocked-bg); color: var(--blocked); }
-  .mode button:disabled { cursor: default; opacity: 0.7; }
-  nav.tabs { display: flex; gap: 4px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
-  nav.tabs button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; padding: 10px 14px; font-weight: 600; color: var(--muted); }
-  nav.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
-  main.jots { grid-template-columns: minmax(0, 1fr) 440px; }
-  @media (max-width: 960px) { main.jots { grid-template-columns: minmax(0, 1fr); } }
+  label.refresh { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
+  .result h2 { margin: 0 0 2px; font-size: 17px; }
+  .explain { color: var(--muted); margin: 0 0 12px; }
+  .tablewrap { overflow: auto; max-height: 560px; border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th { position: sticky; top: 0; background: var(--panel); text-align: left; border-bottom: 1px solid var(--line); padding: 6px 10px; white-space: nowrap; }
+  td { padding: 5px 10px; border-bottom: 1px solid var(--line); vertical-align: top; max-width: 460px; overflow-wrap: anywhere; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.null { color: var(--muted); }
+  tr:last-child td { border-bottom: 0; }
+  table.grid th.col { text-align: center; }
+  table.grid td.rowlabel { position: sticky; left: 0; background: var(--panel); font-weight: 600; border-right: 1px solid var(--line); white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+  table.grid td.on { text-align: center; background: var(--observed-bg); color: var(--observed); font-weight: 700; }
+  table.grid td.off { background: transparent; }
+  .picker { margin-top: 10px; }
+  .picker select { max-width: 100%; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; padding: 1px 7px; border-radius: 999px; text-transform: uppercase; }
+  .badge.blocked { background: var(--blocked-bg); color: var(--blocked); }
+  .badge.monitored { background: var(--monitored-bg); color: var(--monitored); }
+  .badge.observed, .badge.sensor { background: var(--observed-bg); color: var(--observed); }
+  .badge.report { background: var(--code); color: var(--muted); }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 16px; justify-content: space-between; align-items: center; color: var(--muted); font-size: 12px; margin-top: 8px; }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; min-height: 120px; background: var(--code); margin-top: 8px; }
+  svg text { fill: var(--text); font-size: 12px; }
+  svg .muted { fill: var(--muted); }
+
+  /* policy page */
+  h2.section { margin: 0 0 2px; font-size: 17px; }
+  .modebar { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-top: 10px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 7px 18px; background: var(--panel); font-weight: 600; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.active.observe { background: var(--monitored-bg); color: var(--monitored); }
+  .seg button.active.block { background: var(--blocked-bg); color: var(--blocked); }
+  .seg button:disabled { cursor: default; }
+  .modehelp { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+  .modehelp b { color: var(--text); }
+  .rule { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 16px; padding: 12px 0; border-top: 1px solid var(--line); align-items: center; }
+  .rule:first-of-type { margin-top: 12px; }
+  .rule .name { font-weight: 600; overflow-wrap: anywhere; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+  .rule .why, .rule .counts { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .rule .sw { grid-row: 1 / span 3; grid-column: 2; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  button.switch { position: relative; width: 44px; height: 24px; padding: 0; border-radius: 999px; background: var(--line); border: 0; }
+  button.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--panel);
+                         box-shadow: 0 1px 2px rgba(0,0,0,0.3); transition: left 0.12s; }
+  button.switch[aria-checked="true"] { background: var(--blocked); }
+  button.switch[aria-checked="true"]::after { left: 23px; }
+  .applied { color: var(--muted); font-size: 12px; margin-top: 8px; }
   .jotbar { display: flex; gap: 8px; }
   .jotbar input { flex: 1; }
   table.list tbody tr { cursor: pointer; }
   table.list tbody tr:hover td { background: var(--code); }
   table.list tbody tr.selected td { background: var(--observed-bg); }
-  .badge.sensor { background: var(--observed-bg); color: var(--observed); }
-  .badge.report { background: var(--code); color: var(--muted); }
   .issue { padding: 6px 10px; border-radius: 6px; margin-top: 6px; font-size: 13px; background: var(--monitored-bg); color: var(--monitored); overflow-wrap: anywhere; }
   .issue.info { background: var(--code); color: var(--muted); }
   #jotDetail h2 { margin: 0 0 4px; font-size: 17px; overflow-wrap: anywhere; }
@@ -62,142 +139,76 @@
   .fact { background: var(--code); border-radius: 8px; padding: 6px 10px; }
   .fact b { display: block; font-size: 16px; }
   .fact span { color: var(--muted); font-size: 12px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); display: inline-block; }
-  .live-on .dot { background: var(--observed); box-shadow: 0 0 0 3px var(--observed-bg); }
-  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; padding: 16px; max-width: 1500px; margin: 0 auto; }
-  @media (max-width: 960px) { main { grid-template-columns: minmax(0, 1fr); } }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
-  .card + .card { margin-top: 16px; }
-  #controlCard { margin-bottom: 16px; }
-  form.ask { display: flex; gap: 8px; }
-  input[type=text], textarea { width: 100%; font: inherit; color: var(--text); background: var(--bg);
-    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
-  input[type=text]:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
-           border-radius: 8px; padding: 8px 14px; cursor: pointer; }
-  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
-  button:disabled { opacity: 0.55; cursor: default; }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .chip { font-size: 13px; padding: 4px 10px; border-radius: 999px; }
-  .hint { color: var(--muted); font-size: 13px; margin-top: 8px; }
-  .notice { margin-top: 10px; padding: 8px 12px; border-radius: 8px; background: var(--monitored-bg); color: var(--monitored); font-size: 13px; }
-  .error { margin-top: 10px; padding: 8px 12px; border-radius: 8px; background: var(--blocked-bg); color: var(--blocked); font-size: 14px; white-space: pre-wrap; }
-  .result h2 { margin: 0 0 2px; font-size: 17px; }
-  .explain { color: var(--muted); margin: 0 0 12px; }
-  .tablewrap { overflow: auto; max-height: 560px; border: 1px solid var(--line); border-radius: 8px; }
-  table { border-collapse: collapse; width: 100%; font-size: 13px; }
-  th { position: sticky; top: 0; background: var(--panel); text-align: left; border-bottom: 1px solid var(--line); padding: 6px 10px; white-space: nowrap; }
-  td { padding: 5px 10px; border-bottom: 1px solid var(--line); vertical-align: top; max-width: 460px; overflow-wrap: anywhere; }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  table.grid th.col { text-align: center; }
-  table.grid td.rowlabel { position: sticky; left: 0; background: var(--panel); font-weight: 600; border-right: 1px solid var(--line); white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
-  table.grid td.on { text-align: center; background: var(--observed-bg); color: var(--observed); font-weight: 700; }
-  table.grid td.off { background: transparent; }
-  .picker { margin-top: 10px; }
-  .picker select { max-width: 100%; }
-  td.null { color: var(--muted); }
-  tr:last-child td { border-bottom: 0; }
-  .badge { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; padding: 1px 7px; border-radius: 999px; text-transform: uppercase; }
-  .badge.blocked { background: var(--blocked-bg); color: var(--blocked); }
-  .badge.monitored { background: var(--monitored-bg); color: var(--monitored); }
-  .badge.observed { background: var(--observed-bg); color: var(--observed); }
-  .meta { display: flex; flex-wrap: wrap; gap: 6px 16px; justify-content: space-between; align-items: center; color: var(--muted); font-size: 12px; margin-top: 8px; }
-  details { margin-top: 12px; }
-  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
-  textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; min-height: 120px; background: var(--code); margin-top: 8px; }
-  .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
-  svg text { fill: var(--text); font-size: 12px; }
-  svg .muted { fill: var(--muted); }
-  .feed { max-height: 78vh; overflow: auto; }
-  .feed h3 { margin: 0 0 8px; font-size: 14px; }
-  .ev { padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
-  .ev:last-child { border-bottom: 0; }
-  .ev .top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .ev .when { color: var(--muted); font-size: 12px; margin-left: auto; }
-  .ev .cap { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
-  .ev .site { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-  .empty { color: var(--muted); padding: 24px 0; text-align: center; }
-  #control { margin-top: 16px; }
-  #control h3 { margin: 0; font-size: 15px; }
-  #control .head { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
-  #control .head .spacer { flex: 1; }
-  #control input[type=password] { width: 200px; padding: 6px 10px; }
-  .rule { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 10px 0; border-top: 1px solid var(--line); align-items: center; }
-  .rule .name { font-weight: 600; overflow-wrap: anywhere; }
-  .rule .why, .rule .counts { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-  .rule .actions { display: flex; gap: 6px; grid-row: 1 / span 2; grid-column: 2; align-items: center; }
-  .rule button { padding: 4px 10px; font-size: 13px; }
-  .rule button.current { background: var(--code); color: var(--muted); cursor: default; }
-  .rule button.lower { border-color: var(--monitored); color: var(--monitored); }
-  .rule button.raise { border-color: var(--blocked); color: var(--blocked); }
-  .applied { color: var(--muted); font-size: 12px; margin-top: 8px; }
 </style>
 </head>
 <body>
 <header>
   <h1>JOT</h1>
-  <div class="stats" id="stats"></div>
-  <div class="mode" id="mode" role="group" aria-label="Enforcement mode" hidden>
-    <button type="button" id="modeObserve" title="Rules report what they would stop, and stop nothing">Observe</button>
-    <button type="button" id="modeBlock" title="Rules stop the calls they are written to stop">Block</button>
-  </div>
-  <label class="live" id="liveLabel"><input type="checkbox" id="live"><span class="dot"></span> Live</label>
+  <nav aria-label="Pages">
+    <a href="#events" id="navEvents" class="active">Events</a>
+    <a href="#policy" id="navPolicy">Policy</a>
+  </nav>
+  <a href="#policy" id="policyPill" hidden></a>
 </header>
 
-<nav class="tabs" aria-label="Views">
-  <button type="button" id="tabDash" class="active">Dashboard</button>
-  <button type="button" id="tabJots">JOTs</button>
-</nav>
-
-<main id="dashView">
-  <div>
-    <div class="card" id="controlCard" hidden>
-      <details id="controlDetails">
-        <summary><b>Enforcement</b> <span id="controlSummary" class="hint"></span></summary>
-        <div class="head" style="margin-top:10px">
-          <div class="hint" id="controlMaster"></div>
-          <span class="spacer"></span>
-          <input type="password" id="adminToken" autocomplete="off" placeholder="Admin token" aria-label="Admin token">
-        </div>
-        <div id="controlBody"></div>
-      </details>
+<!-- ============ events ============ -->
+<main id="eventsPage">
+  <div class="card">
+    <form class="ask" id="askForm">
+      <input type="text" id="question" autocomplete="off" aria-label="Ask a question"
+             placeholder="Ask about your application, like: which routes use weak ciphers?">
+      <button class="primary" id="askBtn" type="submit">Ask</button>
+    </form>
+    <div class="row picker">
+      <select id="reportSelect" aria-label="Views and reports"><option value="">Views and reports&hellip;</option></select>
     </div>
-    <div class="card">
-      <form class="ask" id="askForm">
-        <input type="text" id="question" autocomplete="off" aria-label="Ask a question"
-               placeholder="Ask about your application, like: which routes use weak ciphers?">
-        <button class="primary" id="askBtn" type="submit">Ask</button>
-      </form>
-      <div class="row picker">
-        <select id="reportSelect" aria-label="Views and reports"><option value="">Views and reports&hellip;</option></select>
-      </div>
-      <div class="chips" id="history"></div>
-      <div id="notice"></div>
-    </div>
-    <div id="results"></div>
+    <div class="chips" id="history"></div>
+    <div id="notice"></div>
   </div>
-  <aside class="card feed">
-    <h3>Latest events</h3>
-    <div id="feed"><div class="empty">Waiting for events</div></div>
-  </aside>
+  <div class="toolbar">
+    <div class="stats" id="stats"></div>
+    <label class="refresh" title="Run the current view again every 3 seconds, so new events show up on their own">
+      <input type="checkbox" id="live"> Refresh every 3 seconds
+    </label>
+  </div>
+  <div id="results" style="margin-top:10px"></div>
 </main>
 
-<main id="jotsView" class="jots" hidden>
-  <div>
-    <div class="card">
-      <div class="jotbar">
-        <input type="text" id="jotFilter" autocomplete="off" aria-label="Filter" placeholder="Filter by name, method, file or description">
-        <select id="jotKind" aria-label="Show">
-          <option value="">Everything</option><option value="sensor">Sensors</option>
-          <option value="rule">Rules</option><option value="report">Reports</option>
-        </select>
+<!-- ============ policy ============ -->
+<main id="policyPage" hidden>
+  <div class="policy">
+    <div class="card wide" id="enforcementCard">
+      <h2 class="section">Enforcement</h2>
+      <div class="hint" id="enforceStatus" style="margin-top:2px"></div>
+      <div class="modebar">
+        <div class="seg" role="group" aria-label="Enforcement mode">
+          <button type="button" id="modeObserve">Observe</button>
+          <button type="button" id="modeBlock">Block</button>
+        </div>
+        <input type="password" id="adminToken" autocomplete="off" placeholder="Admin token" aria-label="Admin token" hidden>
       </div>
-      <div class="hint" id="jotSummary"></div>
-      <div id="jotIssues"></div>
+      <p class="modehelp"><b>Observe</b> rules report what they would stop, and stop nothing.
+        <b>Block</b> rules stop the calls they are written to stop. Sensors that aren't rules only ever observe.</p>
+      <div id="controlBody"></div>
     </div>
-    <div class="card"><div class="tablewrap" id="jotList"></div></div>
+
+    <div>
+      <div class="card">
+        <h2 class="section">Sensors, rules and reports</h2>
+        <div class="jotbar" style="margin-top:8px">
+          <input type="text" id="jotFilter" autocomplete="off" aria-label="Filter" placeholder="Filter by name, method, file or description">
+          <select id="jotKind" aria-label="Show">
+            <option value="">Everything</option><option value="sensor">Sensors</option>
+            <option value="rule">Rules</option><option value="report">Reports</option>
+          </select>
+        </div>
+        <div class="hint" id="jotSummary"></div>
+        <div id="jotIssues"></div>
+      </div>
+      <div class="card" style="margin-top:16px"><div class="tablewrap" id="jotList"></div></div>
+    </div>
+    <aside class="card" id="jotDetail"><div class="empty">Select a sensor, rule or report to see how it is defined</div></aside>
   </div>
-  <aside class="card" id="jotDetail"><div class="empty">Select a sensor, rule or report to see how it is defined</div></aside>
 </main>
 
 <script src="/grid.js"></script>
@@ -205,8 +216,8 @@
 "use strict";
 
 const PRESETS = [
-  { label: "Recent events", chart: "table", title: "Recent events",
-    sql: "SELECT datetime(ts/1000, 'unixepoch') AS time, action, sensor, capture, call_site_name AS call_site\nFROM events ORDER BY ts DESC LIMIT 100" },
+  { label: "Latest events", chart: "table", title: "Latest events",
+    sql: "SELECT datetime(ts/1000, 'unixepoch') AS time, action, sensor, capture, call_site_name AS call_site, message\nFROM events ORDER BY ts DESC LIMIT 100" },
   { label: "Violations", chart: "table", title: "Violations, blocked and would-have-been-blocked",
     sql: "SELECT datetime(ts/1000, 'unixepoch') AS time, action, sensor, capture, message, call_site_name AS call_site\nFROM events WHERE action IN ('blocked', 'monitored') ORDER BY ts DESC LIMIT 200" },
   { label: "Blocked", chart: "table", title: "Blocked calls",
@@ -221,10 +232,10 @@ const PRESETS = [
 
 const $ = (id) => document.getElementById(id);
 let current = null;       // { title, explanation, sql, chart, question }
-let lastPk = 0;
 let busy = false;
 let asked = [];           // questions asked, with the SQL the model wrote
 let timer = null;
+let currentPage = "events";
 
 // ---- tiny DOM helper. Text is only ever added as text, captured values can be hostile.
 function el(tag, props, ...kids) {
@@ -266,13 +277,25 @@ function ago(ms) {
 }
 const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour12: false });
 
+// ---- pages
+function showPage(name) {
+  currentPage = name === "policy" ? "policy" : "events";
+  $("eventsPage").hidden = currentPage !== "events";
+  $("policyPage").hidden = currentPage !== "policy";
+  $("navEvents").className = currentPage === "events" ? "active" : "";
+  $("navPolicy").className = currentPage === "policy" ? "active" : "";
+  if (currentPage === "policy") { refreshControl(); loadJots(); }
+  setTimer();
+}
+window.addEventListener("hashchange", () => showPage(location.hash.slice(1)));
+
 // ---- enforcement. Agents read a control file, nothing here reaches an agent.
-let controlWritable = false;
+let controlState = null;
 
 async function changeControl(change, confirmText) {
   if (confirmText && !window.confirm(confirmText)) return;
   const token = $("adminToken").value;
-  if (!token) { showControlMessage("Type the admin token first."); return; }
+  if (!token) { showControlMessage("Type the admin token first."); $("adminToken").focus(); return; }
   try {
     drawControl(await api("/api/control", change, { "X-JOT-Admin": token }));
   } catch (e) { showControlMessage(e.message); }
@@ -283,76 +306,66 @@ function showControlMessage(text) {
 }
 
 function drawControl(c) {
-  $("controlCard").hidden = !c.enabled;
+  controlState = c;
+  const pill = $("policyPill");
+  $("enforcementCard").hidden = !c.enabled;
+  pill.hidden = !c.enabled;
   if (!c.enabled) return;
-  controlWritable = c.writable;
-  $("adminToken").hidden = !c.writable;
-  drawMode(c);
-  const blocking = c.rules.filter((r) => r.mode === "block").length;
-  $("controlSummary").textContent = c.master
-    ? blocking + " of " + c.rules.length + " rules blocking"
-    : "all rules report only";
 
-  const masterBtn = c.master
-    ? el("button", { class: "lower", text: "Report only, all rules", disabled: c.writable ? null : "",
-        onclick: () => changeControl({ master: false }, "Switch every rule to report only? Nothing will be blocked.") })
-    : el("button", { class: "raise", text: "Turn enforcement back on", disabled: c.writable ? null : "",
-        onclick: () => changeControl({ master: true }) });
-  $("controlMaster").replaceChildren(
-    c.writable ? "" : "Read only. Start the dashboard with JOT_DASHBOARD_ADMIN_TOKEN to allow changes. ", masterBtn);
+  const total = c.rules.length;
+  const blocking = c.rules.filter((r) => r.mode === "block").length;
+  pill.className = !c.master ? "observe" : blocking === total ? "block" : "partial";
+  pill.textContent = !c.master ? "Observe, nothing is blocked" : blocking + " of " + total + " rules blocking";
+
+  $("enforceStatus").textContent = !c.master
+    ? "Observe is on. Every rule reports what it would stop and stops nothing."
+    : blocking === total ? "All " + total + " rules are blocking."
+    : blocking + " of " + total + " rules are blocking. " + (total - blocking) + " report only.";
+
+  $("modeObserve").className = c.master ? "" : "active observe";
+  $("modeBlock").className = c.master ? "active block" : "";
+  for (const id of ["modeObserve", "modeBlock"]) $(id).disabled = !c.writable;
+  $("adminToken").hidden = !c.writable;
 
   const rows = c.rules.map((r) => {
     const block = r.mode === "block";
-    const act = (label, value, cls, confirmText) => el("button", {
-      class: (block === value && c.master ? "current" : cls), text: label,
-      disabled: !c.writable || (block === value && c.master) ? "" : null,
-      onclick: () => changeControl({ rules: { [r.name]: value } }, confirmText) });
+    // what the rule is set to by itself, ignoring the master switch
+    const intended = r.setting !== null ? r.setting : !r.staged;
+    const changed = r.setting !== null && r.setting !== !r.staged;
+    const sw = el("button", { type: "button", class: "switch", role: "switch", "aria-checked": String(intended),
+      "aria-label": r.name + " blocks", disabled: !c.writable || !c.master ? "" : null,
+      title: !c.master ? "Observe is on, so no rule blocks" : intended ? "Click to make this rule report only" : "Click to make this rule block",
+      onclick: () => {
+        const next = !intended;
+        // switching back to what the .jot file says removes the override
+        changeControl({ rules: { [r.name]: next === !r.staged ? null : next } },
+          next ? null : "Make " + r.name + " report only? It will stop blocking.");
+      } });
     return el("div", { class: "rule" },
-      el("div", { class: "name" }, r.name + " ", el("span", { class: "badge " + (block ? "blocked" : "monitored"), text: block ? "block" : "monitor" })),
-      el("div", { class: "actions" },
-        act("Monitor", false, "lower", "Stop blocking " + r.name + "? It will only report."),
-        act("Block", true, "raise", null),
-        r.setting === null ? null : el("button", { text: "Use .jot setting", disabled: c.writable ? null : "",
-          onclick: () => changeControl({ rules: { [r.name]: null } }) })),
-      el("div", { class: "why", text: (r.description ? r.description + ". " : "") + r.message + (r.staged ? " (staged as report only in its .jot file)" : "") }),
-      el("div", { class: "counts", text: r.last_hour.blocked + " blocked, " + r.last_hour.monitored + " monitored in the last hour" }));
+      el("div", { class: "name" }, r.name, " ",
+        el("span", { class: "badge " + (block ? "blocked" : "monitored"), text: block ? "blocking" : "report only" }),
+        !c.master ? el("span", { class: "hint", style: "margin:0", text: "(Observe is on)" })
+          : changed ? el("span", { class: "hint", style: "margin:0", text: "(changed here, the .jot file says " + (r.staged ? "report only" : "block") + ")" })
+          : r.staged ? el("span", { class: "hint", style: "margin:0", text: "(staged as report only in its .jot file)" }) : null),
+      el("div", { class: "sw" }, "Block", sw),
+      el("div", { class: "why", text: (r.description ? r.description + ". " : "") + r.message }),
+      el("div", { class: "counts", text: r.last_hour.blocked + " blocked, " + r.last_hour.monitored + " reported in the last hour" }));
   });
   const applied = c.applied.length
-    ? el("div", { class: "applied" }, "Applied by agents, latest first. " + c.applied.slice(0, 4).map((a) =>
+    ? el("div", { class: "applied" }, "Agents confirmed, latest first. " + c.applied.slice(0, 4).map((a) =>
         clock(a.ts) + " " + (a.app || "?") + " " + a.change).join(". "))
     : el("div", { class: "applied", text: c.file_exists
-        ? "No agent has reported applying these settings yet. Agents need -Djot.control pointing at the control file."
+        ? "No agent has confirmed these settings yet. Agents need -Djot.control pointing at the control file."
         : "No control file yet. It is created the first time you change something." });
   $("controlBody").replaceChildren(
-    ...(rows.length ? rows : [el("div", { class: "empty", text: "No rules were found. A rule is a sensor with an exception." })]),
+    ...(c.writable ? [] : [el("div", { class: "notice", text: "Read only. Start the dashboard with JOT_DASHBOARD_ADMIN_TOKEN to allow changes." })]),
+    ...(rows.length ? rows : [el("div", { class: "empty", text: "No rules were found. A rule is a sensor that has an exception." })]),
     applied,
     el("div", { class: "applied", text: "An agent started with -Djot.enforce=false ignores these settings." }));
 }
 
-// The header toggle is the master switch. Observe makes every rule report only. Block turns enforcement back on,
-// and a rule that is staged as report only on its own stays that way until it is switched.
-function drawMode(c) {
-  const mode = $("mode");
-  mode.hidden = !c.enabled;
-  const blocking = c.rules.filter((r) => r.mode === "block").length;
-  $("modeObserve").className = c.master ? "" : "active observe";
-  $("modeBlock").className = c.master ? "active block" : "";
-  $("modeBlock").textContent = c.master && blocking < c.rules.length ? "Block (" + blocking + " of " + c.rules.length + ")" : "Block";
-  $("modeBlock").title = c.master && blocking < c.rules.length
-    ? "Enforcement is on. " + (c.rules.length - blocking) + " rule(s) are staged as report only on their own"
-    : "Rules stop the calls they are written to stop";
-  for (const id of ["modeObserve", "modeBlock"]) $(id).disabled = !c.writable;
-  if (!c.writable) mode.title = "Read only. Start the dashboard with JOT_DASHBOARD_ADMIN_TOKEN to allow changes.";
-}
-
 function setMode(master) {
-  if (!$("adminToken").value) {
-    // the token lives in the panel, so open it and ask for it
-    $("controlDetails").open = true;
-    $("adminToken").focus();
-    showControlMessage("Type the admin token, then click " + (master ? "Block" : "Observe") + " again.");
-    return;
-  }
+  if (controlState && controlState.master === master) return;
   changeControl({ master }, master ? null : "Switch to Observe? Every rule will report only and nothing will be blocked.");
 }
 $("modeObserve").addEventListener("click", () => setMode(false));
@@ -362,48 +375,16 @@ async function refreshControl() {
   try { drawControl(await api("/api/control")); } catch (e) { /* not available */ }
 }
 
-// ---- status and feed
+// ---- status
 async function refreshStatus() {
   const s = await api("/api/status");
-  const stats = $("stats");
-  stats.replaceChildren(
+  $("stats").replaceChildren(
     el("span", {}, el("b", { text: s.events.toLocaleString() }), " events"),
     el("span", { class: s.blocked ? "blocked" : "" }, el("b", { text: s.blocked.toLocaleString() }), " blocked"),
-    el("span", {}, el("b", { text: s.monitored.toLocaleString() }), " monitored"),
-    el("span", {}, el("b", { text: String(s.sensors) }), " sensors seen"),
-    el("span", { text: "last event " + ago(s.last_ts) }),
-  );
-  if (!s.llm) {
-    $("notice").replaceChildren(el("div", { class: "notice",
-      text: "Natural language is off because ANTHROPIC_API_KEY isn't set. Presets and the SQL box still work." }));
-  } else {
-    $("notice").replaceChildren();
-  }
-}
-
-function eventRow(e) {
-  const [pk, ts, action, sensor, capture, site, message] = e;
-  return el("div", { class: "ev" },
-    el("div", { class: "top" },
-      el("span", { class: "badge " + action, text: action }),
-      el("b", { text: sensor }),
-      el("span", { class: "when", text: clock(ts) })),
-    el("div", { class: "cap", text: capture || "" }),
-    message ? el("div", { class: "site", text: message }) : null,
-    site ? el("div", { class: "site", text: site }) : null);
-}
-
-async function refreshFeed() {
-  const r = await api("/api/recent" + (lastPk ? "?after=" + lastPk : ""));
-  if (!r.rows.length) return;
-  const feed = $("feed");
-  if (!lastPk) feed.replaceChildren();
-  const rows = r.rows;                       // newest first
-  lastPk = Math.max(lastPk, ...rows.map((x) => x[0]));
-  const frag = document.createDocumentFragment();
-  rows.forEach((x) => frag.append(eventRow(x)));
-  feed.prepend(frag);
-  while (feed.children.length > 200) feed.lastChild.remove();
+    el("span", {}, el("b", { text: s.monitored.toLocaleString() }), " reported only"),
+    el("span", { text: "last event " + ago(s.last_ts) }));
+  $("notice").replaceChildren(...(s.llm ? [] : [el("div", { class: "notice",
+    text: "Natural language is off because ANTHROPIC_API_KEY isn't set. The views and the SQL box still work." })]));
 }
 
 // ---- rendering results
@@ -565,7 +546,7 @@ function drawPicker(reports) {
     }
     return g;
   };
-  select.replaceChildren(el("option", { value: "", text: "Views and reports\u2026" }), group("Views", PRESETS));
+  select.replaceChildren(el("option", { value: "", text: "Views and reports…" }), group("Views", PRESETS));
   if (reports.length) select.append(group("Reports from your .jot files", reports));
   select.value = chosen && reportItems[Number(chosen)] ? chosen : "";
 }
@@ -574,23 +555,9 @@ async function drawReports() {
   try { drawPicker(await api("/api/reports")); } catch (e) { /* reports are optional */ }
 }
 
-function drawPresets() {
-  drawPicker([]);
-}
-
-// ---- the JOTs view, read only. It shows how sensors, rules and reports are defined and whether they fire.
+// ---- sensors, rules and reports, read only. How each is defined and whether it fires.
 let jots = null;
 let jotSelected = null;       // "kind:name"
-let currentView = "dash";
-
-function showView(name) {
-  currentView = name;
-  $("dashView").hidden = name !== "dash";
-  $("jotsView").hidden = name !== "jots";
-  $("tabDash").className = name === "dash" ? "active" : "";
-  $("tabJots").className = name === "jots" ? "active" : "";
-  if (name === "jots") loadJots();
-}
 
 async function loadJots() {
   try { jots = await api("/api/jots"); drawJots(); } catch (e) { $("jotList").replaceChildren(el("div", { class: "error", text: e.message })); }
@@ -608,7 +575,7 @@ function jotItems() {
 function kindBadge(item) {
   if (item.kind === "report") return el("span", { class: "badge report", text: "report" });
   if (item.kind === "sensor") return el("span", { class: "badge sensor", text: "observe" });
-  return el("span", { class: "badge " + (item.mode === "block" ? "blocked" : "monitored"), text: item.mode });
+  return el("span", { class: "badge " + (item.mode === "block" ? "blocked" : "monitored"), text: item.mode === "block" ? "rule, blocks" : "rule, reports" });
 }
 
 function drawJots() {
@@ -668,7 +635,7 @@ function drawJotDetail(i) {
           ? "Columns come from the captures of " + i.cols + ", with an X where it was seen in the same request."
           : "One column for each of " + i.cols + ", showing what it captured in the same request.") }),
       listSection("Rows", i.rows ? [i.rows] : null), listSection(i.type === "table" ? "Columns" : "Column source", (i.cols || "").split(",").map((c) => c.trim()).filter(Boolean)),
-      i.sql ? el("button", { class: "primary", text: "Open this report", onclick: () => { showView("dash"); runSql(i.sql, { title: i.name, chart: "grid", sql: i.sql }); } }) : null);
+      i.sql ? el("button", { class: "primary", text: "Open this report", onclick: () => { location.hash = "#events"; runSql(i.sql, { title: i.name, chart: "grid", sql: i.sql }); } }) : null);
     return;
   }
   const never = !i.events;
@@ -676,52 +643,55 @@ function drawJotDetail(i) {
     el("h2", { text: i.name }), kindBadge(i), " ", el("span", { class: "hint", text: i.file }),
     i.description ? el("p", { class: "explain", text: i.description }) : null,
     el("div", { class: "facts" }, fact(i.events, "events"), fact(i.last_hour, "last hour"), fact(i.events ? ago(i.last_ts) : "never", "last fired"),
-      ...(i.kind === "rule" ? [fact(i.blocked, "blocked"), fact(i.monitored, "monitored")] : [])),
+      ...(i.kind === "rule" ? [fact(i.blocked, "blocked"), fact(i.monitored, "reported only")] : [])),
     never ? el("div", { class: "hint", text: "No events in the log yet. A sensor only records when the code it watches runs, so check the method names if you expected it." }) : null,
     i.kind === "rule" ? el("div", { class: "notice", text: (i.mode === "block" ? "Blocks the call. " : "Only reports, nothing is stopped. ") + "Message: " + i.exception }) : null,
     listSection("Watches", i.methods), listSection("Only inside", i.scopes), listSection("Skips", i.excludes),
     listSection("Captures", i.captures), listSection("Matchers", i.matchers),
     el("h4", { text: "As written" }), el("pre", { text: i.definition || "" }),
     el("div", { class: "row" }, el("button", { class: "primary", text: "Show its events", onclick: () => {
-      showView("dash");
+      location.hash = "#events";
       runSql("SELECT datetime(ts/1000, 'unixepoch') AS time, action, capture, call_site_name AS call_site, message\nFROM events WHERE sensor = '"
         + i.name.replace(/'/g, "''") + "' ORDER BY ts DESC LIMIT 200", { title: "Events from " + i.name, chart: "table" });
     } })));
 }
 
-$("tabDash").addEventListener("click", () => showView("dash"));
-$("tabJots").addEventListener("click", () => showView("jots"));
 $("jotFilter").addEventListener("input", drawJots);
 $("jotKind").addEventListener("change", drawJots);
 
+// ---- keeping things current
+function setTimer() {
+  clearInterval(timer);
+  const fast = currentPage === "events" && $("live").checked;
+  timer = setInterval(tick, fast ? 3000 : 6000);
+}
+
 async function tick() {
   try {
-    await Promise.all([refreshStatus(), refreshFeed(), refreshControl()]);
-    if (currentView === "jots") await loadJots();
-    if ($("live").checked && current && !busy) {
+    await Promise.all([refreshStatus(), refreshControl()]);
+    if (currentPage === "policy") { await loadJots(); return; }
+    // refresh the current view, unless someone is editing its SQL
+    if ($("live").checked && current && !busy && !$("results").querySelector("details[open]")) {
       const r = await api("/api/sql", { sql: current.sql, limit: current.chart === "grid" ? 5000 : undefined });
       show(current, r);
     }
   } catch (e) { /* the server may be restarting, try again next tick */ }
 }
 
-function setLive(on) {
-  $("liveLabel").classList.toggle("live-on", on);
-  clearInterval(timer);
-  timer = setInterval(tick, on ? 2500 : 8000);
-  try { localStorage.setItem("jot-live", on ? "1" : "0"); } catch (e) { /* ignore */ }
-}
-
+$("live").addEventListener("change", (ev) => {
+  try { localStorage.setItem("jot-live", ev.target.checked ? "1" : "0"); } catch (e) { /* ignore */ }
+  setTimer();
+});
+$("askForm").addEventListener("submit", (ev) => { ev.preventDefault(); ask($("question").value); });
 $("reportSelect").addEventListener("change", (ev) => {
   const item = reportItems[Number(ev.target.value)];
   if (ev.target.value !== "" && item) runSql(item.sql, item);
 });
-$("askForm").addEventListener("submit", (ev) => { ev.preventDefault(); ask($("question").value); });
-$("live").addEventListener("change", (ev) => setLive(ev.target.checked));
 
 try { asked = JSON.parse(localStorage.getItem("jot-history") || "[]"); } catch (e) { asked = []; }
-try { $("live").checked = localStorage.getItem("jot-live") === "1"; } catch (e) { /* ignore */ }
-drawPresets(); drawReports(); drawHistory(); setLive($("live").checked);
+try { $("live").checked = localStorage.getItem("jot-live") !== "0"; } catch (e) { $("live").checked = true; }
+drawPicker([]); drawReports(); drawHistory();
+showPage(location.hash.slice(1));
 runSql(PRESETS[0].sql, PRESETS[0]);
 tick();
 </script>
