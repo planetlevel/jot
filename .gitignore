@@ -46,3 +46,5 @@ dashboard/.env
 # TicketBook demo webapp, copied in locally. Not committed until we decide whether to ship it.
 demo/ticketbook/webapp/
 demo/ticketbook/webapp.javax/
+dashboard/control.json
+dashboard/control.json.audit

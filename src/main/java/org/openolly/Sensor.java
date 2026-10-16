@@ -57,6 +57,10 @@ public class Sensor {
 
 	// -Djot.enforce=false makes every rule with an exception only report, nothing is stopped
 	private static volatile boolean enforceAll = !"false".equalsIgnoreCase( System.getProperty( "jot.enforce" ) );
+
+	// what the control file says, see ControlFile. The master switch, and this rule's own setting if it has one
+	private static volatile boolean controlMaster = true;
+	private volatile Boolean controlEnforce = null;
 	private boolean hasReturn = false;
 
 	private Pattern namePattern = Pattern.compile( "([a-z][a-z0-9]*\\-)*[a-z][a-z0-9]*");
@@ -444,9 +448,32 @@ public class Sensor {
 		return this;
 	}
 
-	/** True if a violation of this rule stops the call. */
+	/**
+	 * True if a violation of this rule stops the call. Either master switch being off turns every rule off,
+	 * and the control file can't turn on what -Djot.enforce=false turned off. Otherwise the control file's
+	 * setting for this rule wins over the .jot file's, so a rule written with enforce: false can be switched
+	 * on while the application runs.
+	 */
 	public boolean isEnforced() {
-		return enforceAll && !Boolean.FALSE.equals( enforce );
+		if ( !enforceAll || !controlMaster ) return false;
+		if ( controlEnforce != null ) return controlEnforce;
+		return !Boolean.FALSE.equals( enforce );
+	}
+
+	/**
+	 * Applies settings from the control file. A rule that isn't in the map goes back to its .jot setting,
+	 * and names that match no sensor are ignored.
+	 */
+	public static void applyControl(boolean master, java.util.Map<String, Boolean> rules) {
+		controlMaster = master;
+		for ( Sensor s : sensors ) {
+			s.controlEnforce = rules.get( s.getName() );
+		}
+	}
+
+	/** Whether the control file's master switch has enforcement on. */
+	public static boolean isControlMasterOn() {
+		return controlMaster;
 	}
 
 	/** Set whether rules are enforced at all, the same as -Djot.enforce. */

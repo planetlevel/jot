@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS sensors (
   methods TEXT,         -- JSON array
   scopes TEXT,          -- JSON array. The sensor only fires inside these methods
   captures TEXT,        -- JSON array of expressions
-  blocks TEXT,          -- the exception message if the sensor blocks, otherwise null
+  blocks TEXT,          -- the exception message if the sensor is a rule, otherwise null
+  enforce TEXT,         -- 'false' if the .jot file stages the rule as report only, otherwise null
   source TEXT
 );
 
@@ -93,6 +94,9 @@ def connect(path):
 
 
 def init(db):
+    # these two are filled again from the .jot files at every start, so an older layout can simply be replaced
+    db.execute("DROP TABLE IF EXISTS sensors")
+    db.execute("DROP TABLE IF EXISTS reports")
     db.executescript(SCHEMA)
     db.commit()
 
@@ -217,10 +221,11 @@ def load_sensors(db, paths):
         for s in _read_jot(f).get("sensors") or []:
             if not isinstance(s, dict) or not s.get("name") or s["name"] == "example":
                 continue
-            db.execute("INSERT OR REPLACE INTO sensors VALUES (?,?,?,?,?,?,?)", (
+            staged = "false" if s.get("enforce") is False else None
+            db.execute("INSERT OR REPLACE INTO sensors VALUES (?,?,?,?,?,?,?,?)", (
                 s["name"], s.get("description"), json.dumps(s.get("methods") or []),
                 json.dumps(s.get("scopes") or []), json.dumps(s.get("captures") or []),
-                s.get("exception"), os.path.basename(f)))
+                s.get("exception"), staged, os.path.basename(f)))
             loaded += 1
     db.commit()
     return loaded

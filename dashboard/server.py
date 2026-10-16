@@ -14,6 +14,7 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+import control as control_module
 import llm
 import store
 
@@ -56,10 +57,11 @@ class App:
     """Everything the dashboard does, apart from HTTP. The generate function is a parameter so tests
     can run without a model."""
 
-    def __init__(self, db_path, ingestor, generate=llm.generate):
+    def __init__(self, db_path, ingestor, generate=llm.generate, control=None):
         self.db_path = db_path
         self.ingestor = ingestor
         self.generate = generate
+        self.control = control      # a ControlStore, or None when --control wasn't given
 
     def sensors(self):
         db = sqlite3.connect(self.db_path)
@@ -87,6 +89,51 @@ class App:
             return out
         finally:
             db.close()
+
+    def rule_names(self):
+        """The sensors that are rules, meaning they have an exception. Only these can be switched."""
+        return [r["name"] for r in self.rules_declared()]
+
+    def rules_declared(self):
+        db = sqlite3.connect(self.db_path)
+        try:
+            return [{"name": n, "description": d, "message": m, "staged": e == "false"}
+                    for n, d, m, e in db.execute(
+                        "SELECT name, description, blocks, enforce FROM sensors WHERE blocks IS NOT NULL ORDER BY name")]
+        finally:
+            db.close()
+
+    def control_state(self):
+        """What the Enforcement panel shows. Each rule's setting is what the control file says, or else what its
+        .jot file says. An agent started with -Djot.enforce=false ignores all of it, and this can't see that."""
+        if self.control is None:
+            return {"enabled": False}
+        file = self.control.read()
+        counts = {}
+        recent = store.run_query(self.db_path, """
+            SELECT sensor, SUM(action = 'blocked'), SUM(action = 'monitored') FROM events
+            WHERE action IN ('blocked', 'monitored') AND ts > (strftime('%s','now') - 3600) * 1000
+            GROUP BY sensor""")["rows"]
+        for name, blocked, monitored in recent:
+            counts[name] = {"blocked": blocked or 0, "monitored": monitored or 0}
+        rules = []
+        for r in self.rules_declared():
+            setting = file["rules"].get(r["name"])
+            blocks = (setting if setting is not None else not r["staged"]) and file["enforce"]
+            rules.append({**r, "setting": setting, "mode": "block" if blocks else "monitor",
+                          "last_hour": counts.get(r["name"], {"blocked": 0, "monitored": 0})})
+        applied = store.run_query(self.db_path, """
+            SELECT ts, host, app, capture FROM events WHERE sensor = 'jot-control' ORDER BY pk DESC LIMIT 10""")["rows"]
+        return {"enabled": True, "writable": self.control.writable, "master": file["enforce"], "rules": rules,
+                "updated": file["updated"], "by": file["by"], "file_exists": file["exists"],
+                "applied": [{"ts": t, "host": h, "app": a, "change": c} for t, h, a, c in applied]}
+
+    def change_control(self, token, master, rules):
+        if self.control is None:
+            raise control_module.ControlError("this dashboard was started without --control")
+        self.control.check_token(token)
+        self.control.write(master=master, rules=rules, known_rules=self.rule_names())
+        return self.control_state()
 
     def report_summaries(self):
         """Report definitions for the model. Names and sensor names only, no data."""
@@ -204,6 +251,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.status())
             if url.path == "/api/reports":
                 return self._send(200, self.app.reports())
+            if url.path == "/api/control":
+                return self._send(200, self.app.control_state())
             if url.path == "/api/sensors":
                 return self._send(200, self.app.sensors())
             if url.path == "/api/recent":
@@ -229,8 +278,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.ask(body.get("question"), body.get("history") or []))
             if url.path == "/api/sql":
                 return self._send(200, self.app.sql(body.get("sql"), body.get("limit")))
+            if url.path == "/api/control":
+                token = self.headers.get("X-JOT-Admin")
+                return self._send(200, self.app.change_control(token, body.get("master"), body.get("rules")))
         except store.QueryError as e:
             return self._send(400, {"error": str(e)})
+        except control_module.ControlError as e:
+            code = 429 if "too many" in str(e) else 403 if "token" in str(e) else 400
+            return self._send(code, {"error": str(e)})
         except llm.LLMError as e:
             return self._send(502, {"error": str(e)})
         except (ValueError, AttributeError, TypeError):
@@ -256,6 +311,8 @@ def main(argv=None):
     p.add_argument("--host", default="127.0.0.1", help="address to listen on. There is no login, "
                    "so only change this on a network you trust")
     p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--control", help="control file that agents poll, to switch rules between monitor and block. "
+                   "Start each agent with -Djot.control=<this path>. Changes need JOT_DASHBOARD_ADMIN_TOKEN")
     p.add_argument("--env", default=os.path.join(HERE, ".env"),
                    help="file of KEY=VALUE settings, such as ANTHROPIC_API_KEY. Default dashboard/.env")
     args = p.parse_args(argv)
@@ -268,12 +325,19 @@ def main(argv=None):
     reports = store.load_reports(ingestor.db, args.jot)
     first = ingestor.poll()
     ingestor.start()
-    app = App(args.db, ingestor)
+    control = None
+    if args.control:
+        control = control_module.ControlStore(args.control, os.environ.get("JOT_DASHBOARD_ADMIN_TOKEN"))
+    app = App(args.db, ingestor, control=control)
 
     server = make_server(app, args.host, args.port)
     print("JOT dashboard on http://%s:%d" % (args.host, args.port))
     print("  following %s, %d events so far, %d sensor definitions, %d reports"
           % (", ".join(ingestor.patterns), first, loaded, reports))
+    if control and control.writable:
+        print("  enforcement can be changed, agents read %s. Every change is logged in %s" % (control.path, control.audit_path))
+    elif control:
+        print("  enforcement is read only because JOT_DASHBOARD_ADMIN_TOKEN is not set")
     if llm.configured():
         print("  questions go to %s. Only the table definitions, sensor descriptions and your questions are sent."
               % llm.model())

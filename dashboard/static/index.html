@@ -39,6 +39,7 @@
   @media (max-width: 960px) { main { grid-template-columns: minmax(0, 1fr); } }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
   .card + .card { margin-top: 16px; }
+  #controlCard { margin-bottom: 16px; }
   form.ask { display: flex; gap: 8px; }
   input[type=text], textarea { width: 100%; font: inherit; color: var(--text); background: var(--bg);
     border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
@@ -86,6 +87,20 @@
   .ev .cap { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
   .ev .site { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
   .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+  #control { margin-top: 16px; }
+  #control h3 { margin: 0; font-size: 15px; }
+  #control .head { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+  #control .head .spacer { flex: 1; }
+  #control input[type=password] { width: 200px; padding: 6px 10px; }
+  .rule { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 10px 0; border-top: 1px solid var(--line); align-items: center; }
+  .rule .name { font-weight: 600; overflow-wrap: anywhere; }
+  .rule .why, .rule .counts { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .rule .actions { display: flex; gap: 6px; grid-row: 1 / span 2; grid-column: 2; align-items: center; }
+  .rule button { padding: 4px 10px; font-size: 13px; }
+  .rule button.current { background: var(--code); color: var(--muted); cursor: default; }
+  .rule button.lower { border-color: var(--monitored); color: var(--monitored); }
+  .rule button.raise { border-color: var(--blocked); color: var(--blocked); }
+  .applied { color: var(--muted); font-size: 12px; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -97,6 +112,17 @@
 
 <main>
   <div>
+    <div class="card" id="controlCard" hidden>
+      <details id="controlDetails">
+        <summary><b>Enforcement</b> <span id="controlSummary" class="hint"></span></summary>
+        <div class="head" style="margin-top:10px">
+          <div class="hint" id="controlMaster"></div>
+          <span class="spacer"></span>
+          <input type="password" id="adminToken" autocomplete="off" placeholder="Admin token" aria-label="Admin token">
+        </div>
+        <div id="controlBody"></div>
+      </details>
+    </div>
     <div class="card">
       <form class="ask" id="askForm">
         <input type="text" id="question" autocomplete="off" aria-label="Ask a question"
@@ -161,9 +187,9 @@ const svgEl = (tag, attrs, text) => {
   return e;
 };
 
-async function api(path, body) {
+async function api(path, body, extraHeaders) {
   const opts = body === undefined ? {} : {
-    method: "POST", headers: { "Content-Type": "application/json", "X-JOT-Dashboard": "1" },
+    method: "POST", headers: { "Content-Type": "application/json", "X-JOT-Dashboard": "1", ...(extraHeaders || {}) },
     body: JSON.stringify(body),
   };
   const res = await fetch(path, opts);
@@ -181,6 +207,72 @@ function ago(ms) {
   return Math.round(s / 86400) + "d ago";
 }
 const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour12: false });
+
+// ---- enforcement. Agents read a control file, nothing here reaches an agent.
+let controlWritable = false;
+
+async function changeControl(change, confirmText) {
+  if (confirmText && !window.confirm(confirmText)) return;
+  const token = $("adminToken").value;
+  if (!token) { showControlMessage("Type the admin token first."); return; }
+  try {
+    drawControl(await api("/api/control", change, { "X-JOT-Admin": token }));
+  } catch (e) { showControlMessage(e.message); }
+}
+
+function showControlMessage(text) {
+  $("controlBody").prepend(el("div", { class: "error", text }));
+}
+
+function drawControl(c) {
+  $("controlCard").hidden = !c.enabled;
+  if (!c.enabled) return;
+  controlWritable = c.writable;
+  $("adminToken").hidden = !c.writable;
+  const blocking = c.rules.filter((r) => r.mode === "block").length;
+  $("controlSummary").textContent = c.master
+    ? blocking + " of " + c.rules.length + " rules blocking"
+    : "all rules report only";
+
+  const masterBtn = c.master
+    ? el("button", { class: "lower", text: "Report only, all rules", disabled: c.writable ? null : "",
+        onclick: () => changeControl({ master: false }, "Switch every rule to report only? Nothing will be blocked.") })
+    : el("button", { class: "raise", text: "Turn enforcement back on", disabled: c.writable ? null : "",
+        onclick: () => changeControl({ master: true }) });
+  $("controlMaster").replaceChildren(
+    c.writable ? "" : "Read only. Start the dashboard with JOT_DASHBOARD_ADMIN_TOKEN to allow changes. ", masterBtn);
+
+  const rows = c.rules.map((r) => {
+    const block = r.mode === "block";
+    const act = (label, value, cls, confirmText) => el("button", {
+      class: (block === value && c.master ? "current" : cls), text: label,
+      disabled: !c.writable || (block === value && c.master) ? "" : null,
+      onclick: () => changeControl({ rules: { [r.name]: value } }, confirmText) });
+    return el("div", { class: "rule" },
+      el("div", { class: "name" }, r.name + " ", el("span", { class: "badge " + (block ? "blocked" : "monitored"), text: block ? "block" : "monitor" })),
+      el("div", { class: "actions" },
+        act("Monitor", false, "lower", "Stop blocking " + r.name + "? It will only report."),
+        act("Block", true, "raise", null),
+        r.setting === null ? null : el("button", { text: "Use .jot setting", disabled: c.writable ? null : "",
+          onclick: () => changeControl({ rules: { [r.name]: null } }) })),
+      el("div", { class: "why", text: (r.description ? r.description + ". " : "") + r.message + (r.staged ? " (staged as report only in its .jot file)" : "") }),
+      el("div", { class: "counts", text: r.last_hour.blocked + " blocked, " + r.last_hour.monitored + " monitored in the last hour" }));
+  });
+  const applied = c.applied.length
+    ? el("div", { class: "applied" }, "Applied by agents, latest first. " + c.applied.slice(0, 4).map((a) =>
+        clock(a.ts) + " " + (a.app || "?") + " " + a.change).join(". "))
+    : el("div", { class: "applied", text: c.file_exists
+        ? "No agent has reported applying these settings yet. Agents need -Djot.control pointing at the control file."
+        : "No control file yet. It is created the first time you change something." });
+  $("controlBody").replaceChildren(
+    ...(rows.length ? rows : [el("div", { class: "empty", text: "No rules were found. A rule is a sensor with an exception." })]),
+    applied,
+    el("div", { class: "applied", text: "An agent started with -Djot.enforce=false ignores these settings." }));
+}
+
+async function refreshControl() {
+  try { drawControl(await api("/api/control")); } catch (e) { /* not available */ }
+}
 
 // ---- status and feed
 async function refreshStatus() {
@@ -386,7 +478,7 @@ function drawPresets() {
 
 async function tick() {
   try {
-    await Promise.all([refreshStatus(), refreshFeed()]);
+    await Promise.all([refreshStatus(), refreshFeed(), refreshControl()]);
     if ($("live").checked && current && !busy) {
       const r = await api("/api/sql", { sql: current.sql, limit: current.chart === "grid" ? 5000 : undefined });
       show(current, r);

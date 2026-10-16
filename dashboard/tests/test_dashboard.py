@@ -8,6 +8,7 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import time
 import threading
 import unittest
 import urllib.error
@@ -15,6 +16,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import control
 import llm
 import server
 import store
@@ -518,6 +520,189 @@ class EnvFileTests(unittest.TestCase):
             server.load_env(self.path)
         self.assertIn("chmod 600", err.getvalue())
         self.assertNotIn("abc", err.getvalue())
+
+
+RULES_JOT = """
+sensors:
+- name: 'rule-a'
+  description: 'blocks a'
+  exception: 'no a'
+- name: 'rule-b'
+  exception: 'no b'
+  enforce: false
+- name: 'just-watching'
+"""
+
+
+class ControlStoreTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = os.path.join(self.dir, "control.json")
+        self.control = control.ControlStore(self.path, token="s3cret-token")
+        self.known = ["rule-a", "rule-b"]
+
+    def files(self):
+        return sorted(os.listdir(self.dir))
+
+    def test_a_missing_file_means_the_defaults(self):
+        state = self.control.read()
+        self.assertEqual((True, {}, False), (state["enforce"], state["rules"], state["exists"]))
+
+    def test_writes_merge_and_null_goes_back_to_the_jot_setting(self):
+        self.control.write(rules={"rule-a": False}, known_rules=self.known)
+        self.control.write(master=False, rules={"rule-b": True}, known_rules=self.known)
+        state = self.control.read()
+        self.assertEqual((False, {"rule-a": False, "rule-b": True}), (state["enforce"], state["rules"]))
+        self.control.write(rules={"rule-a": None}, known_rules=self.known)
+        self.assertEqual({"rule-b": True}, self.control.read()["rules"])
+
+    def test_the_file_has_the_format_the_agent_reads(self):
+        self.control.write(master=True, rules={"rule-a": False}, known_rules=self.known, who="jeff")
+        with open(self.path) as f:
+            doc = json.load(f)
+        self.assertEqual(1, doc["v"])
+        self.assertEqual({"rule-a": False}, doc["rules"])
+        self.assertEqual("jeff", doc["by"])
+        self.assertEqual(0o644, os.stat(self.path).st_mode & 0o777)
+
+    def test_writing_leaves_no_temporary_files_behind(self):
+        self.control.write(rules={"rule-a": False}, known_rules=self.known)
+        self.assertEqual(["control.json", "control.json.audit"], self.files())
+
+    def test_every_change_is_logged_with_before_and_after(self):
+        self.control.write(rules={"rule-a": False}, known_rules=self.known, who="jeff")
+        self.control.write(master=False, known_rules=self.known, who="jeff")
+        with open(self.control.audit_path) as f:
+            entries = [json.loads(line) for line in f]
+        self.assertEqual(2, len(entries))
+        self.assertEqual({"enforce": True, "rules": {}}, entries[0]["before"])
+        self.assertEqual({"enforce": True, "rules": {"rule-a": False}}, entries[0]["after"])
+        self.assertEqual(False, entries[1]["after"]["enforce"])
+
+    def test_bad_changes_are_refused_and_change_nothing(self):
+        self.control.write(rules={"rule-a": False}, known_rules=self.known)
+        for kwargs in [{"rules": {"nobody": False}}, {"rules": {"rule-a": "no"}}, {"rules": []}, {"master": "off"}]:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(control.ControlError):
+                    self.control.write(known_rules=self.known, **kwargs)
+        self.assertEqual({"rule-a": False}, self.control.read()["rules"])
+
+    def test_a_corrupt_file_reads_as_the_defaults(self):
+        with open(self.path, "w") as f:
+            f.write("not json")
+        self.assertEqual((True, False), (self.control.read()["enforce"], self.control.read()["exists"]))
+
+    def test_the_token_is_checked(self):
+        self.control.check_token("s3cret-token")
+        for wrong in ["wrong", "", None, "s3cret-toke"]:
+            with self.assertRaises(control.ControlError):
+                self.control.check_token(wrong)
+
+    def test_without_a_token_nothing_can_change(self):
+        read_only = control.ControlStore(self.path, token=None)
+        self.assertFalse(read_only.writable)
+        with self.assertRaises(control.ControlError):
+            read_only.check_token("anything")
+
+    def test_repeated_wrong_tokens_lock_writing_even_for_the_right_one(self):
+        for _ in range(control.MAX_FAILURES):
+            with self.assertRaises(control.ControlError):
+                self.control.check_token("wrong")
+        with self.assertRaises(control.ControlError) as c:
+            self.control.check_token("s3cret-token")
+        self.assertIn("too many", str(c.exception))
+
+
+class ControlApiTests(unittest.TestCase):
+    def setUp(self):
+        self.env = Env()
+        jot = os.path.join(self.env.dir, "rules.jot")
+        with open(jot, "w") as f:
+            f.write(RULES_JOT)
+        store.load_sensors(self.env.ingestor.db, [jot])
+        self.control_path = os.path.join(self.env.dir, "control.json")
+        self.control = control.ControlStore(self.control_path, token="s3cret-token")
+        self.app = server.App(self.env.db, self.env.ingestor, control=self.control)
+        httpd = server.make_server(self.app, "127.0.0.1", 0)
+        self.port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = self.port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+
+    def call(self, body=None, token="s3cret-token"):
+        headers = {"Host": "127.0.0.1:%d" % self.port}
+        if body is not None:
+            headers.update({"Content-Type": "application/json", "X-JOT-Dashboard": "1"})
+            if token is not None:
+                headers["X-JOT-Admin"] = token
+        req = urllib.request.Request("http://127.0.0.1:%d/api/control" % self.port, headers=headers,
+                                     method="POST" if body is not None else "GET",
+                                     data=json.dumps(body).encode() if body is not None else None)
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, json.load(r)
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, json.load(e)
+
+    def modes(self, state):
+        return {r["name"]: r["mode"] for r in state["rules"]}
+
+    def test_only_rules_are_listed_and_a_staged_rule_starts_in_monitor(self):
+        code, state = self.call()
+        self.assertEqual(200, code)
+        self.assertEqual({"rule-a": "block", "rule-b": "monitor"}, self.modes(state))
+        self.assertTrue(state["writable"])
+
+    def test_switching_a_rule_changes_the_file_and_the_mode(self):
+        code, state = self.call({"rules": {"rule-a": False, "rule-b": True}})
+        self.assertEqual(200, code)
+        self.assertEqual({"rule-a": "monitor", "rule-b": "block"}, self.modes(state))
+        self.assertEqual({"rule-a": False, "rule-b": True}, self.control.read()["rules"])
+
+    def test_the_master_switch_makes_everything_monitor(self):
+        _, state = self.call({"master": False, "rules": {"rule-b": True}})
+        self.assertEqual({"rule-a": "monitor", "rule-b": "monitor"}, self.modes(state))
+        self.assertFalse(state["master"])
+
+    def test_changes_need_the_right_token(self):
+        for token in [None, "wrong", ""]:
+            code, body = self.call({"master": False}, token=token)
+            self.assertEqual(403, code)
+        self.assertFalse(self.control.read()["exists"])
+
+    def test_too_many_wrong_tokens_gets_429(self):
+        codes = [self.call({"master": False}, token="wrong")[0] for _ in range(control.MAX_FAILURES + 1)]
+        self.assertEqual(429, codes[-1])
+        self.assertEqual(429, self.call({"master": False})[0])
+
+    def test_unknown_rules_and_sensors_that_are_not_rules_are_refused(self):
+        for rule in ["nobody", "just-watching"]:
+            code, body = self.call({"rules": {rule: False}})
+            self.assertEqual(400, code, rule)
+        self.assertFalse(self.control.read()["exists"])
+
+    def test_without_a_control_file_the_panel_is_off(self):
+        app = server.App(self.env.db, self.env.ingestor)
+        self.assertEqual({"enabled": False}, app.control_state())
+
+    def test_read_only_when_no_token_was_given(self):
+        app = server.App(self.env.db, self.env.ingestor, control=control.ControlStore(self.control_path, token=None))
+        self.assertFalse(app.control_state()["writable"])
+        with self.assertRaises(control.ControlError):
+            app.change_control("anything", False, None)
+
+    def test_the_panel_shows_recent_violations_and_what_agents_applied(self):
+        now = int(time.time() * 1000)
+        self.env.write(event(1, sensor="rule-a", action="blocked", ts=now),
+                       event(2, sensor="rule-a", action="monitored", ts=now),
+                       event(3, sensor="rule-a", action="monitored", ts=now),
+                       event(4, sensor="jot-control", capture="rule-a=monitor", ts=now))
+        self.env.ingestor.poll()
+        state = self.app.control_state()
+        rule_a = next(r for r in state["rules"] if r["name"] == "rule-a")
+        self.assertEqual({"blocked": 1, "monitored": 2}, rule_a["last_hour"])
+        self.assertEqual("rule-a=monitor", state["applied"][0]["change"])
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")

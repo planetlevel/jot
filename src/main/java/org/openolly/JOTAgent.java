@@ -4,6 +4,7 @@ import java.lang.instrument.Instrumentation;
 
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.openolly.config.ConfigReader;
+import org.openolly.config.ControlFile;
 import org.openolly.reporting.EventBus;
 
 import com.google.common.flogger.FluentLogger;
@@ -28,6 +29,7 @@ public class JOTAgent {
 			EventBus.configureFromSystemProperties();
 			ConfigReader.init(yaml);
 			Instrumenter.instrument(inst, Sensor.getSensors());
+			ControlFile.startFromSystemProperties();
 		} catch (Exception e) {
 			//e.printStackTrace();
 			logger.atWarning().log( ExceptionUtils.getStackTrace(e) );

@@ -84,6 +84,7 @@ Choose where events go with system properties.
 | `jot.events` | `all` | `all`, or `violations` to only report monitored and blocked events |
 | `jot.queue.size` | `10000` | Events to buffer. If the queue fills up, new events are dropped and counted. |
 | `jot.enforce` | `true` | `false` makes every rule with an `exception` only report, see below |
+| `jot.control` | none | Control file the agent polls to switch rules between monitor and block while running, see below |
 | `jot.output.stack` | `25` | Stack frames to include in each `json` event. `0` leaves the stack out. |
 | `jot.app` | main class | Application name written to each `json` event |
 | `jot.host` | host name | Host name written to each `json` event |
@@ -136,6 +137,22 @@ have stopped and check it for false positives before turning it on.
 
 `jot.enforce=false` is a master switch. A rule can turn its own enforcement off with `enforce: false`, but it can't
 turn it back on when the master switch is off.
+
+### Switching while the application runs
+Start the agent with `-Djot.control=/etc/jot/control.json` and it reads that file once a second. This is how the
+dashboard switches rules between monitor and block. The agent only ever reads the file. It opens no port and accepts
+no connections, so nothing can reach into it.
+
+    {"v": 1, "enforce": true, "rules": {"cve-log4shell-no-exec": false}}
+
+`enforce` is the master switch, and when it is false every rule only reports. `rules` sets single rules, `false` to
+report only and `true` to block, and it takes priority over the rule's own `enforce:` in its .jot file. A rule that
+isn't listed goes back to its .jot setting. `-Djot.enforce=false` can't be overridden by the file.
+
+The agent fails safe. A file that is missing, unreadable, over 64 KB or invalid changes nothing, and the last good
+settings stay in force. Each change is logged as an event from the sensor `jot-control`. Because anyone who can write
+this file can switch protection off, keep it writable only by the account that manages JOT. The agent warns at startup if
+group or other users can write it.
 
 ## Servlet Applications
 JOT works with both `javax` (Tomcat 9 and earlier) and `jakarta` (Tomcat 10 and later) applications. Jakarta EE 9

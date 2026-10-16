@@ -26,6 +26,7 @@ Without a key the dashboard still works. The preset views and the SQL box don't 
 | `--log` | JSON event log to follow. May be a glob such as `'logs/*.jsonl'`, and may be given more than once. Default `jot-events.jsonl` |
 | `--jot` | A `.jot` file or a directory of them. The sensor names and descriptions help the model understand your questions. May be given more than once |
 | `--db` | SQLite file that holds the events. Default `jot-dashboard.db`. Delete it to start fresh |
+| `--control` | Control file agents poll, to switch rules between monitor and block. See below |
 | `--port`, `--host` | Where to listen. Default `127.0.0.1:8765`. See the note on access below |
 
 Environment variables are `ANTHROPIC_API_KEY`, `JOT_DASHBOARD_MODEL` (default `claude-sonnet-5-5`) and
@@ -62,6 +63,22 @@ refused by the database, not by checking the text. Queries are stopped after fiv
 
 Captured values come from your application's inputs and may be attacker controlled. The page only ever
 displays them as text.
+
+## Switching rules between monitor and block
+
+Start the dashboard with `--control /path/to/control.json` and `JOT_DASHBOARD_ADMIN_TOKEN` set, and start each
+application with `-Djot.control=/path/to/control.json`. The Enforcement panel then lists every rule, meaning every
+sensor that has an `exception`, with a Monitor and a Block button, a master switch that makes all rules report only,
+and how many violations each saw in the last hour. It also shows which changes agents have confirmed applying, taken
+from the `jot-control` events in their logs.
+
+Agents pull this. The dashboard writes the file and the agent reads it once a second. Nothing connects to an agent and
+agents accept no connections. The agent and the dashboard must share the file, so this suits one machine or a shared
+volume. Because anyone who can change the file can switch protection off, changes need the admin token (typed into the
+page, never stored), five wrong tokens lock changes for a minute, the file is replaced atomically, and every change is
+logged with before and after in `<control file>.audit`. Without the token variable the panel is read only.
+
+The panel shows what the file says. An agent started with `-Djot.enforce=false` ignores it.
 
 ## Access
 
