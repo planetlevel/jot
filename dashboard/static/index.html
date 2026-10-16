@@ -64,10 +64,10 @@
   @media (max-width: 960px) { .policy.has-detail { grid-template-columns: minmax(0, 1fr); } }
 
   form.ask { display: flex; gap: 8px; }
-  input[type=text], input[type=password], textarea, select {
+  input[type=text], input[type=search], input[type=password], textarea, select {
     font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
-  input[type=text], textarea { width: 100%; padding: 10px 12px; }
-  input[type=text]:focus, input[type=password]:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  input[type=text], input[type=search], textarea { width: 100%; padding: 10px 12px; }
+  input[type=text]:focus, input[type=search]:focus, input[type=password]:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
            border-radius: 8px; padding: 8px 14px; cursor: pointer; }
   button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
@@ -193,6 +193,7 @@
   #eventDrawer table.rel tr { cursor: pointer; }
   #eventDrawer table.rel tr:hover td { background: var(--code); }
   #eventDrawer table.rel tr.here td { background: var(--observed-bg); font-weight: 600; }
+  .updated { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
   tr.clickable { cursor: pointer; }
   tr.clickable:hover td { background: var(--code); }
   tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -220,6 +221,11 @@
              placeholder="Ask about your application, like: which routes use weak ciphers?">
       <button class="primary" id="askBtn" type="submit">Ask</button>
     </form>
+    <form class="ask" id="searchForm" style="margin-top:8px">
+      <input type="search" id="searchBox" autocomplete="off" aria-label="Search events"
+             placeholder="Search events, like: rsa   or   sensor:get-hashes -jasper   or   action:blocked">
+      <button type="submit" id="searchBtn">Search</button>
+    </form>
     <div class="row picker">
       <select id="reportSelect" aria-label="Views and reports"><option value="">Views and reports&hellip;</option></select>
     </div>
@@ -233,6 +239,8 @@
       <label class="refresh" title="Leave out what the JDK and the application server do on their own. An event stays if any frame of its stack is the application, even when libraries are in between. Blocked and reported events always show.">
         <input type="checkbox" id="appOnly"> App events only
       </label>
+      <span class="updated" id="updated" title="When the page last fetched new data"></span>
+      <button type="button" class="small" id="refreshBtn" title="Fetch the latest events now">Refresh</button>
       <label class="refresh" title="Run the current view again every 3 seconds, so new events show up on their own">
         <input type="checkbox" id="live"> Refresh every 3 seconds
       </label>
@@ -847,9 +855,28 @@ function setTimer() {
   timer = setInterval(tick, fast ? 3000 : 6000);
 }
 
+function stamp() { $("updated").textContent = "updated " + clock(Date.now()); }
+
+// fetch everything again right now, whether or not Refresh every 3 seconds is on
+async function refreshNow() {
+  const button = $("refreshBtn");
+  button.disabled = true;
+  try {
+    await Promise.all([refreshStatus(), refreshControl()]);
+    if (currentPage === "policy") await loadJots();
+    else if (current && !busy) {
+      const r = await api("/api/sql", { sql: current.sql, limit: current.chart === "grid" ? 5000 : undefined });
+      show(current, r);
+    }
+    stamp();
+  } catch (e) { showError(e.message); } finally { button.disabled = false; }
+}
+$("refreshBtn").addEventListener("click", refreshNow);
+
 async function tick() {
   try {
     await Promise.all([refreshStatus(), refreshControl()]);
+    stamp();
     if (currentPage === "policy") { await loadJots(); return; }
     // refresh the current view, unless someone is editing its SQL
     if ($("live").checked && current && !busy && !$("results").querySelector("details[open]")) {
@@ -863,6 +890,17 @@ $("live").addEventListener("change", (ev) => {
   try { localStorage.setItem("jot-live", ev.target.checked ? "1" : "0"); } catch (e) { /* ignore */ }
   setTimer();
 });
+// ---- search. The server turns the words into SQL, which then runs like any other view.
+async function search(query) {
+  if (busy || !query.trim()) return;
+  $("searchBtn").disabled = true;
+  try {
+    const r = await api("/api/search?q=" + encodeURIComponent(query));
+    const note = r.left_out ? r.left_out.toLocaleString() + " more matches are JDK and server events, left out by App events only." : "";
+    await runSql(r.sql, { title: "Search: " + query, chart: "table", explanation: note });
+  } catch (e) { showError(e.message); } finally { $("searchBtn").disabled = false; }
+}
+$("searchForm").addEventListener("submit", (ev) => { ev.preventDefault(); search($("searchBox").value); });
 $("askForm").addEventListener("submit", (ev) => { ev.preventDefault(); ask($("question").value); });
 $("reportSelect").addEventListener("change", (ev) => {
   const item = reportItems[Number(ev.target.value)];

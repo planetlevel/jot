@@ -414,6 +414,60 @@ def report_sql(rtype, rows, cols):
     raise ValueError("unknown report type %s" % rtype)
 
 
+# ---------------------------------------------------------------------------- search
+
+# word:value narrows by a field, for example sensor:get-hashes or action:blocked
+SEARCH_FIELDS = {"sensor": "contains", "action": "equals", "origin": "equals", "app": "equals", "run": "equals",
+                 "host": "equals", "trace": "number", "pid": "number"}
+# a plain word is looked for in all of these
+SEARCH_COLUMNS = ("capture", "message", "sensor", "action", "method_name", "call_site", "app_frame", "stack")
+SEARCH_TEXT = " || ' ' || ".join("COALESCE(%s, '')" % c for c in SEARCH_COLUMNS)
+MAX_TERMS = 10
+
+
+def search_terms(query):
+    """The words of a search, as (negated, field, text). Quotes keep a phrase together and a leading - excludes."""
+    words = re.findall(r'-?(?:\w+:)?"[^"]*"|\S+', query or "")
+    terms = []
+    for word in words[:MAX_TERMS]:
+        negated = word.startswith("-") and len(word) > 1
+        if negated:
+            word = word[1:]
+        field = None
+        m = re.match(r"^(\w+):(.*)$", word)
+        if m and m.group(1).lower() in SEARCH_FIELDS:
+            field, word = m.group(1).lower(), m.group(2)
+        word = word.strip().strip('"')
+        if word:
+            terms.append((negated, field, word))
+    return terms
+
+
+def _like(text):
+    return _lit("%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%") + " ESCAPE '\\'"
+
+
+def search_where(query):
+    """The condition for a search, every word must match. Raises ValueError when there is nothing to look for."""
+    terms = search_terms(query)
+    if not terms:
+        raise ValueError("type something to search for")
+    parts = []
+    for negated, field, text in terms:
+        if field is None:
+            cond = "(%s) LIKE %s" % (SEARCH_TEXT, _like(text))
+        elif SEARCH_FIELDS[field] == "number":
+            if not text.isdigit():
+                raise ValueError("%s: needs a number" % field)
+            cond = "%s = %d" % (field, int(text))
+        elif SEARCH_FIELDS[field] == "equals":
+            cond = "lower(COALESCE(%s, '')) = %s" % (field, _lit(text.lower()))
+        else:
+            cond = "COALESCE(%s, '') LIKE %s" % (field, _like(text))
+        parts.append("NOT " + cond if negated else cond)
+    return "\n  AND ".join(parts)
+
+
 # ---------------------------------------------------------------------------- queries
 
 class QueryError(Exception):

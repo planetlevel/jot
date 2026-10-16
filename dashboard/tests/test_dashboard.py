@@ -1320,5 +1320,78 @@ class EventViewerTests(unittest.TestCase):
         self.assertIn(">sensor<", head)
 
 
+class SearchTests(unittest.TestCase):
+    def setUp(self):
+        self.env = Env()
+        self.env.ingestor.app_prefixes = ("com.acme",)
+        self.app = server.App(self.env.db, self.env.ingestor)
+        app_stack = ["java.base/java.security.MessageDigest.getInstance(M.java:1)", "com.acme.Ticket.save(Ticket.java:9)"]
+        jdk_stack = ["java.base/sun.security.rsa.RSASignature.<init>(RSASignature.java:81)", "java.base/java.lang.Thread.run(Thread.java:833)"]
+        self.env.write(event(1, sensor="get-hashes", capture="SHA-256", stack=app_stack),
+                       event(2, sensor="get-hashes", capture="MD5", stack=app_stack),
+                       event(3, sensor="get-hashes", capture="SHA-256", stack=jdk_stack),
+                       event(4, sensor="block-exec", capture="[[/usr/bin/open]]", action="blocked", message="100% stopped", stack=app_stack),
+                       event(5, sensor="get-ciphers", capture="RSA/ECB", trace=2, stack=app_stack))
+        self.env.ingestor.poll()
+
+    def pks(self, sql):
+        return ",".join(str(r[0]) for r in self.app.sql(sql)["rows"]) or "-1"
+
+    def found(self, query):
+        rows = self.env.ingestor.db.execute("SELECT id FROM events_raw WHERE pk IN (%s)" % self.pks(self.app.search(query)["sql"])).fetchall()
+        return sorted(r[0] for r in rows)
+
+    def test_a_word_is_found_in_the_capture_the_message_and_the_stack(self):
+        self.assertEqual([1], self.found("sha-256"), "event 3 matches too, but has no frame from the application")
+        self.assertEqual([4], self.found("stopped"))
+        self.assertEqual([5], self.found("ecb"))
+        self.assertEqual([1, 2, 4, 5], self.found("Ticket.save"))
+
+    def test_every_word_must_match_and_a_dash_excludes(self):
+        self.assertEqual([1], self.found("hash sha"))
+        self.assertEqual([2], self.found("hash -sha"))
+        self.assertEqual([], self.found("sha md5"))
+
+    def test_a_field_narrows_the_search(self):
+        self.assertEqual([4], self.found("action:blocked"))
+        self.assertEqual([1, 2], self.found("sensor:hash"))
+        self.assertEqual([5], self.found("trace:2"))
+        self.assertEqual([], self.found("action:block"), "equals, not contains")
+
+    def test_quotes_percent_and_underscore_are_plain_text(self):
+        self.assertEqual([4], self.found("100%"))
+        self.assertEqual([], self.found("o'brien"))
+        self.assertEqual([], self.found("get_hashes"), "an underscore is not a wildcard")
+        self.assertEqual([1, 2], self.found("get-hashes"))
+        before = self.env.ingestor.db.execute("SELECT COUNT(*) FROM events_raw").fetchone()[0]
+        self.found("x'; DROP TABLE events_raw; --")
+        self.assertEqual(before, self.env.ingestor.db.execute("SELECT COUNT(*) FROM events_raw").fetchone()[0])
+
+    def test_matches_the_filter_leaves_out_are_counted(self):
+        r = self.app.search("sha-256")
+        self.assertEqual((1, 1), (r["matches"], r["left_out"]))
+        self.app.set_app_only(False)
+        r = self.app.search("sha-256")
+        self.assertEqual((2, 0), (r["matches"], r["left_out"]))
+
+    def test_nothing_to_search_for_is_refused(self):
+        for q in ("", "   ", "trace:abc"):
+            with self.assertRaises(ValueError):
+                self.app.search(q)
+
+    def test_over_http(self):
+        httpd = server.make_server(self.app, "127.0.0.1", 0)
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        get = lambda path: urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), headers={"Host": "127.0.0.1:%d" % port}))
+        with get("/api/search?q=md5") as r:
+            self.assertEqual(1, json.load(r)["matches"])
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            get("/api/search?q=")
+        self.assertEqual(400, ctx.exception.code)
+
+
 if __name__ == "__main__":
     unittest.main()

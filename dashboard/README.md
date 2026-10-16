@@ -48,6 +48,19 @@ Turn it off and the view stays put while you look at it.
 Events from several applications can share one dashboard. Each event records its host, process and
 application, and events with the same `run` and `trace` came from the same request.
 
+## Searching and refreshing
+
+The search box under the question box finds individual events, newest first, and each row opens in the event viewer.
+Every word has to match somewhere in the event, in its capture, message, sensor, call site or stack, so `rsa`
+finds anything with RSA in it and `hash jar` needs both. Put quotes around a phrase, and a leading `-` leaves out
+what follows, like `-jasper`. A `field:value` narrows to one field. The fields are `sensor` (contains), `action`,
+`origin`, `app`, `run` and `host` (exact), and `trace` and `pid` (a number). For example `sensor:get-hashes action:observed -jasper`.
+The search honors Clear and App events only, and says how many more matches the filter left out.
+
+**Refresh** fetches the latest events now, and the time beside it says when the page last fetched. With
+**Refresh every 3 seconds** ticked, which is the default, the current view and the counts are fetched every 3 seconds.
+With it unticked only the counts update, every 6 seconds, and the view waits for the button.
+
 ## Clearing
 
 The **Clear** button on the Events page hides everything recorded so far, so the views, charts, reports, rule counts

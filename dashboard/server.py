@@ -178,6 +178,17 @@ class App:
                 limit=200)["rows"]
         return e
 
+    def search(self, query):
+        """The SQL that finds the events matching a search, newest first, and how many more matches the App events only
+        filter leaves out. The dashboard runs the SQL like any other view, so it also refreshes and shows its SQL."""
+        where = store.search_where(query)
+        sql = ("SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, sensor, capture,\n"
+               "       call_site_name AS call_site, message\nFROM events\nWHERE %s\nORDER BY ts DESC LIMIT 500" % where)
+        since = store.get_since(self.db_path) or 0
+        shown = store.run_query(self.db_path, "SELECT COUNT(*) FROM events WHERE %s" % where)["rows"][0][0]
+        every = store.run_query(self.db_path, "SELECT COUNT(*) FROM events_raw WHERE ts >= %d AND %s" % (since, where))["rows"][0][0]
+        return {"sql": sql, "matches": shown, "left_out": every - shown}
+
     def set_app_only(self, on):
         """Leave out observed events that have no frame from the application, which is everything the JDK and the
         application server do on their own. Blocked and reported events always show."""
@@ -364,6 +375,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.control_state())
             if url.path == "/api/sensors":
                 return self._send(200, self.app.sensors())
+            if url.path == "/api/search":
+                return self._send(200, self.app.search(parse_qs(url.query).get("q", [""])[0]))
             if url.path == "/api/event":
                 try:
                     return self._send(200, self.app.event(parse_qs(url.query).get("pk", [""])[0]))
