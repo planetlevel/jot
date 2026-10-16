@@ -88,7 +88,8 @@
   label.refresh { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
   .result h2 { margin: 0 0 2px; font-size: 17px; }
   .explain { color: var(--muted); margin: 0 0 12px; }
-  .tablewrap { overflow: auto; max-height: 560px; border: 1px solid var(--line); border-radius: 8px; }
+  /* no height limit, a table that scrolls inside the page hides its last rows, so the page itself scrolls. */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   th { position: sticky; top: 0; background: var(--panel); text-align: left; border-bottom: 1px solid var(--line); padding: 6px 10px; white-space: nowrap; }
   td { padding: 5px 10px; border-bottom: 1px solid var(--line); vertical-align: top; max-width: 460px; overflow-wrap: anywhere; }

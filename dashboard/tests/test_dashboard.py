@@ -941,6 +941,8 @@ class HttpTests(unittest.TestCase):
         self.assertIn(b"white-space: nowrap; display: inline-block;", page)     # badges must not wrap
         # the token field keeps its own width, a full width text input pushed the Show and Hide button down a line
         self.assertIn(b"#tokenBox input { width: 240px;", page)
+        # tables must not scroll inside the page, an earlier height limit hid the last rows
+        self.assertNotIn(b"max-height: 560px", page)
         # recent questions live in the top menu, not on the page
         self.assertIn(b'id="recentMenu"', page)
         self.assertNotIn(b'id="history"', page)
