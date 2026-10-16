@@ -12,7 +12,11 @@ performs one of those capabilities throws, so the library keeps working, but wha
 doesn't. For example JNDI lookups stay allowed in Log4j, and starting a process from inside JndiLookup.lookup
 does not. The rule is named for the shield, like cve-2021-44228.
 
-A shield with no disallowed capabilities has nothing to sandbox. With --observe it becomes a sensor with no
+vulnpoint can fail to tie an active policy to its shield, for example when the policy names a method the shield
+doesn't list, and the shield then says nothing is disallowed. So the active policy in data/policies is read as well,
+and its methods are added to the scope.
+
+A shield with no disallowed capabilities and no policy has nothing to sandbox. With --observe it becomes a sensor with no
 exception, which records that the vulnerable code was reached.
 
     tools/vulnpoint2jot.py CVE-2021-44228 CVE-2021-39144 -o cves
@@ -46,6 +50,19 @@ def load_catalog(vulnpoint):
     return {k: v for k, v in catalog.items() if not k.startswith("comment_")}
 
 
+def load_policy(vulnpoint, cve):
+    """The active policy entries for a CVE, as (entry method, capabilities). An entry that denies nothing, or one
+    that isn't active, is left out."""
+    path = os.path.join(vulnpoint, "data", "policies", cve + ".json")
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        policy = json.load(f)
+    if policy.get("status") != "active":
+        return []
+    return [(m["entry_method"], sorted(m["policy"]["deny"])) for m in policy.get("methods", []) if m["policy"].get("deny")]
+
+
 def sinks_for(capabilities, catalog):
     found = []
     for cap in capabilities:
@@ -65,40 +82,60 @@ def lines(items, indent="  "):
     return "".join("%s- %s\n" % (indent, q(i)) for i in items)
 
 
-def rule(shield, catalog, deny, observe):
-    """The text of one sensor, or None when the shield has nothing to sandbox and observe wasn't asked for."""
-    name = shield["id"].lower()
+def scope_groups(shield, policy, deny):
+    """The scope methods that disallow something, grouped by what they disallow, as {capabilities: [methods]}.
+    These come from the shield. A policy entry whose method the shield doesn't list is added as well, which is the
+    case when vulnpoint couldn't match the policy to the shield and left the shield monitor only."""
+    groups, seen = {}, set()
+    for m in shield["scope_methods"]:
+        if m["disallowed_capabilities"]:
+            groups.setdefault(tuple(sorted(m["disallowed_capabilities"])), []).append(m["method"])
+            seen.add(m["method"])
+    unmatched = [(method, caps) for method, caps in policy if method not in seen]
+    for method, caps in unmatched:
+        groups.setdefault(tuple(caps), []).append(method)
+    return groups, bool(unmatched)
+
+
+def rule(shield, catalog, deny, observe, policy=()):
+    """The text of the sensors for one shield, or None when it has nothing to sandbox and observe wasn't asked for.
+    A shield whose methods disallow different things gives one sensor for each, named id, id-2, id-3."""
+    base = shield["id"].lower()
     library = shield["target_library"]
     scope_methods = shield["scope_methods"]
-    with_caps = [m for m in scope_methods if m["disallowed_capabilities"]]
-    caps = sorted({c for m in with_caps for c in m["disallowed_capabilities"]})
+    groups, from_policy = scope_groups(shield, policy, deny)
     overridden = False
-    if not caps and deny:
-        caps, with_caps, overridden = sorted(deny), scope_methods, True
+    if not groups and deny:
+        groups, overridden = {tuple(sorted(deny)): [m["method"] for m in scope_methods]}, True
     behavior = shield.get("max_supported_behavior", "MONITOR")
-
     header = "# %s %s\n# %s %s\n" % (shield["cve"], shield.get("title") or "", library["package_coordinates"],
                                      library.get("display_version_range") or "")
-    if caps:
+    texts = []
+    for n, (caps, methods) in enumerate(groups.items(), 1):
         sinks = sinks_for(caps, catalog)
         if not sinks:
-            return None
-        text = header
+            continue
+        name = base if n == 1 else "%s-%d" % (base, n)
+        text = header if not texts else ""
         if overridden:
             text += "# vulnpoint has no policy for this CVE, so the disallowed capabilities were given with --deny\n"
+        if from_policy and not overridden:
+            text += "# scope from the vulnpoint policy, its shield doesn't list this method\n"
         text += "- name: %s\n" % q(name)
+        short = sorted({jot_method(m).rsplit(".", 2)[-2] + "." + jot_method(m).rsplit(".", 1)[-1] for m in methods})
         text += "  description: %s\n" % q("%s microsandbox. Inside %s, these are not allowed: %s" % (
-            shield["cve"], ", ".join(sorted({m["method"].rsplit(".", 2)[-2] + "." + m["method"].rsplit(".", 1)[-1] for m in with_caps})),
-            ", ".join(caps)))
+            shield["cve"], ", ".join(short), ", ".join(caps)))
         text += "  methods:\n" + lines(sinks)
-        text += "  scopes:\n" + lines(jot_method(m["method"]) for m in with_caps)
+        text += "  scopes:\n" + lines(jot_method(m) for m in methods)
         text += "  captures:\n  - \"#ARGS\"\n"
-        text += "  exception: %s\n" % q("%s microsandbox blocked %s" % (shield["cve"], " and ".join(caps) if len(caps) < 3 else ", ".join(caps)))
-        if behavior != "BLOCK" or overridden:
+        text += "  exception: %s\n" % q("%s microsandbox blocked %s" % (shield["cve"], ", ".join(caps)))
+        if (behavior != "BLOCK" and not from_policy) or overridden:
             text += "  enforce: false\n"   # reports what it would have blocked until someone turns it on
-        return text
+        texts.append(text)
+    if texts:
+        return "\n".join(texts)
     if observe:
-        text = header + "- name: %s\n" % q(name)
+        text = header + "- name: %s\n" % q(base)
         text += "  description: %s\n" % q("%s. The vulnerable code was reached" % shield["cve"])
         text += "  methods:\n" + lines(jot_method(m["method"]) for m in scope_methods)
         text += "  captures:\n  - \"#ARGS\"\n"
@@ -106,10 +143,13 @@ def rule(shield, catalog, deny, observe):
     return None
 
 
-def convert(path, catalog, deny, observe):
+def convert(path, catalog, deny, observe, vulnpoint=None):
     with open(path) as f:
         data = json.load(f)
-    texts = [t for t in (rule(s, catalog, deny, observe) for s in data["shields"]) if t]
+    policy = load_policy(vulnpoint, os.path.basename(path)[:-5]) if vulnpoint else []
+    # a policy can only be tied to a shield by its method, so with several shields it is added to none of them
+    given = policy if len(data["shields"]) == 1 else []
+    texts = [t for t in (rule(s, catalog, deny, observe, given) for s in data["shields"]) if t]
     return "sensors:\n" + "\n".join(texts) if texts else None
 
 
@@ -140,7 +180,7 @@ def main():
             print("no shield for %s" % os.path.basename(path)[:-5], file=sys.stderr)
             skipped += 1
             continue
-        text = convert(path, catalog, deny, args.observe)
+        text = convert(path, catalog, deny, args.observe, args.vulnpoint)
         if text is None:
             skipped += 1
             continue

@@ -7,7 +7,7 @@ These files are generated, don't edit them. The source of truth is the shield da
 where each CVE lives and what its code must not do there.
 
     tools/vulnpoint2jot.py CVE-2021-44228 CVE-2021-39144 -o cves     # needs ../vulnpoint
-    tools/vulnpoint2jot.py --all -o /tmp/all-cves                    # every CVE vulnpoint has a policy for
+    tools/vulnpoint2jot.py --all -o /tmp/all-cves                    # every CVE vulnpoint has an active policy for, 94 of them
 
 Run an application with a rule by pointing the agent at the file, or at this folder for all of them.
 

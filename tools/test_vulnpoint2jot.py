@@ -75,6 +75,43 @@ class Vulnpoint2JotTests(unittest.TestCase):
         rules = parsed("sensors:\n" + "\n".join(v.rule(x, CATALOG, [], False) for x in (a, b)))
         self.assertEqual(["cve-2026-1111-spring5", "cve-2026-1111-spring6"], [r["name"] for r in rules])
 
+    def test_an_active_policy_the_shield_did_not_pick_up_is_added_to_the_scope(self):
+        monitor_only = shield("CVE-2014-0114", "MONITOR", [{"method": "a.PropertyUtilsBean.reset", "disallowed_capabilities": []}])
+        policy = [("a.BeanUtilsBean.setProperty", ["jndi", "process"])]
+        text = v.rule(monitor_only, CATALOG, [], False, policy)
+        (s,) = parsed("sensors:\n" + text)
+        self.assertEqual(["a.BeanUtilsBean.setProperty"], s["scopes"])
+        self.assertIn("javax.naming.Context.lookup", s["methods"])
+        self.assertNotIn("enforce", s, "the policy is active, so it blocks")
+        self.assertIn("vulnpoint policy", text)
+
+    def test_a_policy_for_a_method_the_shield_already_has_is_not_added_twice(self):
+        policy = [("org.apache.logging.log4j.core.lookup.JndiLookup.lookup", ["process", "scripting"])]
+        (s,) = parsed("sensors:\n" + v.rule(shield(), CATALOG, [], False, policy))
+        self.assertEqual(1, len(s["scopes"]))
+
+    def test_methods_that_disallow_different_things_get_a_sensor_each(self):
+        two = shield(scopes=[{"method": "a.B.one", "disallowed_capabilities": ["process"]},
+                             {"method": "a.B.two", "disallowed_capabilities": ["jndi"]}])
+        rules = parsed("sensors:\n" + v.rule(two, CATALOG, [], False))
+        self.assertEqual(["cve-2021-44228", "cve-2021-44228-2"], [r["name"] for r in rules])
+        self.assertEqual([["a.B.one"], ["a.B.two"]], [r["scopes"] for r in rules])
+        self.assertNotIn("javax.naming.Context.lookup", rules[0]["methods"])
+
+    def test_policies_are_read_only_when_active_and_only_when_they_deny_something(self):
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "data", "policies"))
+            def write(cve, status, deny):
+                with open(os.path.join(root, "data", "policies", cve + ".json"), "w") as f:
+                    json.dump({"cve_id": cve, "status": status, "methods": [{"entry_method": "a.B.c", "policy": {"deny": deny}}]}, f)
+            write("CVE-1", "active", ["process", "jndi"])
+            write("CVE-2", "unblockable", ["process"])
+            write("CVE-3", "active", [])
+            self.assertEqual([("a.B.c", ["jndi", "process"])], v.load_policy(root, "CVE-1"))
+            self.assertEqual([], v.load_policy(root, "CVE-2"))
+            self.assertEqual([], v.load_policy(root, "CVE-3"))
+            self.assertEqual([], v.load_policy(root, "CVE-4"))
+
     def test_files_are_written_from_a_vulnpoint_checkout(self):
         with tempfile.TemporaryDirectory() as root:
             os.makedirs(os.path.join(root, "shields", "java"))
