@@ -48,3 +48,4 @@ demo/ticketbook/webapp/
 demo/ticketbook/webapp.javax/
 dashboard/control.json
 dashboard/control.json.audit
+hs_err_pid*.log
