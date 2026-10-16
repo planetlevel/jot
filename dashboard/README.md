@@ -16,6 +16,9 @@ Then start the dashboard and open http://localhost:8765.
     export ANTHROPIC_API_KEY=...        # only needed for natural language questions
     python3 server.py --log /var/log/jot/app.jsonl --jot ../src/main/resources
 
+Instead of exporting the key you can keep it in `dashboard/.env`, which git ignores and the server reads at
+startup. Copy `.env.example`, fill it in, and run `chmod 600 .env`. A variable set in your shell wins over the file.
+
 Without a key the dashboard still works. The preset views and the SQL box don't use a model.
 
 | Option | Description |

@@ -40,3 +40,5 @@ dashboard/*.db
 dashboard/*.db-*
 dashboard/**/__pycache__
 jot-events.jsonl
+dashboard/.env
+.env

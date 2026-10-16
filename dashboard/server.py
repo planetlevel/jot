@@ -22,6 +22,35 @@ MAX_BODY = 64 * 1024
 MAX_REPAIRS = 2
 
 
+def load_env(path):
+    """Set environment variables from a KEY=VALUE file, such as the one that holds ANTHROPIC_API_KEY.
+    Variables already set in the environment win. Returns the names that were set."""
+    try:
+        with open(path) as f:
+            lines = f.read().splitlines()
+        mode = os.stat(path).st_mode
+    except OSError:
+        return []
+    if mode & 0o077:
+        print("[dashboard] %s can be read by other users, run: chmod 600 %s" % (path, path), file=sys.stderr)
+    names = []
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key.startswith("export "):
+            key = key[len("export "):].strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = value
+            names.append(key)
+    return names
+
+
 class App:
     """Everything the dashboard does, apart from HTTP. The generate function is a parameter so tests
     can run without a model."""
@@ -182,7 +211,12 @@ def main(argv=None):
     p.add_argument("--host", default="127.0.0.1", help="address to listen on. There is no login, "
                    "so only change this on a network you trust")
     p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--env", default=os.path.join(HERE, ".env"),
+                   help="file of KEY=VALUE settings, such as ANTHROPIC_API_KEY. Default dashboard/.env")
     args = p.parse_args(argv)
+    loaded_env = load_env(args.env)
+    if loaded_env:
+        print("  read %s from %s" % (", ".join(loaded_env), args.env))
 
     ingestor = store.Ingestor(args.db, args.log or ["jot-events.jsonl"])
     loaded = store.load_sensors(ingestor.db, args.jot)

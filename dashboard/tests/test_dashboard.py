@@ -1,4 +1,6 @@
+import contextlib
 import http.server
+import io
 import json
 import os
 import sys
@@ -335,6 +337,49 @@ class ModelApiTests(unittest.TestCase):
         os.environ["JOT_DASHBOARD_MODEL"] = "claude-opus-5-5"
         llm.generate("q", "s", [])
         self.assertEqual("claude-opus-5-5", fake.requests[0][1]["model"])
+
+
+class EnvFileTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = os.path.join(self.dir, ".env")
+        self.names = ["JOT_T_PLAIN", "JOT_T_QUOTED", "JOT_T_SINGLE", "JOT_T_EXPORTED", "JOT_T_EXISTING", "JOT_T_EQ"]
+        for n in self.names:
+            os.environ.pop(n, None)
+        self.addCleanup(lambda: [os.environ.pop(n, None) for n in self.names])
+
+    def write(self, text, mode=0o600):
+        with open(self.path, "w") as f:
+            f.write(text)
+        os.chmod(self.path, mode)
+
+    def test_reads_values_comments_quotes_and_export(self):
+        self.write("# a comment\n\nJOT_T_PLAIN=abc\nJOT_T_QUOTED=\"with space\"\nJOT_T_SINGLE='x'\n"
+                   "export JOT_T_EXPORTED=yes\nJOT_T_EQ=a=b=c\nnot a setting\n")
+        names = server.load_env(self.path)
+        self.assertEqual(["JOT_T_PLAIN", "JOT_T_QUOTED", "JOT_T_SINGLE", "JOT_T_EXPORTED", "JOT_T_EQ"], names)
+        self.assertEqual("abc", os.environ["JOT_T_PLAIN"])
+        self.assertEqual("with space", os.environ["JOT_T_QUOTED"])
+        self.assertEqual("x", os.environ["JOT_T_SINGLE"])
+        self.assertEqual("yes", os.environ["JOT_T_EXPORTED"])
+        self.assertEqual("a=b=c", os.environ["JOT_T_EQ"])
+
+    def test_the_environment_wins_over_the_file(self):
+        os.environ["JOT_T_EXISTING"] = "from-shell"
+        self.write("JOT_T_EXISTING=from-file\n")
+        self.assertEqual([], server.load_env(self.path))
+        self.assertEqual("from-shell", os.environ["JOT_T_EXISTING"])
+
+    def test_a_missing_file_is_fine(self):
+        self.assertEqual([], server.load_env(os.path.join(self.dir, "nope")))
+
+    def test_warns_when_others_can_read_the_file(self):
+        self.write("JOT_T_PLAIN=abc\n", mode=0o644)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            server.load_env(self.path)
+        self.assertIn("chmod 600", err.getvalue())
+        self.assertNotIn("abc", err.getvalue())
 
 
 class HttpTests(unittest.TestCase):
