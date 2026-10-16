@@ -1,0 +1,17 @@
+---
+# Java Observability Toolkit (JOT)
+# https://openo11y.org
+
+sensors:
+
+ - name: "get-hashes"
+   description: "Identifies hash algoritm usage"
+   methods:
+   - "java.security.MessageDigest.getInstance"
+   captures:
+   - "#P0"
+    
+reports:
+ - name: "Hash Usage"
+   type: "list"
+   cols: "get-hashes" 

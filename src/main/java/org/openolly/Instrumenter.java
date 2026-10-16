@@ -3,6 +3,7 @@ package org.openolly;
 import static net.bytebuddy.matcher.ElementMatchers.hasGenericSuperType;
 import static net.bytebuddy.matcher.ElementMatchers.isMethod;
 import static net.bytebuddy.matcher.ElementMatchers.named;
+import static net.bytebuddy.matcher.ElementMatchers.namedOneOf;
 import static net.bytebuddy.matcher.ElementMatchers.none;
 
 import java.lang.instrument.Instrumentation;
@@ -64,7 +65,7 @@ public class Instrumenter {
 
 			builder = builder
 				// add a sensor for every service method to start and stop a trace
-				.type(hasGenericSuperType(named("javax.servlet.Servlet")))
+				.type(hasGenericSuperType(namedOneOf("javax.servlet.Servlet", "jakarta.servlet.Servlet")))
 				.transform((b, td, cl, m, pd) -> b.visit(Advice.to(TraceAdvice.class).on(named("service").and(isMethod()))));
 
 			for (Sensor sensor : sensors ) {

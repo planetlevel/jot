@@ -108,6 +108,15 @@ about the event.
 The `dashboard` directory has a web app that loads the `json` event log into SQLite and answers questions
 about it in plain English, as live or historical tables and charts. See [dashboard/README.md](dashboard/README.md).
 
+## Servlet Applications
+JOT works with both `javax.servlet` (Tomcat 9 and earlier) and `jakarta.servlet` (Tomcat 10 and later). A sensor
+written with `javax.servlet.Servlet.service` also applies to `jakarta.servlet.Servlet.service`, and the other way
+round, so one .jot file works on either. The same goes for positive scopes. A negative scope such as
+`!javax.servlet.Servlet.service` is not mirrored, because "not inside javax" would be true inside the Jakarta one.
+
+The `demo/ticketbook` directory runs a sample servlet application under Tomcat 11 with JOT attached, for use with
+the dashboard. See `demo/ticketbook/run.sh`.
+
 ## Advanced Options
 Set `-Djot.verbose=true` to report instrumentation errors. By default JOT suppresses them so that
 a problem in a JOT can never break your application, which also means a rule that fails to apply

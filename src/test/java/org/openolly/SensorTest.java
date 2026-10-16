@@ -208,4 +208,62 @@ class SensorTest {
 		Assertions.assertTrue( result.get().isEmpty() );
 	}
 
+
+	private static java.util.List<String> names(java.util.List<MethodLocator> locators) {
+		java.util.List<String> out = new java.util.ArrayList<String>();
+		for ( MethodLocator l : locators ) out.add( l.className() + "." + l.methodName() );
+		return out;
+	}
+
+	@Test
+	void testServletMethodsApplyToBothJavaxAndJakarta() {
+		Sensor s = new Sensor().method( "javax.servlet.Servlet.service" );
+		Assertions.assertEquals( java.util.List.of( "javax.servlet.Servlet.service", "jakarta.servlet.Servlet.service" ),
+				names( s.getMethods() ) );
+		Assertions.assertEquals( 0, s.getMethods().get( 0 ).getIndex() );
+		Assertions.assertEquals( 1, s.getMethods().get( 1 ).getIndex() );
+	}
+
+	@Test
+	void testJakartaNamesAlsoApplyToJavax() {
+		Sensor s = new Sensor().method( "jakarta.servlet.ServletRequest.isUserInRole" );
+		Assertions.assertEquals( java.util.List.of( "jakarta.servlet.ServletRequest.isUserInRole",
+				"javax.servlet.ServletRequest.isUserInRole" ), names( s.getMethods() ) );
+	}
+
+	@Test
+	void testNamingBothSpellingsDoesNotInstrumentTwice() {
+		Sensor s = new Sensor().methods( java.util.List.of( "javax.servlet.Servlet.service", "jakarta.servlet.Servlet.service" ) );
+		Assertions.assertEquals( 2, s.getMethods().size() );
+	}
+
+	@Test
+	void testOtherMethodsAreNotAliased() {
+		Sensor s = new Sensor().method( "javax.crypto.Cipher.getInstance" ).method( "a.b.Servlet.service" );
+		Assertions.assertEquals( java.util.List.of( "javax.crypto.Cipher.getInstance", "a.b.Servlet.service" ), names( s.getMethods() ) );
+	}
+
+	@Test
+	void testScopesGetTheirOwnIndexAndPositiveServletScopesAreAliased() {
+		Sensor s = new Sensor().scope( "x.Y.z" ).scope( "javax.servlet.Servlet.service" );
+		Assertions.assertEquals( java.util.List.of( "x.Y.z", "javax.servlet.Servlet.service", "jakarta.servlet.Servlet.service" ),
+				names( s.getScopes() ) );
+		for ( int i = 0; i < 3; i++ ) Assertions.assertEquals( i, s.getScopes().get( i ).getIndex() );
+	}
+
+	@Test
+	void testNegativeServletScopesAreNotAliased() {
+		Sensor s = new Sensor().scope( "!javax.servlet.Servlet.service" );
+		Assertions.assertEquals( java.util.List.of( "javax.servlet.Servlet.service" ), names( s.getScopes() ) );
+		Assertions.assertTrue( s.getScopes().get( 0 ).isNegative() );
+	}
+
+	@Test
+	void testScopeInEitherServletFlavourEnablesTheSensor() {
+		Sensor s = new Sensor().method( "a.Class.method" ).capture( "#P0" ).scope( "javax.servlet.Servlet.service" );
+		s.getScopes().get( 1 ).enterScope();  // the jakarta one
+		Object ret = s.execute( "test", "sig", "foo", new String[] { "bar" }, "zoo", new Exception().getStackTrace() );
+		Assertions.assertEquals( "[bar]", SafeString.format( ret, false ) );
+	}
+
 }

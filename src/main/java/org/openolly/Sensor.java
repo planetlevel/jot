@@ -223,12 +223,37 @@ public class Sensor {
 		if (!methodPattern.matcher(value).matches()) {
 			logger.atWarning().log( "[JOT %s] YAML error: malformed method (" + value + ") must match " + methodPattern.pattern() + ". Continuing", this );
 		}
+		addMethod( value );
+		String alias = servletAlias( value );
+		if ( alias != null ) addMethod( alias );
+		return this;
+	}
+
+	private void addMethod(String value) {
+		for ( MethodLocator existing : methods ) {
+			if ( sameSignature( existing, value ) ) return;
+		}
 		MethodLocator loc = new MethodLocator( value );
 		methods.add( loc );
 		loc.setIndex( methods.indexOf( loc ) );
-		return this;
 	}
-	
+
+	private static boolean sameSignature(MethodLocator loc, String sig) {
+		MethodLocator other = new MethodLocator( sig );
+		return java.util.Objects.equals( loc.className(), other.className() )
+				&& java.util.Objects.equals( loc.methodName(), other.methodName() );
+	}
+
+	/**
+	 * The jakarta.servlet name for a javax.servlet one, and the other way round, so a JOT written
+	 * for either works on both. Applications before Servlet 6 use javax.servlet, later ones jakarta.servlet.
+	 */
+	static String servletAlias(String sig) {
+		if ( sig == null ) return null;
+		if ( sig.startsWith( "javax.servlet." ) ) return "jakarta" + sig.substring( "javax".length() );
+		if ( sig.startsWith( "jakarta.servlet." ) ) return "javax" + sig.substring( "jakarta".length() );
+		return null;
+	}
 	public Sensor methods( List<String> list ) {
 		if ( list == null || list.isEmpty() ) {
 			return this;
@@ -251,8 +276,20 @@ public class Sensor {
 		if (!methodPattern.matcher(value).matches()) {
 			logger.atWarning().log( "[JOT %s] YAML error: malformed scope (" + value + ") must match " + methodPattern.pattern(), this );
 		}
-		scopes.add(new MethodLocator(value, negative));
+		addScope( value, negative );
+		// a negative scope isn't aliased, "not in javax" or "not in jakarta" would be true inside either
+		String alias = negative ? null : servletAlias( value );
+		if ( alias != null ) addScope( alias, false );
 		return this;
+	}
+
+	private void addScope(String value, boolean negative) {
+		for ( MethodLocator existing : scopes ) {
+			if ( sameSignature( existing, value ) && existing.isNegative() == negative ) return;
+		}
+		MethodLocator loc = new MethodLocator( value, negative );
+		scopes.add( loc );
+		loc.setIndex( scopes.indexOf( loc ) );
 	}
 
 	public Sensor scopes( List<String> list ) {
