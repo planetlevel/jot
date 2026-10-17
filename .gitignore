@@ -53,6 +53,9 @@ hs_err_pid*.log
 !demo/ticketbook/webapp/**/*.class
 !demo/ticketbook/webapp/**/*.jar
 
+# A payload jar is fixture data, not a build artifact
+!payloads/**/*.jar
+
 # Python bytecode
 __pycache__/
 *.pyc
