@@ -52,3 +52,14 @@ hs_err_pid*.log
 # TicketBook needs its compiled classes and library jars, the rules above would drop them
 !demo/ticketbook/webapp/**/*.class
 !demo/ticketbook/webapp/**/*.jar
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Local databases, each person runs the dashboard against their own
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
