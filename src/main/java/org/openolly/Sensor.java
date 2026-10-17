@@ -7,6 +7,10 @@ import static net.bytebuddy.matcher.ElementMatchers.nameStartsWith;
 import static net.bytebuddy.matcher.ElementMatchers.nameContains;
 import static net.bytebuddy.matcher.ElementMatchers.named;
 import static net.bytebuddy.matcher.ElementMatchers.not;
+import static net.bytebuddy.matcher.ElementMatchers.declaresMethod;
+import static net.bytebuddy.matcher.ElementMatchers.isAbstract;
+import static net.bytebuddy.matcher.ElementMatchers.isDeclaredBy;
+import static net.bytebuddy.matcher.ElementMatchers.isMethod;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -33,6 +37,10 @@ import com.google.common.flogger.FluentLogger;
 import net.bytebuddy.agent.builder.AgentBuilder;
 import net.bytebuddy.asm.Advice;
 import net.bytebuddy.asm.AsmVisitorWrapper;
+import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.matcher.ElementMatcher;
+import net.bytebuddy.matcher.ElementMatchers;
 
 public class Sensor {
 
@@ -66,6 +74,7 @@ public class Sensor {
 	private Pattern namePattern = Pattern.compile( "([a-z][a-z0-9]*\\-)*[a-z][a-z0-9]*");
 	private Pattern descriptionPattern = Pattern.compile( "^.*$");
 	private Pattern methodPattern = Pattern.compile( "^(!)?([\\p{L}_$][\\p{L}\\p{N}_$]*\\.)*(<init>|[\\p{L}_$][\\p{L}\\p{N}_$]*)$");
+	private Pattern annotationPattern = Pattern.compile( "^@([\\p{L}_$][\\p{L}\\p{N}_$]*\\.)*[\\p{L}_$][\\p{L}\\p{N}_$]*$");
 	private Pattern capturePattern = Pattern.compile( "^.*$");
 	private Pattern exceptionPattern = Pattern.compile( "^.*$");
 
@@ -142,7 +151,21 @@ public class Sensor {
 		return stack;
 	}
 
-	public List<Object> execute(String advice, String caller, Object obj, Object[] params, Object ret, StackTraceElement[] stack) {			
+	public List<Object> execute(String advice, String caller, Object obj, Object[] params, Object ret, StackTraceElement[] stack) {
+		return execute( advice, caller, obj, params, ret, stack, null );
+	}
+
+	/**
+	 * The attributes of the annotation that selected the method at methodIndex, for a method written as
+	 * @the.Annotation. Null for any other method, which is the usual case, so this is cheap.
+	 */
+	public java.util.Map<String, Object> annotationFor(int methodIndex, Class<?> type, String name, String descriptor) {
+		MethodLocator loc = methods.get( methodIndex );
+		return loc.isAnnotation() ? loc.annotationValues( type, name, descriptor ) : null;
+	}
+
+	public List<Object> execute(String advice, String caller, Object obj, Object[] params, Object ret, StackTraceElement[] stack,
+			java.util.Map<String, Object> annotation) {
 
 		// no sensor fires while JOT's own code is running, in this sensor or any other
 		if ( JotScope.active() ) return new ArrayList<Object>();
@@ -165,7 +188,7 @@ public class Sensor {
 
 			for (Expression capture : captures) {
 				try {
-					Object o = capture.execute(obj, params, ret, caller, stack);
+					Object o = capture.execute(obj, params, ret, caller, stack, annotation);
 					
 					if ( o instanceof Collection ) {
 						for ( Object item : (Collection)o ) {
@@ -252,12 +275,14 @@ public class Sensor {
 			logger.atWarning().log( "[JOT %s] YAML error: at least one method is required. Continuing", this );
 			return this;
 		}		
-		if (!methodPattern.matcher(value).matches()) {
-			logger.atWarning().log( "[JOT %s] YAML error: malformed method (" + value + ") must match " + methodPattern.pattern() + ". Continuing", this );
+		boolean annotation = value.startsWith( "@" );
+		Pattern pattern = annotation ? annotationPattern : methodPattern;
+		if (!pattern.matcher(value).matches()) {
+			logger.atWarning().log( "[JOT %s] YAML error: malformed method (" + value + ") must match " + pattern.pattern() + ". Continuing", this );
 		}
 		addMethod( value );
-		String alias = jakartaAlias( value );
-		if ( alias != null ) addMethod( alias );
+		String alias = annotation ? jakartaAlias( value.substring( 1 ) ) : jakartaAlias( value );
+		if ( alias != null ) addMethod( annotation ? "@" + alias : alias );
 		return this;
 	}
 
@@ -333,6 +358,10 @@ public class Sensor {
 		if ( value.startsWith( "!" ) ) {
 			negative = true;
 			value = value.substring(1);
+		}
+		if ( value.startsWith( "@" ) ) {
+			logger.atWarning().log( "[JOT %s] YAML error: a scope can't be an annotation (" + value + "), use it in methods. Ignoring", this );
+			return this;
 		}
 		if (!methodPattern.matcher(value).matches()) {
 			logger.atWarning().log( "[JOT %s] YAML error: malformed scope (" + value + ") must match " + methodPattern.pattern(), this );
@@ -625,6 +654,23 @@ public class Sensor {
 	}
 	
 
+	/** By class, which includes its subtypes, or for @the.Annotation the classes that carry it or have a method that does. */
+	private static ElementMatcher<TypeDescription> typeMatcher(MethodLocator method) {
+		if ( !method.isAnnotation() ) return hasGenericSuperType(failSafe(named(method.className())));
+		ElementMatcher<TypeDescription> marked = named(method.annotationName());
+		ElementMatcher.Junction<TypeDescription> typeCarries = ElementMatchers.<TypeDescription>isAnnotatedWith(marked);
+		return failSafe(typeCarries.or(declaresMethod(ElementMatchers.<MethodDescription>isAnnotatedWith(marked))));
+	}
+
+	/** By method name, or for @the.Annotation the methods that carry it and the methods of a class that does. */
+	private static ElementMatcher<MethodDescription> methodMatcher(MethodLocator method) {
+		if ( !method.isAnnotation() ) return named(method.methodName());
+		ElementMatcher<TypeDescription> marked = named(method.annotationName());
+		ElementMatcher.Junction<TypeDescription> typeCarries = ElementMatchers.<TypeDescription>isAnnotatedWith(marked);
+		return failSafe(isMethod().and(not(isAbstract()))
+			.and(ElementMatchers.<MethodDescription>isAnnotatedWith(marked).or(isDeclaredBy(typeCarries))));
+	}
+
 	public AgentBuilder instrument(AgentBuilder builder ) {
 				
 		// global class ignores
@@ -640,6 +686,9 @@ public class Sensor {
 			logger.atWarning().log("INSTRUMENTING " + method.className() + " -> " + method.methodName() );
 			try {
 
+				final ElementMatcher<TypeDescription> typeMatcher = typeMatcher( method );
+				final ElementMatcher<MethodDescription> methodMatcher = methodMatcher( method );
+
 				// ignore methods listed as excludes in JOT rule
 				for ( MethodLocator eloc : this.getExcludes() ) {
 					//System.out.println ( "EXCLUDING: " + eloc.className() + " from " + method );
@@ -651,7 +700,7 @@ public class Sensor {
 				// transform constructors with JOT exception rule (CE)
 				if ( method.isConstructor() && hasException() ) {
 					builder = builder
-					.type(hasGenericSuperType(failSafe(named(method.className()))))
+					.type(typeMatcher)
 					.transform((b, td, cl, m, pd) -> b.visit( Advice
 						.withCustomMapping()
 						.bind(SensorIndexValue.class, this.getIndex() )
@@ -663,7 +712,7 @@ public class Sensor {
 				// transform constructors with no JOT exception rule (CNE)
 				else if ( method.isConstructor() ) {
 					builder = builder
-					.type(hasGenericSuperType(failSafe(named(method.className()))))
+					.type(typeMatcher)
 					.transform((b, td, cl, m, pd) -> b.visit( Advice
 						.withCustomMapping()
 						.bind(SensorIndexValue.class, this.getIndex() )
@@ -675,37 +724,37 @@ public class Sensor {
 				// transform methods with a return but no JOT exception (MR)
 				else if ( hasReturn() ) {
 					builder = builder
-					.type(hasGenericSuperType(failSafe(named(method.className()))))
+					.type(typeMatcher)
 					.transform((b, td, cl, m, pd) -> b.visit( Advice
 						.withCustomMapping()
 						.bind(SensorIndexValue.class, this.getIndex() )
 						.bind(MethodIndexValue.class, method.getIndex() )
 						.to(MRAdvice.class)
-							.on(named(method.methodName())) ) );
+							.on(methodMatcher) ) );
 				}
 				
 				// transform methods with no return and JOT exception rule (MVE)
 				else if ( hasException() ) {
 					builder = builder
-					.type(hasGenericSuperType(failSafe(named(method.className()))))
+					.type(typeMatcher)
 					.transform((b, td, cl, m, pd) -> b.visit( Advice
 						.withCustomMapping()
 						.bind(SensorIndexValue.class, this.getIndex() )
 						.bind(MethodIndexValue.class, method.getIndex() )
 						.to(MVEAdvice.class)
-							.on(named(method.methodName())) ) );
+							.on(methodMatcher) ) );
 				}
 				
 				// transform methods with no return and no JOT exception (MVNE)
 				else {
 					builder = builder
-					.type(hasGenericSuperType(failSafe(named(method.className()))))
+					.type(typeMatcher)
 					.transform((b, td, cl, m, pd) -> b.visit( Advice
 						.withCustomMapping()
 						.bind(SensorIndexValue.class, this.getIndex() )
 						.bind(MethodIndexValue.class, method.getIndex() )
 						.to(MVNEAdvice.class)
-							.on(named(method.methodName())) ) );
+							.on(methodMatcher) ) );
 				}
 				
 			} catch (Exception e) {

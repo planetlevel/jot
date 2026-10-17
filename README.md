@@ -242,6 +242,7 @@ sensors to perform limited actions within an application.
 	  methods: 
 	  - "a.b.c.Class.method"
 	  - "d.e.f.Class.method"
+	  - "@a.b.c.Annotation"                  # every method carrying this annotation, see below
 	  
 	  # Scopes allow you to limit when a sensor will fire.
 	  # A sensor will fire if it is invoked while "inside" one of the scopes. That is,
@@ -262,7 +263,8 @@ sensors to perform limited actions within an application.
 	  
 	  # Captures are the workhorse of JOT and are written in Spring Expression Language (SpEL)
 	  # You may reference data from the method currently running.
-	  # Options are OBJ, P1..P10, ARGS, RET, STACK. These objects are whatever type they happen
+	  # Options are OBJ, P1..P10, ARGS, RET, STACK, and ANNOTATION for methods selected by an annotation.
+	  # These objects are whatever type they happen
 	  # to be, and you can invoke any existing methods on those objects. Note that STACK is a StackFrame[]
 	  # See https://blog.abelotech.com/posts/useful-things-spring-expression-language-spel/
 	  captures: 
@@ -293,6 +295,42 @@ sensors to perform limited actions within an application.
 	  debug: "false"
 	
   
+
+## Methods Selected by Annotation
+
+A method can be written as an annotation, with an @ in front, and then it matches every method carrying that
+annotation, wherever it is, with no need to know the classes. It also matches every method of a class that carries
+the annotation. If both have it, the method's own annotation is the one you read.
+
+    sensors:
+    - name: "who-may-call-what"
+      description: "Records the roles a method requires, each time it is called"
+      methods:
+      - "@javax.annotation.security.RolesAllowed"
+      captures:
+      - "#CALLER + ' requires ' + #ANNOTATION.value"
+
+Inside a capture, `#ANNOTATION` holds the annotation's attributes. Read one as `#ANNOTATION.roles` or
+`#ANNOTATION['roles']`. Strings and numbers are themselves, an array is a list, a class is its name, an enum is its
+name, and an attribute left at its default has the default. A capture that gives a list produces one event for each
+item, so a method that needs two roles gives two events, and a matcher can pick out one of them.
+
+A rule can use the same capture and a matcher to stop a call based on what the annotation says.
+
+    - name: "no-auditors"
+      methods:
+      - "@javax.annotation.security.RolesAllowed"
+      captures:
+      - "#ANNOTATION.value"
+      matchers:
+      - "auditor"
+      exception: "auditors may not call this"
+
+A few things to know. An annotation written with javax or jakarta also matches the other, as it does for classes.
+The annotation must be kept at runtime, so annotations with source retention, like Lombok's, can't be used. Only the
+annotation on the method or its class counts, not an annotation that is itself annotated with it, and annotations
+inherited from a superclass or interface are not looked at. An annotation can't be a scope, and it doesn't select
+constructors.
 
 ## Creating Your Own JOT Reports
 

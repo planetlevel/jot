@@ -25,10 +25,28 @@ public class Expression {
 		exp = parser.parseExpression(expression);
 		context.registerFunction("toUpper", StringUtils.class.getMethod("upperCase", String.class));
 		context.registerFunction("toLower", StringUtils.class.getMethod("upperCase", String.class));
+		// so a map can be read as #ANNOTATION.roles as well as #ANNOTATION['roles']
+		context.addPropertyAccessor(new org.springframework.expression.PropertyAccessor() {
+			public Class<?>[] getSpecificTargetClasses() { return new Class<?>[] { java.util.Map.class }; }
+			public boolean canRead(org.springframework.expression.EvaluationContext c, Object target, String name) {
+				return target instanceof java.util.Map && ((java.util.Map<?, ?>) target).containsKey(name);
+			}
+			public org.springframework.expression.TypedValue read(org.springframework.expression.EvaluationContext c, Object target, String name) {
+				return new org.springframework.expression.TypedValue(((java.util.Map<?, ?>) target).get(name));
+			}
+			public boolean canWrite(org.springframework.expression.EvaluationContext c, Object target, String name) { return false; }
+			public void write(org.springframework.expression.EvaluationContext c, Object target, String name, Object value) { }
+		});
 		context.registerFunction("sort", Collections.class.getMethod("sort", List.class));
 	}
 
 	public Object execute(Object obj, Object[] params, Object ret, String caller, StackTraceElement[] stack) {
+		return execute( obj, params, ret, caller, stack, null );
+	}
+
+	/** annotation is the attributes of the annotation a method was selected by, available as #ANNOTATION. */
+	public Object execute(Object obj, Object[] params, Object ret, String caller, StackTraceElement[] stack,
+			java.util.Map<String, Object> annotation) {
 		
 		// convert input if necessary
 		obj = convert( obj );
@@ -45,6 +63,7 @@ public class Expression {
 		}
 		context.setVariable("CALLER", caller);
 		context.setVariable("STACK", stack);
+		context.setVariable("ANNOTATION", annotation);
 		
 		// convert output if necessary
 		Object result = null;

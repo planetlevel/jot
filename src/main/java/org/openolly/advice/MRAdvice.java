@@ -22,12 +22,13 @@ public class MRAdvice {
 	public static void exit(@SensorIndexValue(value = -1) int sensorIndex,
 			@MethodIndexValue(value = -1) int methodIndex, @Advice.Origin("#s") String className,
             @Advice.Origin("#m") String methodName, @Advice.This(optional=true) Object obj,
-			@Advice.AllArguments Object[] args, @Advice.Return Object ret) throws SensorException {
+			@Advice.AllArguments Object[] args, @Advice.Return Object ret,
+			@Advice.Origin Class<?> type, @Advice.Origin("#d") String descriptor) throws SensorException {
 		Sensor sensor = Sensor.getSensor(sensorIndex);
 		try {
 			if (sensor.inOutermostMethodScope(methodIndex)) {
 				String sig = className + "." + methodName + "()";
-				sensor.execute("MRAdvice", sig, obj, args, ret);
+				sensor.execute("MRAdvice", sig, obj, args, ret, null, sensor.annotationFor(methodIndex, type, methodName, descriptor));
 			}
 		} catch( Throwable t ) {
 			if ( !(t instanceof SensorException) ) {

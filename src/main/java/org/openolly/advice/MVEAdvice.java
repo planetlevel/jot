@@ -15,13 +15,14 @@ public class MVEAdvice {
 	public static void enter(@SensorIndexValue(value = -1) int sensorIndex,
 			@MethodIndexValue(value = -1) int methodIndex, @Advice.Origin("#t") String className,
 			@Advice.Origin("#m") String methodName, @Advice.This(optional = true) Object obj,
-			@Advice.AllArguments Object[] args) throws SensorException {
+			@Advice.AllArguments Object[] args,
+			@Advice.Origin Class<?> type, @Advice.Origin("#d") String descriptor) throws SensorException {
 		Sensor sensor = Sensor.getSensor(sensorIndex);
 		try {
 			sensor.enterMethodScope(methodIndex);
 			if (sensor.inOutermostMethodScope(methodIndex)) {
 				String sig = className + "." + methodName + "()";
-				sensor.execute("MVEAdvice", sig, obj, args, null);
+				sensor.execute("MVEAdvice", sig, obj, args, null, null, sensor.annotationFor(methodIndex, type, methodName, descriptor));
 			}
 		} catch (Throwable t) {
 			if ( t instanceof SensorException ) {
