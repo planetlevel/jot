@@ -19,7 +19,7 @@ and its methods are added to the scope.
 A shield with no disallowed capabilities and no policy has nothing to sandbox. With --observe it becomes a sensor with no
 exception, which records that the vulnerable code was reached.
 
-    tools/vulnpoint2jot.py CVE-2021-44228 CVE-2021-39144 -o cves
+    tools/vulnpoint2jot.py CVE-2021-44228 CVE-2019-12384 -o cves
     tools/vulnpoint2jot.py --all -o /tmp/all-cves
     tools/vulnpoint2jot.py CVE-2022-42889 --deny process,scripting     # a policy vulnpoint doesn't have yet
 """

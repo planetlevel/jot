@@ -49,7 +49,6 @@
 		{ "-", "CVE" },
 		{ "Log4Shell", "/ticketbook/log4shell.jsp", "log4shell" },
 		{ "Jackson", "/ticketbook/jackson.jsp", "jackson" },
-		{ "XStream", "/ticketbook/xstream.jsp", "xstream" },
 		{ "SnakeYAML", "/ticketbook/snakeyaml.jsp", "snakeyaml" },
 		{ "Spring4Shell", "/ticketbook/spring4shell.jsp", "spring4shell" },
 		{ "Text4Shell", "/ticketbook/commonstext.jsp", "commonstext" },

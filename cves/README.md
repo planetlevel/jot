@@ -6,7 +6,7 @@ the library keeps working, but what an attack does with it, like starting a proc
 These files are generated, don't edit them. The source of truth is the shield data in the vulnpoint repo, which says
 where each CVE lives and what its code must not do there.
 
-    tools/vulnpoint2jot.py CVE-2021-44228 CVE-2021-39144 -o cves     # needs ../vulnpoint, on its main branch
+    tools/vulnpoint2jot.py CVE-2021-44228 CVE-2019-12384 -o cves     # needs ../vulnpoint, on its main branch
     tools/vulnpoint2jot.py --all -o /tmp/all-cves                    # every CVE vulnpoint has an active policy for, 109 of them
 
 Run an application with a rule by listing the file, or this folder for all of them, in the app's jots.yaml.
