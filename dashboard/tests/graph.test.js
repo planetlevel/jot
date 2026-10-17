@@ -17,6 +17,26 @@ test("routes are in the first column, code by distance from a route, then effect
   assert.deepStrictEqual(L.titles, ["Routes in", "Application code", "", "What was seen", "Routes out"]);
 });
 
+test("an effect reached by a short path sits ahead of one reached by a longer path, not lumped into one column", () => {
+  // r -> s1 directly, r -> a -> s2, so s1's own request span is one hop and s2's is two
+  const ns = [n("r", "route"), n("a", "code"), n("s1", "effect"), n("s2", "effect")];
+  const L = layout(ns, [e("r", "a"), e("r", "s1"), e("a", "s2")]);
+  const col = (id) => L.pos.get(id).column;
+  assert.strictEqual(col("s1"), 1, "s1 is one hop from its route, same distance as a");
+  assert.strictEqual(col("s2"), 2, "s2 is a hop further, after a");
+  assert.ok(col("s1") < col("s2"));
+});
+
+test("two paths of different lengths to the same effect both draw in, and the shared node sits at the longer distance", () => {
+  // r -> s directly (short), and r -> a -> b -> s (long), both ending at the same shared effect
+  const ns = [n("r", "route"), n("a", "code"), n("b", "code"), n("s", "effect")];
+  const L = layout(ns, [e("r", "a"), e("a", "b"), e("r", "s"), e("b", "s")]);
+  const col = (id) => L.pos.get(id).column;
+  assert.strictEqual(col("a"), 1);
+  assert.strictEqual(col("b"), 2);
+  assert.strictEqual(col("s"), 3, "the shared node sits at the far end of its longest incoming path");
+});
+
 test("no two nodes overlap and everything is inside the drawing", () => {
   const L = layout(nodes, edges);
   const boxes = [...L.pos.values()];

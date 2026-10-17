@@ -1,7 +1,10 @@
 "use strict";
-// Places the nodes of the path graph in columns, left to right. Routes are the first column, then the application
-// methods by how far they are from a route, then the effects that sensors saw, then the routes a forward or redirect
-// leads to. Within a column the order is chosen so edges cross as little as possible.
+// Places the nodes of the path graph in columns, left to right. Routes are the first column, then everything a
+// request's own path reaches, in the order it reaches it: application methods by how far they are from a route, then
+// the effects those methods led to, each at its own distance rather than all lumped into one column. An effect
+// reached by a short path and also by a longer one sits at the longer distance, so both edges draw into the one
+// shared node, the way two subway lines share a station. Finally the routes a forward or redirect leads to. Within a
+// column the order is chosen so edges cross as little as possible.
 (function (root) {
   const NODE_W = 200, NODE_H = 26, GAP_Y = 10, COL_GAP = 80, PAD = 16, HEADER = 28;
 
@@ -15,7 +18,10 @@
       inn.get(e.to).push(e.from);
     }
 
-    // how far each method is from a route, along the longest path. A call cycle is cut where it closes.
+    // how far each node on a request's path is from a route, along the longest path to it. Code and effect nodes
+    // both count, so a chain of application methods ending in an effect, and an effect that follows another effect,
+    // are placed one after the other rather than effects all being dropped into a single final column. A call cycle
+    // is cut where it closes.
     const depth = new Map();
     const visiting = new Set();
     function depthOf(id) {
@@ -24,17 +30,23 @@
       visiting.add(id);
       let d = 1;
       for (const p of inn.get(id)) {
-        if (byId.get(p).kind === "code") d = Math.max(d, depthOf(p) + 1);
+        const kind = byId.get(p).kind;
+        if (kind === "code" || kind === "effect") d = Math.max(d, depthOf(p) + 1);
       }
       visiting.delete(id);
       depth.set(id, d);
       return d;
     }
-    let maxCode = 0;
-    for (const n of nodes) if (n.kind === "code") maxCode = Math.max(maxCode, depthOf(n.id));
+    let maxDepth = 0;
+    for (const n of nodes) if (n.kind === "code" || n.kind === "effect") maxDepth = Math.max(maxDepth, depthOf(n.id));
+    // the first column that holds an effect, so columns before it are titled for application code and the rest for
+    // what was seen. A column can hold both kinds, when one path reaches an effect sooner than another path reaches
+    // its own deeper application code, so this is where the effects begin, not a hard boundary between the kinds.
+    let firstEffect = maxDepth + 1;
+    for (const n of nodes) if (n.kind === "effect") firstEffect = Math.min(firstEffect, depth.get(n.id));
 
     const hasExit = nodes.some((n) => n.kind === "exit");
-    const column = (n) => n.kind === "route" ? 0 : n.kind === "code" ? depth.get(n.id) : n.kind === "effect" ? maxCode + 1 : maxCode + 2;
+    const column = (n) => n.kind === "route" ? 0 : (n.kind === "code" || n.kind === "effect") ? depth.get(n.id) : maxDepth + 1;
     const columns = [];
     for (const n of nodes) {
       const c = column(n);
@@ -42,8 +54,11 @@
     }
     for (let c = 0; c < columns.length; c++) columns[c] = columns[c] || [];
     const titles = ["Routes in"];
-    for (let c = 1; c <= maxCode; c++) titles.push(c === 1 ? "Application code" : "");
-    titles.push("What was seen");
+    let labeledCode = false, labeledEffect = false;
+    for (let c = 1; c <= maxDepth; c++) {
+      if (c < firstEffect) { titles.push(labeledCode ? "" : "Application code"); labeledCode = true; }
+      else { titles.push(labeledEffect ? "" : "What was seen"); labeledEffect = true; }
+    }
     if (hasExit) titles.push("Routes out");
 
     // start with the busiest on top, then pull each node toward the middle of the nodes it is connected to
