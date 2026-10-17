@@ -1,9 +1,9 @@
 ---
 # TicketBook demo, the rules. A sensor with an exception is a rule, its message says why the call is bad.
-# run.sh adds this file in monitor and enforce modes.
+# run.sh always loads this file. MODE decides what the rules do.
 #   monitor   the rules only report, nothing is stopped, the attacks still work
-#   enforce   the rules stop the call
-# The dashboard's Enforcement panel can switch single rules between the two while the app runs.
+#   protect   the rules stop the call
+# The dashboard's Protection panel can switch single rules between the two while the app runs.
 # javax names also match jakarta, so these work on Tomcat 9 and Tomcat 11.
 
 sensors:
@@ -45,10 +45,10 @@ sensors:
   exception: "Expression language sandbox escape prevented by JOT rule 'sandbox-expressions'"
 
 # The pattern based alternative, which looks for attack text in the expression itself. It is easier to get
-# around than the sandbox above, and it starts staged as report only so you can try it and then promote it
-# to block from the dashboard.
+# around than the sandbox above. Add "protect: false" to stage it as report only, and the dashboard can then
+# promote it to block.
 - name: "block-nasty-expressions"
-  description: "Flags expressions that contain reflection or process APIs"
+  description: "Blocks expressions that contain reflection or process APIs"
   methods:
   - "javax.el.ExpressionFactory.createValueExpression"
   captures:
@@ -58,5 +58,4 @@ sensors:
   - "getRuntime"
   - "ProcessBuilder"
   - "forName"
-  enforce: false
-  exception: "Suspicious expression flagged by JOT rule 'block-nasty-expressions'"
+  exception: "Suspicious expression detected by JOT rule 'block-nasty-expressions'"

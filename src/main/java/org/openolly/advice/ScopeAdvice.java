@@ -9,8 +9,9 @@ import net.bytebuddy.asm.Advice;
 public class ScopeAdvice {
 	
 	@Advice.OnMethodEnter()
-	public static void enter(@SensorIndexValue(value = -1) int sensorIndex, @MethodIndexValue(value = -1) int scopeIndex) {
-		Sensor.enterScopeScope(sensorIndex, scopeIndex);
+	public static void enter(@SensorIndexValue(value = -1) int sensorIndex, @MethodIndexValue(value = -1) int scopeIndex,
+			@Advice.AllArguments Object[] args) {
+		Sensor.enterScopeScope(sensorIndex, scopeIndex, args);
 	}
 
 	// onThrowable ensures we leave scope when the method exits exceptionally

@@ -43,11 +43,11 @@ jot-events.jsonl
 dashboard/.env
 .env
 
-dashboard/control.json
-dashboard/control.json.audit
+dashboard/control.yaml
+dashboard/control.yaml.audit
 hs_err_pid*.log
-/jot-control.json
-/jot-control.json.audit
+/jot-control.yaml
+/jot-control.yaml.audit
 
 # TicketBook needs its compiled classes and library jars, the rules above would drop them
 !demo/ticketbook/webapp/**/*.class

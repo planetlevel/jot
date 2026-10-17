@@ -48,12 +48,19 @@ CREATE TABLE IF NOT EXISTS settings (
 -- What every query and view reads. Everything recorded since the start time, or all of it if none is set.
 -- The start time is how the dashboard is cleared, nothing is deleted and Show all brings it back.
 -- Unless the app_only setting is 0, an observed event that has no frame from the application is left out.
--- Blocked and reported events are never left out.
+-- Blocked and reported events are never left out by that. If filter_blocked or filter_monitored is 1, only events
+-- of the ticked kinds are kept. The agent's own jot-control events, which record a rule being switched, are left out
+-- unless the show_jot_control setting is 1.
 CREATE VIEW IF NOT EXISTS events AS
   SELECT * FROM events_raw
   WHERE ts >= COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'since'), 0)
     AND (COALESCE((SELECT value FROM settings WHERE key = 'app_only'), '1') <> '1'
-         OR origin IS NULL OR origin IN ('app', 'none') OR action <> 'observed');
+         OR origin IS NULL OR origin IN ('app', 'none') OR action <> 'observed')
+    AND ((COALESCE((SELECT value FROM settings WHERE key = 'filter_blocked'), '0') <> '1'
+          AND COALESCE((SELECT value FROM settings WHERE key = 'filter_monitored'), '0') <> '1')
+         OR (action = 'blocked' AND COALESCE((SELECT value FROM settings WHERE key = 'filter_blocked'), '0') = '1')
+         OR (action = 'monitored' AND COALESCE((SELECT value FROM settings WHERE key = 'filter_monitored'), '0') = '1'))
+    AND (sensor <> 'jot-control' OR COALESCE((SELECT value FROM settings WHERE key = 'show_jot_control'), '0') = '1');
 
 CREATE TABLE IF NOT EXISTS sensors (
   name TEXT PRIMARY KEY,
@@ -62,7 +69,7 @@ CREATE TABLE IF NOT EXISTS sensors (
   scopes TEXT,          -- JSON array. The sensor only fires inside these methods
   captures TEXT,        -- JSON array of expressions
   blocks TEXT,          -- the exception message if the sensor is a rule, otherwise null
-  enforce TEXT,         -- 'false' if the .jot file stages the rule as report only, otherwise null
+  protect TEXT,         -- 'false' if the .jot file stages the rule as report only, otherwise null
   source TEXT,          -- the .jot file it came from
   matchers TEXT,        -- JSON array
   excludes TEXT,        -- JSON array
@@ -293,11 +300,31 @@ class Ingestor:
             self._thread.join(2)
 
 
+def read_jots_file(path):
+    """The jots file the agent also reads. Returns (jot paths, control file path or None, application packages).
+    Every entry is included. Relative paths are relative to the jots file. The packages are the app: list, which the
+    agent ignores."""
+    with open(path) as fh:
+        doc = yaml.safe_load(fh) or {}
+    base = os.path.dirname(os.path.abspath(path))
+    def resolve(p):
+        return p if os.path.isabs(p) else os.path.normpath(os.path.join(base, p))
+    jots = []
+    for item in doc.get("jots") or []:
+        p = item if isinstance(item, str) else (item or {}).get("path")
+        if p:
+            jots.append(resolve(p))
+    control = doc.get("control")
+    app = doc.get("app") or []
+    app = [app] if isinstance(app, str) else [str(a) for a in app]
+    return jots, resolve(control) if control else None, app
+
+
 def jot_files(paths):
     files = []
     for p in paths:
         if os.path.isdir(p):
-            files.extend(sorted(glob.glob(os.path.join(p, "*.jot"))))
+            files.extend(sorted(glob.glob(os.path.join(p, "**", "*.jot"), recursive=True)))
         elif os.path.exists(p):
             files.append(p)
     return files
@@ -342,8 +369,8 @@ def load_sensors(db, paths):
             for m in list(methods) + list(s.get("scopes") or []):
                 if not _METHOD.match(str(m).strip()):
                     _issue(db, "warning", "%s has %r, which doesn't look like Class.method" % (name, m), source)
-            staged = "false" if s.get("enforce") is False else None
-            db.execute("""INSERT INTO sensors (name, description, methods, scopes, captures, blocks, enforce, source,
+            staged = "false" if s.get("protect") is False else None
+            db.execute("""INSERT INTO sensors (name, description, methods, scopes, captures, blocks, protect, source,
                                                matchers, excludes, definition) VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (
                 name, s.get("description"), json.dumps(methods), json.dumps(s.get("scopes") or []),
                 json.dumps(s.get("captures") or []), s.get("exception"), staged, source,
@@ -490,7 +517,7 @@ def graph_rows(db_path, route=None):
     request the event happened in, as the get-routes sensor saw it."""
     where = "WHERE sensor <> 'get-routes' AND stack IS NOT NULL"
     sql = """SELECT route, sensor, action, capture, stack, COUNT(*) FROM (
-               SELECT (SELECT r.capture FROM events r WHERE r.run = e.run AND r.trace = e.trace AND r.sensor = 'get-routes'
+               SELECT (SELECT r.capture FROM events_raw r WHERE r.run = e.run AND r.trace = e.trace AND r.sensor = 'get-routes'
                        ORDER BY r.pk LIMIT 1) AS route, e.sensor, e.action, e.capture, e.stack
                FROM events e %s) %s GROUP BY 1, 2, 3, 4, 5""" % (where, "WHERE route = %s" % _lit(route) if route else "")
     return run_query(db_path, sql, limit=GRAPH_ROW_LIMIT)
@@ -656,6 +683,40 @@ def get_app_only(db_path):
         return not row or row[0] == "1"
     finally:
         db.close()
+
+
+def get_action_filter(db_path):
+    """Which kinds of event the toolbar is limited to, as {"blocked": bool, "monitored": bool}. With neither on,
+    every kind shows. Both off unless they have been switched on."""
+    db = sqlite3.connect(db_path)
+    try:
+        rows = dict(db.execute("SELECT key, value FROM settings WHERE key IN ('filter_blocked', 'filter_monitored')"))
+        return {"blocked": rows.get("filter_blocked") == "1", "monitored": rows.get("filter_monitored") == "1"}
+    finally:
+        db.close()
+
+
+def get_show_jot_control(db_path):
+    """True if the agent's own jot-control events are shown. They are left out unless it has been switched on."""
+    db = sqlite3.connect(db_path)
+    try:
+        row = db.execute("SELECT value FROM settings WHERE key = 'show_jot_control'").fetchone()
+        return bool(row) and row[0] == "1"
+    finally:
+        db.close()
+
+
+def set_show_jot_control(db, on):
+    db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('show_jot_control', ?)", ("1" if on else "0",))
+    db.commit()
+
+
+def set_action_filter(db, blocked=None, monitored=None):
+    """Limit what is shown to blocked events, to monitored ones, or to both. A kind that is None is left as it is."""
+    for key, on in (("filter_blocked", blocked), ("filter_monitored", monitored)):
+        if on is not None:
+            db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, "1" if on else "0"))
+    db.commit()
 
 
 def set_app_only(db, on):

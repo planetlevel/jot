@@ -26,6 +26,10 @@ def parsed(text):
 
 
 class Vulnpoint2JotTests(unittest.TestCase):
+    def test_a_rule_has_no_separate_entered_sensor_because_the_agent_reports_entering_its_scope(self):
+        names = [s["name"] for s in parsed("sensors:\n" + v.rule(shield(), CATALOG, [], False))]
+        self.assertEqual(["cve-2021-44228"], names)
+
     def test_a_shield_with_capabilities_becomes_a_rule_named_for_the_cve(self):
         (s,) = parsed("sensors:\n" + v.rule(shield(), CATALOG, [], False))
         self.assertEqual("cve-2021-44228", s["name"])
@@ -35,15 +39,15 @@ class Vulnpoint2JotTests(unittest.TestCase):
         self.assertIn("javax.script.ScriptEngine.eval", s["methods"])
         self.assertNotIn("javax.naming.Context.lookup", s["methods"], "jndi was not disallowed, so it stays allowed")
         self.assertIn("CVE-2021-44228", s["exception"])
-        self.assertNotIn("enforce", s)
+        self.assertNotIn("protect", s)
 
     def test_sinks_that_cannot_take_advice_are_left_out(self):
         (s,) = parsed("sensors:\n" + v.rule(shield(), CATALOG, [], False))
         self.assertNotIn("java.lang.ProcessImpl.forkAndExec", s["methods"])
 
-    def test_a_shield_that_may_only_monitor_does_not_enforce(self):
+    def test_a_shield_that_may_only_monitor_does_not_protect(self):
         (s,) = parsed("sensors:\n" + v.rule(shield(behavior="MONITOR"), CATALOG, [], False))
-        self.assertIs(False, s["enforce"])
+        self.assertIs(False, s["protect"])
 
     def test_a_shield_with_nothing_to_sandbox_is_skipped_or_observed(self):
         empty = shield(scopes=[{"method": "a.B.c", "disallowed_capabilities": []}])
@@ -56,7 +60,7 @@ class Vulnpoint2JotTests(unittest.TestCase):
         text = v.rule(empty, CATALOG, ["process"], False)
         (s,) = parsed("sensors:\n" + text)
         self.assertEqual(["a.B.c"], s["scopes"])
-        self.assertIs(False, s["enforce"])
+        self.assertIs(False, s["protect"])
         self.assertIn("--deny", text)
 
     def test_a_constructor_is_written_the_way_jot_does(self):
@@ -82,7 +86,7 @@ class Vulnpoint2JotTests(unittest.TestCase):
         (s,) = parsed("sensors:\n" + text)
         self.assertEqual(["a.BeanUtilsBean.setProperty"], s["scopes"])
         self.assertIn("javax.naming.Context.lookup", s["methods"])
-        self.assertNotIn("enforce", s, "the policy is active, so it blocks")
+        self.assertNotIn("protect", s, "the policy is active, so it blocks")
         self.assertIn("vulnpoint policy", text)
 
     def test_a_policy_for_a_method_the_shield_already_has_is_not_added_twice(self):

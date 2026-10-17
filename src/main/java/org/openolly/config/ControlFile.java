@@ -17,22 +17,26 @@ import org.openolly.reporting.EventBus;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
 /**
  * Lets an operator switch rules between monitor and block while the application runs, with no way in for
  * anything from outside. The agent reads a file, once a second. Nothing connects to the agent.
  *
- *   -Djot.control=/etc/jot/control.json
+ *   -Djot.control=/etc/jot/control.yaml
  *
- *   {"v":1, "enforce":true, "rules":{"cve-log4shell-no-exec":false}, "updated":"...", "by":"..."}
+ *   v: 1
+ *   protect: true
+ *   rules:
+ *     cve-log4shell-no-exec: false
  *
- * enforce is the master switch. When false, every rule only reports. rules sets individual rules, false to
- * report only and true to block. A rule that isn't listed goes back to its .jot setting. -Djot.enforce=false
+ * protect is the master switch. When false, every rule only reports. rules sets individual rules, false to
+ * report only and true to block. A rule that isn't listed goes back to its .jot setting. -Djot.protect=false
  * can't be overridden from here.
  *
  * It fails safe. A file that is missing, unreadable, too large or invalid changes nothing, and the last good
  * settings stay in force. Each change is published as an event from the sensor "jot-control" so the log
- * shows when enforcement was lowered or restored.
+ * shows when protection was lowered or restored.
  */
 public final class ControlFile {
 
@@ -97,12 +101,12 @@ public final class ControlFile {
 		boolean newMaster;
 		Map<String, Boolean> newRules = new LinkedHashMap<String, Boolean>();
 		try {
-			JsonNode root = new ObjectMapper().readTree( text );
-			if ( root == null || !root.isObject() ) throw new IllegalArgumentException( "must be a JSON object" );
+			JsonNode root = new ObjectMapper( new YAMLFactory() ).readTree( text );
+			if ( root == null || !root.isObject() ) throw new IllegalArgumentException( "must be a YAML mapping" );
 			JsonNode v = root.get( "v" );
 			if ( v != null && v.asInt() != 1 ) throw new IllegalArgumentException( "has unsupported version " + v );
-			JsonNode e = root.get( "enforce" );
-			if ( e != null && !e.isBoolean() ) throw new IllegalArgumentException( "enforce must be true or false" );
+			JsonNode e = root.get( "protect" );
+			if ( e != null && !e.isBoolean() ) throw new IllegalArgumentException( "protect must be true or false" );
 			newMaster = e == null || e.asBoolean();
 			JsonNode r = root.get( "rules" );
 			if ( r != null ) {
@@ -135,7 +139,7 @@ public final class ControlFile {
 
 	private void publishChanges(boolean beforeMaster, Map<String, Boolean> before) {
 		if ( beforeMaster != master ) {
-			publish( "enforcement=" + ( master ? "on" : "off" ) );
+			publish( "protect=" + ( master ? "on" : "off" ) );
 		}
 		for ( Map.Entry<String, Boolean> e : rules.entrySet() ) {
 			if ( !e.getValue().equals( before.get( e.getKey() ) ) ) {
@@ -167,7 +171,7 @@ public final class ControlFile {
 			if ( perms.contains( PosixFilePermission.OTHERS_WRITE ) || perms.contains( PosixFilePermission.GROUP_WRITE ) ) {
 				warnedPermissions = true;
 				System.err.println( "[JOT] control file " + path + " can be written by other users. Anyone who can write it can switch "
-						+ "enforcement off. Run chmod go-w on it." );
+						+ "protection off. Run chmod go-w on it." );
 			}
 		} catch ( UnsupportedOperationException e ) {
 			// not a POSIX file system

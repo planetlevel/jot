@@ -1,7 +1,7 @@
 ---
 # TicketBook demo, the observe set. Every sensor here only records what it sees and never stops anything.
 # It works on javax and jakarta servlet applications, a javax.servlet name also matches jakarta.servlet.
-# The blocking rules are in ../rules/enforce.jot, run.sh adds them in monitor and enforce modes.
+# The blocking rules are in ../rules/protect.jot, run.sh adds them in monitor and protect modes.
 
 sensors:
 

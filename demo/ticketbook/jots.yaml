@@ -1,0 +1,12 @@
+# The JOTs for TicketBook, read by the agent (-javaagent:jot.jar=jots.yaml) and by the dashboard (--jots).
+# Relative paths are relative to this file. Directories are searched recursively. Everything listed is loaded.
+# MODE only decides whether the rules report (monitor) or block (protect), see run.sh.
+jots:
+  - jots
+  - rules
+  - ../../cves
+control: ../../jot-control.yaml
+# The application's own packages, which the dashboard uses to tell your code from libraries. The agent ignores it.
+app:
+  - com.acme
+  - org.apache.jsp

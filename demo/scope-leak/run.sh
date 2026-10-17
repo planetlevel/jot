@@ -10,7 +10,7 @@ mkdir -p target && javac -d target ScopeLeak.java
 fail=0
 for kind in method ctor; do
   echo "=== scope on $kind ==="
-  out=$(java -Djot.verbose=true -javaagent:$JAR=scope-$kind.jot -cp target ScopeLeak $kind 2>&1 | grep -E '^(PASS|FAIL)|SEVERE')
+  out=$(java -Djot.verbose=true -javaagent:$JAR=jots-$kind.yaml -cp target ScopeLeak $kind 2>&1 | grep -E '^(PASS|FAIL)|SEVERE')
   echo "$out"
   echo "$out" | grep -qE '^FAIL|SEVERE' && fail=1
 done

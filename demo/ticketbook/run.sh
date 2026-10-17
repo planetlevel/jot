@@ -2,7 +2,7 @@
 # Runs the TicketBook demo app under Tomcat 11 with JOT attached, writing JSON events for the dashboard.
 #
 #   demo/ticketbook/run.sh            start Tomcat on port 8080, then browse http://localhost:8080/ticketbook
-#   python3 dashboard/server.py --app com.acme --app org.apache.jsp --log jot-events.jsonl --jot demo/ticketbook/jots
+#   python3 dashboard/server.py --log jot-events.jsonl --jots demo/ticketbook/jots.yaml
 #
 # Tomcat 11 is downloaded into demo/ticketbook/target on first use and checked against Apache's SHA-512.
 # To use an install you already have, set CATALINA_HOME. Needs Java 17 or newer, found through JAVA_HOME or the PATH.
@@ -49,33 +49,28 @@ cat > "$BASE/conf/Catalina/localhost/ticketbook.xml" <<XML
 <Context docBase="$HERE/webapp" reloadable="false"/>
 XML
 
-# The policy. jots/ holds the sensors that only observe, and rules/ the rules that can stop a call.
-#   MODE=observe   (default) only the sensors, nothing can be blocked
-#   MODE=enforce   the sensors and the rules, the rules block. The dashboard can switch them to report only
-#   MODE=monitor   the sensors and the rules, but every rule only reports. The attacks still work. This is
-#                  fixed for the life of the process, the dashboard can't switch it to block
-MODE=${MODE:-observe}
-case "$MODE" in observe|monitor|enforce) ;; *) echo "MODE must be observe, monitor or enforce" >&2; exit 1;; esac
-ACTIVE=$HERE/target/active-jots
-mkdir -p "$ACTIVE"
-rm -f "$ACTIVE"/*.jot
-cp "$HERE"/jots/*.jot "$ACTIVE"/
-[ "$MODE" = observe ] || cp "$HERE"/rules/*.jot "$ACTIVE"/
+# The JOTs are listed in jots.yaml, and everything listed is always loaded. jots/ holds the sensors that only record,
+# rules/ the rules that can stop a call, and ../../cves the CVE microsandboxes. The agent and the dashboard both read
+# that file. MODE is only the state the run starts in. The dashboard's Monitor and Protect toggle changes it while the
+# app runs, nothing here locks it.
+#   MODE=protect   (default) the rules stop the call
+#   MODE=monitor   the rules only report what they would stop. The attacks still work
+MODE=${MODE:-protect}
+case "$MODE" in monitor|protect) ;; *) echo "MODE must be monitor or protect" >&2; exit 1;; esac
 
 # The file the dashboard writes to switch rules between monitor and block. Start from a clean one so a setting
 # left over from an earlier session can't quietly change what this run does.
-CONTROL=${JOT_CONTROL:-$ROOT/jot-control.json}
+CONTROL=${JOT_CONTROL:-$ROOT/jot-control.yaml}
 rm -f "$CONTROL"
+[ "$MODE" = monitor ] && printf 'v: 1\nprotect: false\nrules: {}\nby: run.sh\n' > "$CONTROL"
 
 LOG=${JOT_LOG:-$ROOT/jot-events.jsonl}
 export CATALINA_BASE=$BASE
 export CATALINA_HOME
-ENFORCE_OPT=""
-[ "$MODE" = monitor ] && ENFORCE_OPT="-Djot.enforce=false"
 # Remove -Djot.verbose=true to quiet instrumentation errors.
 export CATALINA_OPTS="-Djot.verbose=true -Djot.output=json -Djot.output.stack=500 -Djot.output.file=$LOG -Djot.app=ticketbook \
-  -Djot.control=$CONTROL $ENFORCE_OPT -javaagent:$JAR=$ACTIVE"
+  -Djot.control=$CONTROL -javaagent:$JAR=$HERE/jots.yaml"
 
 echo "Mode $MODE. JOT events go to $LOG"
-echo "Dashboard: python3 dashboard/server.py --app com.acme --app org.apache.jsp --log $LOG --jot jots --jot rules --control $CONTROL"
+echo "Dashboard: python3 dashboard/server.py --log $LOG --jots $HERE/jots.yaml"
 exec "$CATALINA_HOME/bin/catalina.sh" run

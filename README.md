@@ -83,7 +83,7 @@ Choose where events go with system properties.
 | `jot.output.file` | `jot-events.jsonl` | File for the `json` output |
 | `jot.events` | `all` | `all`, or `violations` to only report monitored and blocked events |
 | `jot.queue.size` | `10000` | Events to buffer. If the queue fills up, new events are dropped and counted. |
-| `jot.enforce` | `true` | `false` makes every rule with an `exception` only report, see below |
+| `jot.protect` | `true` | `false` makes every rule with an `exception` only report, see below |
 | `jot.retransform` | `true` | Also instruments classes the JVM had already loaded when JOT started. `false` turns it off, see below |
 | `jot.control` | none | Control file the agent polls to switch rules between monitor and block while running, see below |
 | `jot.output.stack` | `25` | Stack frames to include in each `json` event. `0` leaves the stack out. |
@@ -116,39 +116,42 @@ A sensor with no `exception` observes. It records what it sees and the call carr
 inventory such as routes, ciphers or roles, and it is what the reports use.
 
 A sensor with an `exception` is a rule. The `exception` text is its verdict, saying why the call is bad. Whether
-the rule stops the call depends on whether it is enforced.
+the rule stops the call depends on whether it protects.
 
-| Rule has an `exception` | Enforced | Event | Call stopped |
+| Rule has an `exception` | Protects | Event | Call stopped |
 |---|---|---|---|
 | no | not applicable | `observed` | no |
 | yes | no | `monitored` | no |
 | yes | yes | `blocked` | yes |
 
-By default rules are enforced. To try a rule without risking your application, report only. A `monitored` event
+By default rules protect. To try a rule without risking your application, report only. A `monitored` event
 carries the same message, captures and stack as a `blocked` one would, so you can see everything the rule would
 have stopped and check it for false positives before turning it on.
 
     # one rule only reports, the others still block
     - name: "cve-log4shell-no-exec"
       exception: "CVE-2021-44228 blocked process execution"
-      enforce: false
+      protect: false
 
     # every rule only reports
-    java -Djot.enforce=false -javaagent:jot.jar=my.jot -jar app.jar
+    java -Djot.protect=false -javaagent:jot.jar=jots.yaml -jar app.jar
 
-`jot.enforce=false` is a master switch. A rule can turn its own enforcement off with `enforce: false`, but it can't
+`jot.protect=false` is a master switch. A rule can turn its own protection off with `protect: false`, but it can't
 turn it back on when the master switch is off.
 
 ### Switching while the application runs
-Start the agent with `-Djot.control=/etc/jot/control.json` and it reads that file once a second. This is how the
+Start the agent with `-Djot.control=/etc/jot/control.yaml` and it reads that file once a second. This is how the
 dashboard switches rules between monitor and block. The agent only ever reads the file. It opens no port and accepts
 no connections, so nothing can reach into it.
 
-    {"v": 1, "enforce": true, "rules": {"cve-log4shell-no-exec": false}}
+    v: 1
+    protect: true
+    rules:
+      cve-log4shell-no-exec: false
 
-`enforce` is the master switch, and when it is false every rule only reports. `rules` sets single rules, `false` to
-report only and `true` to block, and it takes priority over the rule's own `enforce:` in its .jot file. A rule that
-isn't listed goes back to its .jot setting. `-Djot.enforce=false` can't be overridden by the file.
+`protect` is the master switch, and when it is false every rule only reports. `rules` sets single rules, `false` to
+report only and `true` to block, and it takes priority over the rule's own `protect:` in its .jot file. A rule that
+isn't listed goes back to its .jot setting. `-Djot.protect=false` can't be overridden by the file.
 
 The agent fails safe. A file that is missing, unreadable, over 64 KB or invalid changes nothing, and the last good
 settings stay in force. Each change is logged as an event from the sensor `jot-control`. Because anyone who can write
@@ -182,12 +185,22 @@ a problem in a JOT can never break your application, which also means a rule tha
 fails silently. Turn verbose on while writing or debugging JOTs.
 
 You might find using the JAVA_TOOL_OPTIONS environment variable useful.
-Like "export JAVA_TOOL_OPTIONS="-javaagent:jot.jar=ciphers.jot". Then
+Like "export JAVA_TOOL_OPTIONS="-javaagent:jot.jar=jots.yaml". Then
 no matter how Java eventually gets launched, it will use JOT.
 
-If you want to use multiple JOTs at the same time, you can either put them all into one
-big .jot file, or you can put multiple .jot files in a directory and use
-"-javaagent:jot.jar=directory"
+The agent argument is a jots file, a small YAML file that lists the .jot files and directories to load.
+Directories are searched recursively, so organize your JOTs however you like.
+
+    jots:
+    - ciphers.jot
+    - rules                    # directories are searched recursively
+    control: jot-control.yaml
+    app:                       # your application's packages, used only by the dashboard
+    - com.acme
+
+Relative paths are relative to the jots file. The dashboard reads the same file with "--jots", so the agent
+and the dashboard always use the same definitions. See demo/ticketbook/jots.yaml. If two JOTs define a sensor
+with the same name, the first one loaded wins, so list your own first to override a standard one.
 
 Lastly, every JOT can have multiple "captures." A capture is a way to specify
 what data you want to collect from the methods you specified in the JOT.  The simple
@@ -221,7 +234,7 @@ This sample config will log JOT to stdout as well as to /tmp/jot.log
 
 using:
 
-	java -javaagent:jot.jar=ciphers.jot -Djava.util.logging.config.file=/root/jul.properties
+	java -javaagent:jot.jar=jots.yaml -Djava.util.logging.config.file=/root/jul.properties
 
 
 ## Creating Your Own JOT Sensors

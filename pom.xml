@@ -90,7 +90,7 @@
 					</systemPropertyVariables>
                     <!-- Enable JOT during test runs to verify JUnit test fail capability.
                     <argLine>
-                        -javaagent:${project.basedir}/target/jot-${project.version}.jar=${project.basedir}/src/test/resources/junit.jot
+                        -javaagent:${project.basedir}/target/jot-${project.version}.jar=${project.basedir}/src/test/resources/jots-junit.yaml
                     </argLine> -->
 				</configuration>
 			</plugin>

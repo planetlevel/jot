@@ -2,6 +2,7 @@ import contextlib
 import http.server
 import io
 import json
+import yaml
 import os
 import re
 import sqlite3
@@ -532,7 +533,7 @@ sensors:
   exception: 'no a'
 - name: 'rule-b'
   exception: 'no b'
-  enforce: false
+  protect: false
 - name: 'just-watching'
 """
 
@@ -575,7 +576,7 @@ sensors:
 - name: 'block-staged'
   methods: ['java.net.Socket.<init>']
   exception: 'no sockets'
-  enforce: false
+  protect: false
 """
 
 
@@ -677,7 +678,7 @@ class JotsViewTests(unittest.TestCase):
 
     @unittest.skipUnless(CHROME, "Chrome is not installed")
     def test_a_selected_sensor_is_shown_without_stray_null_text_and_nothing_shows_before_a_selection(self):
-        page = self.render("#policy/never-fires")
+        page = self.render("#jots/never-fires")
         detail = re.search(r'<aside class="card" id="jotDetail"([^>]*)>(.*?)</aside>', page, re.S)
         self.assertIsNotNone(detail, "the detail panel is not on the page")
         self.assertNotIn("hidden", detail.group(1), "the detail panel should be showing")
@@ -688,10 +689,10 @@ class JotsViewTests(unittest.TestCase):
         self.assertNotIn("Select a sensor", page, "the empty placeholder panel is gone")
         self.assertIn("has-detail", page)
 
-        page = self.render("#policy")
+        page = self.render("#jots")
         detail = re.search(r'<aside class="card" id="jotDetail"([^>]*)>', page)
         self.assertIn("hidden", detail.group(1), "with nothing selected there is no detail panel")
-        self.assertNotIn("has-detail", re.search(r'<div class="policy[^"]*" id="policyGrid"', page).group(0))
+        self.assertNotIn("has-detail", re.search(r'<div class="jots[^"]*" id="jotsGrid"', page).group(0))
 
     def console(self, address):
         """What the page wrote to the browser console, which is where a script error shows up."""
@@ -707,13 +708,13 @@ class JotsViewTests(unittest.TestCase):
 
     @unittest.skipUnless(CHROME, "Chrome is not installed")
     def test_no_page_has_a_script_error(self):
-        for address in ("", "#policy", "#graph", "#event/1"):
+        for address in ("", "#jots", "#graph", "#event/1"):
             errors = [l for l in self.console(address) if "Uncaught" in l or "TypeError" in l or "ReferenceError" in l]
             self.assertEqual([], errors, "script error on " + (address or "the events page"))
 
     @unittest.skipUnless(CHROME, "Chrome is not installed")
     def test_reports_are_in_their_own_section_apart_from_sensors_and_rules(self):
-        page = self.render("#policy")
+        page = self.render("#jots")
         sensors = re.search(r'<div class="card" id="sensorsCard">(.*?)<div class="card" id="reportsCard">', page, re.S).group(1)
         reports = re.search(r'<div class="card" id="reportsCard">(.*)', page, re.S).group(1)
         reports = reports[:reports.index("jotDetail")]
@@ -728,8 +729,8 @@ class JotsViewTests(unittest.TestCase):
         self.assertRegex(re.sub(r"<[^>]+>", "", sensors), r"\d+ sensors and \d+ rules")
 
     def test_rule_modes_follow_the_control_file_when_there_is_one(self):
-        path = os.path.join(self.env.dir, "control.json")
-        control_store = control.ControlStore(path, token="t")
+        path = os.path.join(self.env.dir, "control.yaml")
+        control_store = control.ControlStore(path)
         control_store.write(rules={"block-exec": False}, known_rules=["block-exec", "block-staged"])
         app = server.App(self.env.db, self.env.ingestor, control=control_store)
         modes = {s["name"]: s["mode"] for s in app.jots()["sensors"]}
@@ -852,8 +853,8 @@ class StartTimeTests(unittest.TestCase):
 class ControlStoreTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
-        self.path = os.path.join(self.dir, "control.json")
-        self.control = control.ControlStore(self.path, token="s3cret-token")
+        self.path = os.path.join(self.dir, "control.yaml")
+        self.control = control.ControlStore(self.path)
         self.known = ["rule-a", "rule-b"]
 
     def files(self):
@@ -861,20 +862,20 @@ class ControlStoreTests(unittest.TestCase):
 
     def test_a_missing_file_means_the_defaults(self):
         state = self.control.read()
-        self.assertEqual((True, {}, False), (state["enforce"], state["rules"], state["exists"]))
+        self.assertEqual((True, {}, False), (state["protect"], state["rules"], state["exists"]))
 
     def test_writes_merge_and_null_goes_back_to_the_jot_setting(self):
         self.control.write(rules={"rule-a": False}, known_rules=self.known)
         self.control.write(master=False, rules={"rule-b": True}, known_rules=self.known)
         state = self.control.read()
-        self.assertEqual((False, {"rule-a": False, "rule-b": True}), (state["enforce"], state["rules"]))
+        self.assertEqual((False, {"rule-a": False, "rule-b": True}), (state["protect"], state["rules"]))
         self.control.write(rules={"rule-a": None}, known_rules=self.known)
         self.assertEqual({"rule-b": True}, self.control.read()["rules"])
 
     def test_the_file_has_the_format_the_agent_reads(self):
         self.control.write(master=True, rules={"rule-a": False}, known_rules=self.known, who="jeff")
         with open(self.path) as f:
-            doc = json.load(f)
+            doc = yaml.safe_load(f)
         self.assertEqual(1, doc["v"])
         self.assertEqual({"rule-a": False}, doc["rules"])
         self.assertEqual("jeff", doc["by"])
@@ -882,7 +883,7 @@ class ControlStoreTests(unittest.TestCase):
 
     def test_writing_leaves_no_temporary_files_behind(self):
         self.control.write(rules={"rule-a": False}, known_rules=self.known)
-        self.assertEqual(["control.json", "control.json.audit"], self.files())
+        self.assertEqual(["control.yaml", "control.yaml.audit"], self.files())
 
     def test_every_change_is_logged_with_before_and_after(self):
         self.control.write(rules={"rule-a": False}, known_rules=self.known, who="jeff")
@@ -890,9 +891,9 @@ class ControlStoreTests(unittest.TestCase):
         with open(self.control.audit_path) as f:
             entries = [json.loads(line) for line in f]
         self.assertEqual(2, len(entries))
-        self.assertEqual({"enforce": True, "rules": {}}, entries[0]["before"])
-        self.assertEqual({"enforce": True, "rules": {"rule-a": False}}, entries[0]["after"])
-        self.assertEqual(False, entries[1]["after"]["enforce"])
+        self.assertEqual({"protect": True, "rules": {}}, entries[0]["before"])
+        self.assertEqual({"protect": True, "rules": {"rule-a": False}}, entries[0]["after"])
+        self.assertEqual(False, entries[1]["after"]["protect"])
 
     def test_bad_changes_are_refused_and_change_nothing(self):
         self.control.write(rules={"rule-a": False}, known_rules=self.known)
@@ -905,34 +906,8 @@ class ControlStoreTests(unittest.TestCase):
     def test_a_corrupt_file_reads_as_the_defaults(self):
         with open(self.path, "w") as f:
             f.write("not json")
-        self.assertEqual((True, False), (self.control.read()["enforce"], self.control.read()["exists"]))
+        self.assertEqual((True, False), (self.control.read()["protect"], self.control.read()["exists"]))
 
-    def test_the_token_is_checked(self):
-        self.control.check_token("s3cret-token")
-        for wrong in ["wrong", "", None, "s3cret-toke"]:
-            with self.assertRaises(control.ControlError):
-                self.control.check_token(wrong)
-
-    def test_whitespace_picked_up_when_pasting_is_ignored_but_nothing_else(self):
-        for pasted in ["s3cret-token ", " s3cret-token", "s3cret-token\n", "\ts3cret-token\r\n"]:
-            self.control.check_token(pasted)
-        for wrong in ["s3cret token", "s3cret-token x", "S3CRET-TOKEN", "s3cret-token\ns3cret-token"]:
-            with self.assertRaises(control.ControlError):
-                self.control.check_token(wrong)
-
-    def test_without_a_token_nothing_can_change(self):
-        read_only = control.ControlStore(self.path, token=None)
-        self.assertFalse(read_only.writable)
-        with self.assertRaises(control.ControlError):
-            read_only.check_token("anything")
-
-    def test_repeated_wrong_tokens_lock_writing_even_for_the_right_one(self):
-        for _ in range(control.MAX_FAILURES):
-            with self.assertRaises(control.ControlError):
-                self.control.check_token("wrong")
-        with self.assertRaises(control.ControlError) as c:
-            self.control.check_token("s3cret-token")
-        self.assertIn("too many", str(c.exception))
 
 
 class ControlApiTests(unittest.TestCase):
@@ -942,8 +917,8 @@ class ControlApiTests(unittest.TestCase):
         with open(jot, "w") as f:
             f.write(RULES_JOT)
         store.load_sensors(self.env.ingestor.db, [jot])
-        self.control_path = os.path.join(self.env.dir, "control.json")
-        self.control = control.ControlStore(self.control_path, token="s3cret-token")
+        self.control_path = os.path.join(self.env.dir, "control.yaml")
+        self.control = control.ControlStore(self.control_path)
         self.app = server.App(self.env.db, self.env.ingestor, control=self.control)
         httpd = server.make_server(self.app, "127.0.0.1", 0)
         self.port = httpd.server_address[1]
@@ -951,12 +926,10 @@ class ControlApiTests(unittest.TestCase):
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         self.addCleanup(httpd.shutdown)
 
-    def call(self, body=None, token="s3cret-token"):
+    def call(self, body=None):
         headers = {"Host": "127.0.0.1:%d" % self.port}
         if body is not None:
             headers.update({"Content-Type": "application/json", "X-JOT-Dashboard": "1"})
-            if token is not None:
-                headers["X-JOT-Admin"] = token
         req = urllib.request.Request("http://127.0.0.1:%d/api/control" % self.port, headers=headers,
                                      method="POST" if body is not None else "GET",
                                      data=json.dumps(body).encode() if body is not None else None)
@@ -974,7 +947,6 @@ class ControlApiTests(unittest.TestCase):
         code, state = self.call()
         self.assertEqual(200, code)
         self.assertEqual({"rule-a": "block", "rule-b": "monitor"}, self.modes(state))
-        self.assertTrue(state["writable"])
 
     def test_switching_a_rule_changes_the_file_and_the_mode(self):
         code, state = self.call({"rules": {"rule-a": False, "rule-b": True}})
@@ -987,16 +959,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual({"rule-a": "monitor", "rule-b": "monitor"}, self.modes(state))
         self.assertFalse(state["master"])
 
-    def test_changes_need_the_right_token(self):
-        for token in [None, "wrong", ""]:
-            code, body = self.call({"master": False}, token=token)
-            self.assertEqual(403, code)
-        self.assertFalse(self.control.read()["exists"])
 
-    def test_too_many_wrong_tokens_gets_429(self):
-        codes = [self.call({"master": False}, token="wrong")[0] for _ in range(control.MAX_FAILURES + 1)]
-        self.assertEqual(429, codes[-1])
-        self.assertEqual(429, self.call({"master": False})[0])
 
     def test_unknown_rules_and_sensors_that_are_not_rules_are_refused(self):
         for rule in ["nobody", "just-watching"]:
@@ -1007,12 +970,6 @@ class ControlApiTests(unittest.TestCase):
     def test_without_a_control_file_the_panel_is_off(self):
         app = server.App(self.env.db, self.env.ingestor)
         self.assertEqual({"enabled": False}, app.control_state())
-
-    def test_read_only_when_no_token_was_given(self):
-        app = server.App(self.env.db, self.env.ingestor, control=control.ControlStore(self.control_path, token=None))
-        self.assertFalse(app.control_state()["writable"])
-        with self.assertRaises(control.ControlError):
-            app.change_control("anything", False, None)
 
     def test_the_panel_shows_recent_violations_and_what_agents_applied(self):
         now = int(time.time() * 1000)
@@ -1025,6 +982,36 @@ class ControlApiTests(unittest.TestCase):
         rule_a = next(r for r in state["rules"] if r["name"] == "rule-a")
         self.assertEqual({"blocked": 1, "monitored": 2}, rule_a["last_hour"])
         self.assertEqual("rule-a=monitor", state["applied"][0]["change"])
+
+    def test_an_agent_that_says_it_is_locked_to_monitor_shows_as_monitor_whatever_the_file_says(self):
+        now = int(time.time() * 1000)
+        self.env.write(event(1, sensor="jot-config", capture="lock=monitor", ts=now, run="r9"),
+                       event(2, sensor="jot-config", capture="jots=/x/jots.yaml", ts=now, run="r9"),
+                       event(3, sensor="jot-config", capture="loaded=rule-a", ts=now, run="r9"))
+        self.env.ingestor.poll()
+        state = self.app.control_state()
+        self.assertTrue(state["agent"]["locked"])
+        self.assertEqual("/x/jots.yaml", state["agent"]["jots"])
+        self.assertFalse(state["master"])
+        self.assertTrue(all(r["mode"] == "monitor" for r in state["rules"]))
+        rule_a = next(r for r in state["rules"] if r["name"] == "rule-a")
+        self.assertTrue(rule_a["loaded"])
+
+    def test_the_panel_says_which_rules_the_running_agent_did_not_load(self):
+        now = int(time.time() * 1000)
+        self.env.write(event(1, sensor="jot-config", capture="lock=none", ts=now, run="r9"),
+                       event(2, sensor="jot-config", capture="loaded=rule-a", ts=now, run="r9"))
+        self.env.ingestor.poll()
+        state = self.app.control_state()
+        self.assertFalse(state["agent"]["locked"])
+        loaded = {r["name"]: r["loaded"] for r in state["rules"]}
+        self.assertTrue(loaded["rule-a"])
+        self.assertTrue(any(v is False for v in loaded.values()), loaded)
+
+    def test_without_a_startup_report_nothing_is_claimed_about_loaded_rules(self):
+        state = self.app.control_state()
+        self.assertFalse(state["agent"]["known"])
+        self.assertTrue(all(r["loaded"] is None for r in state["rules"]))
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
@@ -1082,13 +1069,12 @@ class HttpTests(unittest.TestCase):
         # hidden pages must stay hidden, an earlier layout showed two pages at once because a display rule won
         self.assertIn(b"[hidden] { display: none !important; }", page)
         self.assertIn(b'id="eventsPage"', page)
-        self.assertIn(b'id="policyPage" hidden', page)
+        self.assertIn(b'id="jotsPage" hidden', page)
         self.assertNotIn(b'id="feed"', page)       # the Latest events panel became a view
         # times are shown in local time, a UTC column next to local clock times looked like a bug
         self.assertNotIn(b"'unixepoch')", page)
         self.assertIn(b"white-space: nowrap; display: inline-block;", page)     # badges must not wrap
-        # the token field keeps its own width, a full width text input pushed the Show and Hide button down a line
-        self.assertIn(b"#tokenBox input { width: 240px;", page)
+        self.assertNotIn(b"adminToken", page)       # no token to type, changes just work
         # tables must not scroll inside the page, an earlier height limit hid the last rows
         self.assertNotIn(b"max-height: 560px", page)
         # the Events page can be cleared, which sets a start time
@@ -1207,7 +1193,7 @@ class OriginTests(unittest.TestCase):
         self.write(event(1, stack=JDK_ONLY), event(2, stack=VIA_LIBRARY), event(3, stack=LIBRARY_ONLY),
                    event(4, stack=JDK_ONLY, action="blocked", sensor="block-x"),
                    event(5, stack=JDK_ONLY, action="monitored", sensor="block-y"),
-                   event(6, stack=None, sensor="jot-control"))
+                   event(6, stack=None, sensor="jot-config"))
         ing.poll()
         self.assertTrue(store.get_app_only(self.db))
         self.assertEqual(sorted(self.origins("events")), [2, 4, 5, 6])
@@ -1215,6 +1201,32 @@ class OriginTests(unittest.TestCase):
         self.assertEqual(sorted(self.origins("events")), [1, 2, 3, 4, 5, 6])
         store.set_app_only(ing.db, True)
         self.assertEqual(sorted(self.origins("events")), [2, 4, 5, 6])
+
+    def test_the_blocked_and_monitored_filters_keep_only_those_events(self):
+        ing = self.ingestor()
+        self.write(event(1, stack=JSP), event(2, stack=JSP, action="blocked", sensor="block-x"),
+                   event(3, stack=JDK_ONLY, action="monitored", sensor="block-y"), event(4, stack=JSP, sensor="get-users"))
+        ing.poll()
+        self.assertEqual({"blocked": False, "monitored": False}, store.get_action_filter(self.db))
+        self.assertEqual(sorted(self.origins("events")), [1, 2, 3, 4])
+        store.set_action_filter(ing.db, blocked=True)
+        self.assertEqual({"blocked": True, "monitored": False}, store.get_action_filter(self.db))
+        self.assertEqual(sorted(self.origins("events")), [2])
+        store.set_action_filter(ing.db, monitored=True)
+        self.assertEqual(sorted(self.origins("events")), [2, 3])
+        store.set_action_filter(ing.db, blocked=False)
+        self.assertEqual(sorted(self.origins("events")), [3])
+        store.set_action_filter(ing.db, monitored=False)
+        self.assertEqual(sorted(self.origins("events")), [1, 2, 3, 4])
+
+    def test_jot_control_events_are_left_out_until_asked_for(self):
+        ing = self.ingestor()
+        self.write(event(1, stack=JSP), event(2, stack=None, sensor="jot-control", capture="rule-a=monitor"))
+        ing.poll()
+        self.assertFalse(store.get_show_jot_control(self.db))
+        self.assertEqual(sorted(self.origins("events")), [1])
+        store.set_show_jot_control(ing.db, True)
+        self.assertEqual(sorted(self.origins("events")), [1, 2])
 
     def test_changing_the_packages_tags_the_stored_events_again(self):
         self.write(event(1, stack=VIA_LIBRARY), event(2, stack=LIBRARY_ONLY))
@@ -1501,6 +1513,20 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(["route:/app/profile"], [n["id"] for n in g["nodes"] if n["kind"] == "route"])
         self.assertIn("/app/list.jsp", g["routes"], "the list of routes is of all of them")
 
+    def test_the_blocked_and_monitored_filters_apply_to_the_graph_and_keep_each_event_on_its_route(self):
+        g, nodes, edges = self.graph()
+        everything = {n["id"] for n in g["nodes"] if n["kind"] == "effect"}
+        self.app.set_action_filter(True, None)
+        g, nodes, edges = self.graph()
+        effects = [n for n in g["nodes"] if n["kind"] == "effect"]
+        self.assertTrue(effects)
+        self.assertLess(len(effects), len(everything))
+        self.assertTrue(all(n["blocked"] for n in effects), "only blocked effects are left")
+        routes = {n["label"] for n in g["nodes"] if n["kind"] == "route"}
+        self.assertNotIn("(outside a request)", routes, "the get-routes events are hidden by the filter but still name the route")
+        self.assertTrue(routes)
+        self.assertIn("/app/list.jsp", g["routes"], "the route list isn't narrowed by the filter")
+
     def test_it_follows_the_filters(self):
         self.env.write(event(20, sensor="get-hashes", capture="MD5", trace=50, stack=["java.base/a.B.c(B.java:1)", "java.base/d.E.f(E.java:1)"]))
         self.env.ingestor.poll()
@@ -1563,6 +1589,23 @@ class GraphTests(unittest.TestCase):
         with get("/graph.js") as r:
             self.assertIn(b"layout", r.read())
         self.assertEqual(8, store.run_query(self.env.db, "SELECT COUNT(*) FROM events_raw")["rows"][0][0])
+
+
+class JotsFileTests(unittest.TestCase):
+    def test_jots_file_lists_jots_recursively_and_resolves_paths(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "rules", "deep"))
+            for rel in ("base.jot", "rules/deep/r.jot"):
+                with open(os.path.join(d, rel), "w") as fh:
+                    fh.write("sensors: []\n")
+            jots_file = os.path.join(d, "jots.yaml")
+            with open(jots_file, "w") as fh:
+                fh.write("jots:\n- base.jot\n- rules\ncontrol: ctl.json\napp:\n- com.acme\n- org.apache.jsp\n")
+            jots, ctl, app = store.read_jots_file(jots_file)
+            self.assertEqual(os.path.join(d, "ctl.json"), ctl)
+            self.assertEqual(["com.acme", "org.apache.jsp"], app)
+            self.assertEqual([os.path.join(d, "base.jot"), os.path.join(d, "rules", "deep", "r.jot")],
+                             store.jot_files(jots))
 
 
 if __name__ == "__main__":

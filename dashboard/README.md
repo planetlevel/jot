@@ -8,13 +8,13 @@ run later against the history.
 
 Run your application with JOT writing JSON events.
 
-    java -Djot.output=json -Djot.output.file=/var/log/jot/app.jsonl -javaagent:jot.jar=jots/ -jar app.jar
+    java -Djot.output=json -Djot.output.file=/var/log/jot/app.jsonl -javaagent:jot.jar=jots.yaml -jar app.jar
 
 Then start the dashboard and open http://localhost:8765.
 
     pip install -r requirements.txt
     export ANTHROPIC_API_KEY=...        # only needed for natural language questions
-    python3 server.py --log /var/log/jot/app.jsonl --jot ../src/main/resources
+    python3 server.py --log /var/log/jot/app.jsonl --jots ../demo/ticketbook/jots.yaml
 
 Instead of exporting the key you can keep it in `dashboard/.env`, which git ignores and the server reads at
 startup. Copy `.env.example`, fill it in, and run `chmod 600 .env`. A variable set in your shell wins over the file.
@@ -24,11 +24,10 @@ Without a key the dashboard still works. The preset views and the SQL box don't 
 | Option | Description |
 |--------|-------------|
 | `--log` | JSON event log to follow. May be a glob such as `'logs/*.jsonl'`, and may be given more than once. Default `jot-events.jsonl` |
-| `--jot` | A `.jot` file or a directory of them. The sensor names and descriptions help the model understand your questions. May be given more than once |
+| `--jots` | The jots file that lists the JOTs and the control file. Start each agent with `-javaagent:jot.jar=<this path>`, so the agent and the dashboard use the same definitions |
 | `--db` | SQLite file that holds the events. Default `jot-dashboard.db`. Delete it to start fresh |
-| `--app` | A package of your application, like `com.acme`. May be given more than once. See App events only below |
+| `--app` | A package of your application, like `com.acme`. May be given more than once, and adds to the `app:` list in the jots file. See App events only below |
 | `--since` | Show only events from this time on. `now`, or a date and time like `2026-10-16T09:30`. Nothing is deleted |
-| `--control` | Control file agents poll, to switch rules between monitor and block. See below |
 | `--port`, `--host` | Where to listen. Default `127.0.0.1:8765`. See the note on access below |
 
 Environment variables are `ANTHROPIC_API_KEY`, `JOT_DASHBOARD_MODEL` (default `claude-sonnet-5-5`) and
@@ -59,10 +58,14 @@ Click a node to follow its paths, everything that does not lead to or from it fa
 what the node captured, where it comes from and where it leads, and **Show these events** opens them in a search.
 A picked node has its own address, like `#graph/effect%3Aget-ciphers`. The Route box shows the paths of one route.
 
-Only your application's code is drawn, as set by `--app`, so the JDK, the server and libraries don't clutter it. Sensors
+Only your application's code is drawn, as set by `app:` in the jots file, so the JDK, the server and libraries don't clutter it. Sensors
 that only describe the request, like who the user was, are left out unless you tick **Include request details**. The
 graph follows Clear and App events only, and it redraws by itself when new events arrive. The stack of an event is cut
 at `jot.output.stack` frames, 25 by default, so an older event may be missing the outer methods. TicketBook records 500.
+
+**Blocked** and **Monitored** in the toolbar limit the page to events where a rule blocked a call, or where a rule reported that it would have and let the call go ahead. Tick one, or both to see both. With neither ticked everything shows. They apply to the views, the search and the counts, and they are off until you tick them.
+
+**JOT control events** shows the events the agent writes when a rule is switched between monitor and protect. They are left out by default. The Protection panel still lists the latest changes whatever this is set to.
 
 ## Searching and refreshing
 
@@ -71,7 +74,7 @@ Every word has to match somewhere in the event, in its capture, message, sensor,
 finds anything with RSA in it and `hash jar` needs both. Put quotes around a phrase, and a leading `-` leaves out
 what follows, like `-jasper`. A `field:value` narrows to one field. The fields are `sensor` (contains), `action`,
 `origin`, `app`, `run` and `host` (exact), and `trace` and `pid` (a number). For example `sensor:get-hashes action:observed -jasper`.
-The search honors Clear and App events only, and says how many more matches the filter left out.
+The search honors Clear, App events only, Blocked and Monitored, and says how many more matches the filter left out.
 
 **Refresh** fetches the latest events now, and the time beside it says when the page last fetched. With
 **Refresh every 3 seconds** ticked, which is the default, the current view and the counts are fetched every 3 seconds.
@@ -103,12 +106,12 @@ Each event is tagged as it is stored, so the filter is cheap and the model and t
 | `origin` | `app` when a frame is application code, `library` when the stack has libraries but nothing of yours, `platform` when it is all JDK and server, `none` when the event has no stack |
 | `app_frame` | The innermost frame of the application, like `com.acme.Ticket.encrypt(Ticket.java:125)` |
 
-Which code is yours comes from `--app`, for example `--app com.acme --app org.apache.jsp` (Tomcat compiles a page to
+Which code is yours comes from the `app:` list in the jots file, for example `com.acme` and `org.apache.jsp` (Tomcat compiles a page to
 `org.apache.jsp`, which is your code). Without it, anything that isn't the JDK or the server counts as yours, and
 nothing is tagged `library`. A servlet's `service` method counts as the application, since the container calls it
 on the application's behalf, which keeps the route and user sensors. Blocked and reported events are never left out.
 The stats line says how many events are left out, and unticking the box brings them back. Nothing is deleted.
-If you change `--app` the stored events are tagged again at the next start.
+If you change the app packages the stored events are tagged again at the next start.
 
 ## What the model sees
 
@@ -130,19 +133,19 @@ displays them as text.
 
 ## Switching rules between monitor and block
 
-Start the dashboard with `--control /path/to/control.json` and `JOT_DASHBOARD_ADMIN_TOKEN` set, and start each
-application with `-Djot.control=/path/to/control.json`. The Enforcement panel then lists every rule, meaning every
+Name the control file in the jots file (`control: control.yaml`), start the dashboard with `--jots`, and start each application with `-javaagent:jot.jar=<the same jots file>`. The Protection panel then lists every rule, meaning every
 sensor that has an `exception`, with a Monitor and a Block button, a master switch that makes all rules report only,
 and how many violations each saw in the last hour. It also shows which changes agents have confirmed applying, taken
 from the `jot-control` events in their logs.
 
 Agents pull this. The dashboard writes the file and the agent reads it once a second. Nothing connects to an agent and
 agents accept no connections. The agent and the dashboard must share the file, so this suits one machine or a shared
-volume. Because anyone who can change the file can switch protection off, changes need the admin token (typed into the
-page, never stored), five wrong tokens lock changes for a minute, the file is replaced atomically, and every change is
-logged with before and after in `<control file>.audit`. Without the token variable the panel is read only.
+volume. Because anyone who can change the file can switch protection off, there is no login because the dashboard is for local use by a developer. The file is replaced atomically, and every
+change is logged with before and after in `<control file>.audit`.
 
-The panel shows what the file says. An agent started with `-Djot.enforce=false` ignores it.
+The panel shows what the file says. An agent started with `-Djot.protect=false` ignores the file, and the agent reports that
+at startup in `jot-config` events, so the panel shows it as locked to monitor and disables the switches. The same events
+say which JOTs the agent loaded, and a rule the agent didn't load is marked as such.
 
 ## Access
 

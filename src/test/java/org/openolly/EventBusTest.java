@@ -200,8 +200,8 @@ class EventBusTest {
 	// ---- observe, monitor and block
 
 	@org.junit.jupiter.api.AfterEach
-	void restoreEnforcement() {
-		Sensor.enforceAll( true );
+	void restoreProtection() {
+		Sensor.protectAll( true );
 	}
 
 	private Recorder run(Runnable call) {
@@ -224,8 +224,8 @@ class EventBusTest {
 	}
 
 	@Test
-	void testRuleThatIsNotEnforcedReportsAndLetsTheCallGoAhead() {
-		Sensor s = rule().enforce( false );
+	void testRuleThatIsNotProtectingReportsAndLetsTheCallGoAhead() {
+		Sensor s = rule().protect( false );
 		java.util.concurrent.atomic.AtomicReference<List<Object>> out = new java.util.concurrent.atomic.AtomicReference<>();
 		Recorder r = run( () -> out.set( fire( s ) ) );   // no exception escapes
 		Assertions.assertEquals( "[bar]", SafeString.format( out.get(), false ) );
@@ -238,34 +238,34 @@ class EventBusTest {
 	}
 
 	@Test
-	void testRuleIsEnforcedByDefault() {
+	void testRuleProtectsByDefault() {
 		Sensor s = rule();
-		Assertions.assertTrue( s.isEnforced() );
+		Assertions.assertTrue( s.isProtected() );
 		Recorder r = run( () -> Assertions.assertThrows( SensorException.class, () -> fire( s ) ) );
 		Assertions.assertEquals( Event.Action.BLOCKED, r.events.get( 0 ).getAction() );
 	}
 
 	@Test
 	void testTheGlobalSwitchMakesEveryRuleReportOnly() {
-		Sensor.enforceAll( false );
+		Sensor.protectAll( false );
 		Sensor s = rule();
-		Assertions.assertFalse( s.isEnforced() );
+		Assertions.assertFalse( s.isProtected() );
 		Recorder r = run( () -> fire( s ) );
 		Assertions.assertEquals( List.of( Event.Action.MONITORED ), r.events.stream().map( Event::getAction ).toList() );
 	}
 
 	@Test
-	void testARuleCannotSwitchEnforcementBackOnOverTheGlobalSwitch() {
-		Sensor.enforceAll( false );
-		Sensor s = rule().enforce( true );
-		Assertions.assertFalse( s.isEnforced() );
+	void testARuleCannotSwitchProtectionBackOnOverTheGlobalSwitch() {
+		Sensor.protectAll( false );
+		Sensor s = rule().protect( true );
+		Assertions.assertFalse( s.isProtected() );
 		Recorder r = run( () -> fire( s ) );
 		Assertions.assertEquals( Event.Action.MONITORED, r.events.get( 0 ).getAction() );
 	}
 
 	@Test
 	void testOneRuleCanBeStagedWhileOthersStillBlock() {
-		Sensor staged = rule().enforce( false );
+		Sensor staged = rule().protect( false );
 		Sensor live = rule();
 		Recorder r = run( () -> {
 			fire( staged );
@@ -276,8 +276,8 @@ class EventBusTest {
 	}
 
 	@Test
-	void testSensorsWithoutAnExceptionObserveWhetherOrNotRulesAreEnforced() {
-		Sensor.enforceAll( false );
+	void testSensorsWithoutAnExceptionObserveWhetherOrNotRulesProtect() {
+		Sensor.protectAll( false );
 		Sensor s = new Sensor().method( "a.b.Class.method" ).capture( "#P0" );
 		Recorder r = run( () -> fire( s ) );
 		Assertions.assertEquals( List.of( Event.Action.OBSERVED ), r.events.stream().map( Event::getAction ).toList() );
@@ -285,15 +285,39 @@ class EventBusTest {
 
 	@Test
 	void testAReportOnlyRuleWithNoCapturesStillReports() {
-		Sensor s = new Sensor().method( "a.b.Class.method" ).exception( "No process creation" ).enforce( false );
+		Sensor s = new Sensor().method( "a.b.Class.method" ).exception( "No process creation" ).protect( false );
 		Recorder r = run( () -> fire( s ) );
 		Assertions.assertEquals( 1, r.events.size() );
 		Assertions.assertEquals( Event.Action.MONITORED, r.events.get( 0 ).getAction() );
 	}
 
 	@Test
+	void testASandboxReportsOnceWhenItsScopeIsEntered() {
+		Sensor s = rule().scope( "a.b.Class.outer" ).scope( "a.b.Class.inner" );
+		Recorder r = run( () -> {
+			s.enterScopeScope( 0, new Object[] { "x" } );
+			s.enterScopeScope( 1, new Object[] { "y" } );   // already inside, so not an entry
+			s.leaveScopeScope( 1 );
+			s.leaveScopeScope( 0 );
+			s.enterScopeScope( 1, new Object[] { "z" } );   // a second entry
+			s.leaveScopeScope( 1 );
+		} );
+		Assertions.assertEquals( 2, r.events.size() );
+		Assertions.assertEquals( s.getName() + "-entered", r.events.get( 0 ).getRule() );
+		Assertions.assertEquals( Event.Action.OBSERVED, r.events.get( 0 ).getAction() );
+		Assertions.assertEquals( "[x]", r.events.get( 0 ).getCapture() );
+	}
+
+	@Test
+	void testASensorWithNoExceptionDoesNotReportEnteringItsScope() {
+		Sensor s = new Sensor().method( "a.b.Class.method" ).scope( "a.b.Class.outer" );
+		Recorder r = run( () -> s.enterScopeScope( 0, null ) );
+		Assertions.assertEquals( 0, r.events.size() );
+	}
+
+	@Test
 	void testRuleThatDoesNotMatchReportsNothingInAnyMode() {
-		Sensor s = new Sensor().method( "a.b.Class.method" ).capture( "#P0" ).matcher( "nomatch" ).exception( "x" ).enforce( false );
+		Sensor s = new Sensor().method( "a.b.Class.method" ).capture( "#P0" ).matcher( "nomatch" ).exception( "x" ).protect( false );
 		Recorder r = run( () -> fire( s ) );
 		Assertions.assertTrue( r.events.isEmpty() );
 	}

@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { layout, through, curve } = require("../static/graph.js");
+const { layout, through, pathEdges, curve } = require("../static/graph.js");
 
 const n = (id, kind, events = 1) => ({ id, kind, label: id, events });
 const e = (from, to, events = 1) => ({ from, to, events });
@@ -69,4 +69,19 @@ test("an empty graph has a size", () => {
 test("a curve starts at the right edge of one node and ends at the left edge of the next", () => {
   assert.strictEqual(curve({ x: 0, y: 10 }, { x: 340, y: 50 }, 220).startsWith("M220,10 C"), true);
   assert.ok(curve({ x: 0, y: 10 }, { x: 340, y: 50 }, 220).endsWith("340,50"));
+});
+
+test("only the edges on a path through a node light up, not a call that skips it", () => {
+  // init calls both create and update, and create calls update, so init -> update skips create
+  const ns = [n("route", "route"), n("init", "code"), n("create", "code"), n("update", "code"), n("effect", "effect")];
+  const es = [e("route", "init"), e("init", "create"), e("create", "update"), e("init", "update"), e("update", "effect")];
+  const on = [...pathEdges("create", es)].map((x) => x.from + ">" + x.to).sort();
+  assert.deepStrictEqual(on, ["create>update", "init>create", "route>init", "update>effect"]);
+  assert.ok(through("create", es).has("init"), "init is still on a path through create");
+});
+
+test("every inbound edge of a node lights up, however many there are", () => {
+  const es = [e("r1", "a"), e("r2", "b"), e("a", "m"), e("b", "m"), e("c", "m"), e("m", "s")];
+  const on = [...pathEdges("m", es)].filter((x) => x.to === "m").map((x) => x.from).sort();
+  assert.deepStrictEqual(on, ["a", "b", "c"]);
 });

@@ -60,18 +60,18 @@ public class Sensor {
 	private List<Matcher> positiveMatchers = new ArrayList<Matcher>();
 	private String exception = null;
 	private boolean debug = false;
-	// false stops this rule from being enforced, so it only reports. Null leaves it to jot.enforce
-	private Boolean enforce = null;
+	// false stops this rule from protecting, so it only reports. Null leaves it to jot.protect
+	private Boolean protect = null;
 
-	// -Djot.enforce=false makes every rule with an exception only report, nothing is stopped
-	private static volatile boolean enforceAll = !"false".equalsIgnoreCase( System.getProperty( "jot.enforce" ) );
+	// -Djot.protect=false makes every rule with an exception only report, nothing is stopped
+	private static volatile boolean protectAll = !"false".equalsIgnoreCase( System.getProperty( "jot.protect" ) );
 
 	// what the control file says, see ControlFile. The master switch, and this rule's own setting if it has one
 	private static volatile boolean controlMaster = true;
-	private volatile Boolean controlEnforce = null;
+	private volatile Boolean controlProtect = null;
 	private boolean hasReturn = false;
 
-	private Pattern namePattern = Pattern.compile( "([a-z][a-z0-9]*\\-)*[a-z][a-z0-9]*");
+	private Pattern namePattern = Pattern.compile( "[a-z][a-z0-9]*(\\-[a-z0-9]+)*");
 	private Pattern descriptionPattern = Pattern.compile( "^.*$");
 	private Pattern methodPattern = Pattern.compile( "^(!)?([\\p{L}_$][\\p{L}\\p{N}_$]*\\.)*(<init>|[\\p{L}_$][\\p{L}\\p{N}_$]*)$");
 	private Pattern annotationPattern = Pattern.compile( "^@([\\p{L}_$][\\p{L}\\p{N}_$]*\\.)*[\\p{L}_$][\\p{L}\\p{N}_$]*$");
@@ -225,12 +225,12 @@ public class Sensor {
 			if ( getException() != null ) {
 				if ( captures.isEmpty() || !results.isEmpty() ) {
 					String details = results.stream().map( String::valueOf ).collect( Collectors.joining( " | " ) );
-					if ( isEnforced() ) {
+					if ( isProtected() ) {
 						SensorException e = new SensorException( getException() );
 						EventBus.publish( new Event( getName(), details, stack, Event.Action.BLOCKED, getException() ) );
 						throw e;
 					}
-					// not enforced, so say what would have been stopped and let the call go ahead
+					// not protecting, so say what would have been stopped and let the call go ahead
 					EventBus.publish( new Event( getName(), details, stack, Event.Action.MONITORED, getException() ) );
 				}
 			}			
@@ -489,23 +489,23 @@ public class Sensor {
 
 	/**
 	 * Setting this to false makes the rule report violations without stopping them. A rule can only turn its
-	 * own enforcement off. It can't turn it on when jot.enforce is false, which switches off every rule.
+	 * own protection off. It can't turn it on when jot.protect is false, which switches off every rule.
 	 */
-	public Sensor enforce( Boolean value ) {
-		enforce = value;
+	public Sensor protect( Boolean value ) {
+		protect = value;
 		return this;
 	}
 
 	/**
 	 * True if a violation of this rule stops the call. Either master switch being off turns every rule off,
-	 * and the control file can't turn on what -Djot.enforce=false turned off. Otherwise the control file's
-	 * setting for this rule wins over the .jot file's, so a rule written with enforce: false can be switched
+	 * and the control file can't turn on what -Djot.protect=false turned off. Otherwise the control file's
+	 * setting for this rule wins over the .jot file's, so a rule written with protect: false can be switched
 	 * on while the application runs.
 	 */
-	public boolean isEnforced() {
-		if ( !enforceAll || !controlMaster ) return false;
-		if ( controlEnforce != null ) return controlEnforce;
-		return !Boolean.FALSE.equals( enforce );
+	public boolean isProtected() {
+		if ( !protectAll || !controlMaster ) return false;
+		if ( controlProtect != null ) return controlProtect;
+		return !Boolean.FALSE.equals( protect );
 	}
 
 	/**
@@ -515,18 +515,23 @@ public class Sensor {
 	public static void applyControl(boolean master, java.util.Map<String, Boolean> rules) {
 		controlMaster = master;
 		for ( Sensor s : sensors ) {
-			s.controlEnforce = rules.get( s.getName() );
+			s.controlProtect = rules.get( s.getName() );
 		}
 	}
 
-	/** Whether the control file's master switch has enforcement on. */
+	/** Whether the control file's master switch has protection on. */
 	public static boolean isControlMasterOn() {
 		return controlMaster;
 	}
 
-	/** Set whether rules are enforced at all, the same as -Djot.enforce. */
-	public static void enforceAll( boolean value ) {
-		enforceAll = value;
+	/** True if the JVM was started with -Djot.protect=false, which locks every rule to report only. */
+	public static boolean isLockedToMonitor() {
+		return !protectAll;
+	}
+
+	/** Set whether rules protect at all, the same as -Djot.protect. */
+	public static void protectAll( boolean value ) {
+		protectAll = value;
 	}
 
 	
@@ -626,6 +631,10 @@ public class Sensor {
 	public static void enterScopeScope( int sensorIndex, int scopeIndex ) {
 		getSensor( sensorIndex ).enterScopeScope( scopeIndex );
 	}
+
+	public static void enterScopeScope( int sensorIndex, int scopeIndex, Object[] args ) {
+		getSensor( sensorIndex ).enterScopeScope( scopeIndex, args );
+	}
 	
 	public static void leaveScopeScope( int sensorIndex, int scopeIndex ) {
 		getSensor( sensorIndex ).leaveScopeScope( scopeIndex );
@@ -637,9 +646,35 @@ public class Sensor {
 	}
 
 	public void enterScopeScope(int scopeIndex) {
+		enterScopeScope( scopeIndex, null );
+	}
+
+	public void enterScopeScope(int scopeIndex, Object[] args) {
 		MethodLocator loc = scopes.get(scopeIndex);
 		if ( debug ) logger.atFine().log( "[JOT %s] SCOPE SCOPE" + loc.scopeValue() +" >> "+ getName(), this);
+		boolean first = getException() != null && !JotScope.active() && !inAnyScope();
 		loc.enterScope();
+		if ( first ) publishEntered( args );
+	}
+
+	private boolean inAnyScope() {
+		for ( MethodLocator loc : scopes ) if ( loc.scopeValue() > 0 ) return true;
+		return false;
+	}
+
+	/**
+	 * A rule that sandboxes some code also says when that code was entered, as an observed event named
+	 * for the rule plus "-entered". It is sent once for each outermost entry, whether or not the sandbox
+	 * then blocked anything, so there is a trail of exposure as well as of attacks.
+	 */
+	private void publishEntered(Object[] args) {
+		JotScope.enter();
+		try {
+			String capture = args == null ? "" : StringUtils.normalizeSpace( SafeString.format( args, debug ) );
+			EventBus.publish( new Event( getName() + "-entered", capture, currentStack() ) );
+		} finally {
+			JotScope.exit();
+		}
 	}
 
 	public void leaveScopeScope(int scopeIndex) {

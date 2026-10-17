@@ -24,7 +24,7 @@ run() {
   rm -f pwned.txt
 }
 echo "=== without JOT ==="; run
-echo; echo "=== with JOT, monitor only (-Djot.enforce=false). The attack still works and is recorded ==="
-run -Djot.enforce=false -Djot.verbose=true -javaagent:$JAR=log4shell.jot
+echo; echo "=== with JOT, monitor only (-Djot.protect=false). The attack still works and is recorded ==="
+run -Djot.protect=false -Djot.verbose=true -javaagent:$JAR=jots.yaml
 echo; echo "=== with JOT, enforcing (log4shell.jot). The attack is stopped ==="
-run -Djot.verbose=true -javaagent:$JAR=log4shell.jot
+run -Djot.verbose=true -javaagent:$JAR=jots.yaml

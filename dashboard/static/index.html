@@ -38,10 +38,10 @@
                  text-decoration: none; }
   header nav a.active { color: var(--text); border-bottom-color: var(--accent); }
   header nav a:hover { color: var(--text); }
-  #policyPill { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; text-decoration: none; }
-  #policyPill.block { background: var(--blocked-bg); color: var(--blocked); }
-  #policyPill.partial { background: var(--monitored-bg); color: var(--monitored); }
-  #policyPill.observe { background: var(--monitored-bg); color: var(--monitored); }
+  #jotsPill { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; text-decoration: none; }
+  #jotsPill.block { background: var(--blocked-bg); color: var(--blocked); }
+  #jotsPill.partial { background: var(--monitored-bg); color: var(--monitored); }
+  #jotsPill.monitor { background: var(--monitored-bg); color: var(--monitored); }
 
   .menu { position: relative; }
   #recentBtn { border: 0; background: transparent; color: var(--muted); font-weight: 600; padding: 14px 10px 11px; border-radius: 0; }
@@ -55,13 +55,15 @@
   .menulist .sep { border-top: 1px solid var(--line); margin: 6px 0; }
   .menulist .clear { color: var(--muted); font-size: 13px; }
   main { padding: 16px; max-width: 1400px; margin: 0 auto; }
+  .sharedbar { padding: 12px 16px 0; max-width: 1400px; margin: 0 auto; }
+  .sharedbar .toolbar { margin: 0; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
   .card + .card, .card + div, div + .card { margin-top: 16px; }
-  .policy { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
-  .policy.has-detail { grid-template-columns: minmax(0, 1fr) 440px; }
-  .policy > .wide { grid-column: 1 / -1; }
-  .policy > * + * { margin-top: 0; }
-  @media (max-width: 960px) { .policy.has-detail { grid-template-columns: minmax(0, 1fr); } }
+  .jots { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+  .jots.has-detail { grid-template-columns: minmax(0, 1fr) 440px; }
+  .jots > .wide { grid-column: 1 / -1; }
+  .jots > * + * { margin-top: 0; }
+  @media (max-width: 960px) { .jots.has-detail { grid-template-columns: minmax(0, 1fr); } }
 
   form.ask { display: flex; gap: 8px; }
   input[type=text], input[type=search], input[type=password], textarea, select {
@@ -96,6 +98,7 @@
   th { position: sticky; top: 0; background: var(--panel); text-align: left; border-bottom: 1px solid var(--line); padding: 6px 10px; white-space: nowrap; }
   td { padding: 5px 10px; border-bottom: 1px solid var(--line); vertical-align: top; max-width: 460px; overflow-wrap: anywhere; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th.num { text-align: right; }
   td.null { color: var(--muted); }
   tr:last-child td { border-bottom: 0; }
   table.grid th.col { text-align: center; }
@@ -119,13 +122,13 @@
   svg text { fill: var(--text); font-size: 12px; }
   svg .muted { fill: var(--muted); }
 
-  /* policy page */
+  /* jots page */
   h2.section { margin: 0 0 2px; font-size: 17px; }
   .modebar { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-top: 10px; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .seg button { border: 0; border-radius: 0; padding: 7px 18px; background: var(--panel); font-weight: 600; }
   .seg button + button { border-left: 1px solid var(--line); }
-  .seg button.active.observe { background: var(--monitored-bg); color: var(--monitored); }
+  .seg button.active.monitor { background: var(--monitored-bg); color: var(--monitored); }
   .seg button.active.block { background: var(--blocked-bg); color: var(--blocked); }
   .seg button:disabled { cursor: default; }
   .modehelp { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
@@ -141,11 +144,6 @@
   button.switch[aria-checked="true"] { background: var(--blocked); }
   button.switch[aria-checked="true"]::after { left: 23px; }
   .applied { color: var(--muted); font-size: 12px; margin-top: 8px; }
-  /* the token field switches between password and text when Show is clicked, so give it a size of its own,
-     otherwise the rule that makes text inputs full width pushes the button onto the next line */
-  #tokenBox { display: inline-flex; flex-wrap: nowrap; gap: 8px; align-items: center; }
-  #tokenBox input { width: 240px; padding: 8px 10px; }
-  #tokenBox button { padding: 8px 14px; }
   .stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
   .jotbar { display: flex; gap: 8px; }
   .jotbar input { flex: 1; }
@@ -238,14 +236,42 @@
   <nav aria-label="Pages">
     <a href="#events" id="navEvents" class="active">Events</a>
     <a href="#graph" id="navGraph">Graph</a>
-<a href="#policy" id="navPolicy">Policy</a>
+<a href="#jots" id="navJots">JOTs</a>
   </nav>
   <div class="menu" id="recentMenu">
     <button type="button" id="recentBtn" aria-haspopup="true" aria-expanded="false">Recent questions &#9662;</button>
     <div class="menulist" id="recentList" role="menu" hidden></div>
   </div>
-  <a href="#policy" id="policyPill" hidden></a>
+  <a href="#jots" id="jotsPill" hidden></a>
 </header>
+
+<!-- ============ filters and counts, shared by the events and graph pages ============ -->
+<div class="sharedbar" id="sharedBar">
+  <div class="toolbar">
+    <div class="stats" id="stats"></div>
+    <div class="toolbar-right">
+      <button type="button" class="small" id="clearBtn" title="Hide everything recorded so far, so the page only shows what happens from now on. The events stay in the log, and Show all brings them back.">Clear</button>
+      <button type="button" class="small" id="showAllBtn" title="Show everything again, including what was hidden by Clear" hidden>Show all</button>
+      <label class="refresh" title="Leave out what the JDK and the application server do on their own. An event stays if any frame of its stack is the application, even when libraries are in between. Blocked and reported events always show.">
+        <input type="checkbox" id="appOnly"> App events only
+      </label>
+      <label class="refresh" title="Show only events where a rule blocked a call. Tick Monitored as well to see both. With neither ticked everything shows.">
+        <input type="checkbox" id="filterBlocked"> Blocked
+      </label>
+      <label class="refresh" title="Show only events where a rule reported that it would have blocked a call, and let it through. Tick Blocked as well to see both. With neither ticked everything shows.">
+        <input type="checkbox" id="filterMonitored"> Monitored
+      </label>
+      <label class="refresh" title="Show the events the agent writes when a rule is switched between monitor and protect. They are left out unless you tick this.">
+        <input type="checkbox" id="showJotControl"> JOT control events
+      </label>
+      <span class="updated" id="updated" title="When the page last fetched new data"></span>
+      <button type="button" class="small" id="refreshBtn" title="Fetch the latest events now">Refresh</button>
+      <label class="refresh" title="Run the current view again every 3 seconds, so new events show up on their own">
+        <input type="checkbox" id="live"> Refresh every 3 seconds
+      </label>
+    </div>
+  </div>
+</div>
 
 <!-- ============ events ============ -->
 <main id="eventsPage">
@@ -265,25 +291,10 @@
     </div>
     <div id="notice"></div>
   </div>
-  <div class="toolbar">
-    <div class="stats" id="stats"></div>
-    <div class="toolbar-right">
-      <button type="button" class="small" id="clearBtn" title="Hide everything recorded so far, so the page only shows what happens from now on. The events stay in the log, and Show all brings them back.">Clear</button>
-      <button type="button" class="small" id="showAllBtn" title="Show everything again, including what was hidden by Clear" hidden>Show all</button>
-      <label class="refresh" title="Leave out what the JDK and the application server do on their own. An event stays if any frame of its stack is the application, even when libraries are in between. Blocked and reported events always show.">
-        <input type="checkbox" id="appOnly"> App events only
-      </label>
-      <span class="updated" id="updated" title="When the page last fetched new data"></span>
-      <button type="button" class="small" id="refreshBtn" title="Fetch the latest events now">Refresh</button>
-      <label class="refresh" title="Run the current view again every 3 seconds, so new events show up on their own">
-        <input type="checkbox" id="live"> Refresh every 3 seconds
-      </label>
-    </div>
-  </div>
   <div id="results" style="margin-top:10px"></div>
 </main>
 
-<!-- ============ policy ============ -->
+<!-- ============ jots ============ -->
 <main id="graphPage" hidden>
   <div class="card">
     <div class="graphtools">
@@ -308,24 +319,19 @@
   </div>
 </main>
 
-<main id="policyPage" hidden>
-  <div class="policy" id="policyGrid">
-    <div class="card wide" id="enforcementCard">
-      <h2 class="section">Enforcement</h2>
-      <div class="hint" id="enforceStatus" style="margin-top:2px"></div>
+<main id="jotsPage" hidden>
+  <div class="jots" id="jotsGrid">
+    <div class="card wide" id="protectionCard">
+      <h2 class="section">Protection</h2>
+      <div class="hint" id="protectStatus" style="margin-top:2px"></div>
       <div class="modebar">
-        <div class="seg" role="group" aria-label="Enforcement mode">
-          <button type="button" id="modeObserve">Observe</button>
-          <button type="button" id="modeBlock">Block</button>
+        <div class="seg" role="group" aria-label="Mode">
+          <button type="button" id="modeMonitor">Monitor</button>
+          <button type="button" id="modeProtect">Protect</button>
         </div>
-        <span id="tokenBox" hidden>
-          <input type="password" id="adminToken" name="jot-admin-token" autocomplete="new-password" spellcheck="false"
-                 data-1p-ignore data-lpignore="true" placeholder="Admin token" aria-label="Admin token">
-          <button type="button" id="tokenShow" title="Show what you typed, to check it">Show</button>
-        </span>
       </div>
-      <p class="modehelp"><b>Observe</b> rules report what they would stop, and stop nothing.
-        <b>Block</b> rules stop the calls they are written to stop. Sensors that aren't rules only ever observe.</p>
+      <p class="modehelp"><b>Monitor</b> rules report what they would stop, and stop nothing.
+        <b>Protect</b> rules stop the calls they are written to stop. Sensors that aren't rules only ever observe.</p>
       <div id="controlBody"></div>
     </div>
 
@@ -377,7 +383,18 @@ const PRESETS = [
   { label: "Busiest call sites", chart: "bar", title: "Busiest call sites",
     sql: "SELECT call_site_name AS call_site, COUNT(*) AS events\nFROM events WHERE call_site_name IS NOT NULL GROUP BY call_site_name ORDER BY events DESC LIMIT 15" },
   { label: "Events per minute", chart: "line", title: "Events per minute",
-    sql: "SELECT strftime('%H:%M', ts/1000, 'unixepoch', 'localtime') AS minute, COUNT(*) AS events\nFROM events GROUP BY minute ORDER BY MIN(ts)" },
+    sql: "SELECT strftime('%H:%M', ts/1000, 'unixepoch', 'localtime') AS minute, COUNT(*) AS events\nFROM events GROUP BY minute ORDER BY MIN(ts)" },  { label: "CVE exposure and attacks", chart: "table", title: "CVE exposure and attacks, times the vulnerable code was entered, and requests a rule blocked or only reported",
+    sql: "SELECT REPLACE(sensor, '-entered', '') AS cve, SUM(sensor LIKE '%-entered') AS entered,\n       COUNT(DISTINCT CASE WHEN action = 'blocked' THEN run || ':' || trace END) AS blocked,\n       COUNT(DISTINCT CASE WHEN action = 'monitored' THEN run || ':' || trace END) AS monitored\nFROM events WHERE sensor LIKE 'cve-%' GROUP BY cve ORDER BY entered DESC, blocked DESC" },
+  { label: "CVE frequency", chart: "bar", title: "CVE frequency, events by CVE sensor. A rule counts every sink call, so a monitored entry can count more than once",
+    sql: "SELECT sensor || ' (' || action || ')' AS cve, COUNT(*) AS events\nFROM events WHERE sensor LIKE 'cve-%' GROUP BY sensor, action ORDER BY events DESC" },
+  { label: "CVEs by route", chart: "table", title: "CVEs by route, which requests reach vulnerable code or trigger a rule",
+    sql: "SELECT r.capture AS route, c.sensor AS cve, c.action, COUNT(*) AS events\nFROM events c JOIN events_raw r ON r.run = c.run AND r.trace = c.trace AND r.sensor = 'get-routes'\nWHERE c.sensor LIKE 'cve-%' GROUP BY r.capture, c.sensor, c.action ORDER BY events DESC" },
+  { label: "Sinks in CVEs", chart: "table", title: "Sinks in CVEs, the dangerous calls a CVE rule saw inside vulnerable code, one count for every call",
+    sql: "SELECT method_name AS sink, sensor AS cve, action, COUNT(*) AS events, MAX(capture) AS example\nFROM events WHERE sensor LIKE 'cve-%' AND sensor NOT LIKE '%-entered' GROUP BY method_name, sensor, action ORDER BY events DESC" },
+  { label: "CVE payloads", chart: "table", title: "CVE payloads, what was passed into vulnerable code",
+    sql: "SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, sensor AS cve, action, capture, call_site_name AS call_site\nFROM events WHERE sensor LIKE 'cve-%' ORDER BY ts DESC LIMIT 200" },
+  { label: "CVEs per minute", chart: "line", title: "CVE events per minute",
+    sql: "SELECT strftime('%H:%M', ts/1000, 'unixepoch', 'localtime') AS minute, COUNT(*) AS events\nFROM events WHERE sensor LIKE 'cve-%' GROUP BY minute ORDER BY MIN(ts)" },
 ];
 
 const $ = (id) => document.getElementById(id);
@@ -426,14 +443,15 @@ function showPage(address) {
     closeEvent();
     if (selected) pendingSelect = decodeURIComponent(selected);
   }
-  currentPage = name === "policy" ? "policy" : name === "graph" ? "graph" : "events";
+  currentPage = name === "jots" ? "jots" : name === "graph" ? "graph" : "events";
   $("eventsPage").hidden = currentPage !== "events";
   $("graphPage").hidden = currentPage !== "graph";
-  $("policyPage").hidden = currentPage !== "policy";
+  $("jotsPage").hidden = currentPage !== "jots";
+  $("sharedBar").hidden = currentPage === "jots";
   $("navEvents").className = currentPage === "events" ? "active" : "";
   $("navGraph").className = currentPage === "graph" ? "active" : "";
-  $("navPolicy").className = currentPage === "policy" ? "active" : "";
-  if (currentPage === "policy") { refreshControl(); loadJots(); }
+  $("navJots").className = currentPage === "jots" ? "active" : "";
+  if (currentPage === "jots") { refreshControl(); loadJots(); }
   if (currentPage === "graph") {
     if (selected) graphPicked = decodeURIComponent(selected);
     loadGraph();
@@ -442,15 +460,13 @@ function showPage(address) {
 }
 window.addEventListener("hashchange", () => showPage(location.hash.slice(1)));
 
-// ---- enforcement. Agents read a control file, nothing here reaches an agent.
+// ---- protection. Agents read a control file, nothing here reaches an agent.
 let controlState = null;
 
 async function changeControl(change, confirmText) {
   if (confirmText && !window.confirm(confirmText)) return;
-  const token = $("adminToken").value.trim();
-  if (!token) { showControlMessage("Type the admin token first."); $("adminToken").focus(); return; }
   try {
-    drawControl(await api("/api/control", change, { "X-JOT-Admin": token }));
+    drawControl(await api("/api/control", change));
   } catch (e) { showControlMessage(e.message); }
 }
 
@@ -460,25 +476,27 @@ function showControlMessage(text) {
 
 function drawControl(c) {
   controlState = c;
-  const pill = $("policyPill");
-  $("enforcementCard").hidden = !c.enabled;
+  const pill = $("jotsPill");
+  $("protectionCard").hidden = !c.enabled;
   pill.hidden = !c.enabled;
   if (!c.enabled) return;
 
+  const locked = !!(c.agent && c.agent.locked);
   const total = c.rules.length;
   const blocking = c.rules.filter((r) => r.mode === "block").length;
-  pill.className = !c.master ? "observe" : blocking === total ? "block" : "partial";
-  pill.textContent = !c.master ? "Observe, nothing is blocked" : blocking + " of " + total + " rules blocking";
+  pill.className = !c.master ? "monitor" : blocking === total ? "block" : "partial";
+  pill.textContent = locked ? "Locked to monitor" : !c.master ? "Monitor, nothing is blocked" : blocking + " of " + total + " rules blocking";
 
-  $("enforceStatus").textContent = !c.master
-    ? "Observe is on. Every rule reports what it would stop and stops nothing."
+  $("protectStatus").textContent = locked
+    ? "The agent was started with -Djot.protect=false, so every rule only reports. Monitor and Protect can't change that. Restart the agent without the flag."
+    : !c.master
+    ? "Monitor is on. Every rule reports what it would stop and stops nothing."
     : blocking === total ? "All " + total + " rules are blocking."
     : blocking + " of " + total + " rules are blocking. " + (total - blocking) + " report only.";
 
-  $("modeObserve").className = c.master ? "" : "active observe";
-  $("modeBlock").className = c.master ? "active block" : "";
-  for (const id of ["modeObserve", "modeBlock"]) $(id).disabled = !c.writable;
-  $("tokenBox").hidden = !c.writable;
+  $("modeMonitor").className = c.master ? "" : "active monitor";
+  $("modeProtect").className = c.master ? "active block" : "";
+  for (const id of ["modeMonitor", "modeProtect"]) $(id).disabled = locked;
 
   const rows = c.rules.map((r, index) => {
     const block = r.mode === "block";
@@ -486,8 +504,8 @@ function drawControl(c) {
     const intended = r.setting !== null ? r.setting : !r.staged;
     const changed = r.setting !== null && r.setting !== !r.staged;
     const sw = el("button", { type: "button", id: "ruleSwitch" + index, class: "switch", role: "switch", "aria-checked": String(intended),
-      "aria-label": r.name + " blocks", disabled: !c.writable || !c.master ? "" : null,
-      title: !c.master ? "Observe is on, so no rule blocks" : intended ? "Click to make this rule report only" : "Click to make this rule block",
+      "aria-label": r.name + " blocks", disabled: !c.master || locked ? "" : null,
+      title: locked ? "The agent is locked to monitor" : !c.master ? "Monitor is on, so no rule blocks" : intended ? "Click to make this rule report only" : "Click to make this rule block",
       onclick: () => {
         const next = !intended;
         // switching back to what the .jot file says removes the override
@@ -497,7 +515,9 @@ function drawControl(c) {
     return el("div", { class: "rule" },
       el("div", { class: "name" }, r.name, " ",
         el("span", { class: "badge " + (block ? "blocked" : "monitored"), text: block ? "blocking" : "report only" }),
-        !c.master ? el("span", { class: "hint", style: "margin:0", text: "(Observe is on)" })
+        r.loaded === false ? el("span", { class: "hint", style: "margin:0", text: "(not loaded by the running agent) " }) : null,
+        locked ? el("span", { class: "hint", style: "margin:0", text: "(agent locked to monitor)" })
+          : !c.master ? el("span", { class: "hint", style: "margin:0", text: "(Monitor is on)" })
           : changed ? el("span", { class: "hint", style: "margin:0", text: "(changed here, the .jot file says " + (r.staged ? "report only" : "block") + ")" })
           : r.staged ? el("span", { class: "hint", style: "margin:0", text: "(staged as report only in its .jot file)" }) : null),
       el("div", { class: "sw" }, el("label", { for: "ruleSwitch" + index, text: "Block", style: "cursor:pointer" }), sw),
@@ -511,24 +531,20 @@ function drawControl(c) {
         ? "No agent has confirmed these settings yet. Agents need -Djot.control pointing at the control file."
         : "No control file yet. It is created the first time you change something." });
   $("controlBody").replaceChildren(
-    ...(c.writable ? [] : [el("div", { class: "notice", text: "Read only. Start the dashboard with JOT_DASHBOARD_ADMIN_TOKEN to allow changes." })]),
     ...(rows.length ? rows : [el("div", { class: "empty", text: "No rules were found. A rule is a sensor that has an exception." })]),
     applied,
-    el("div", { class: "applied", text: "An agent started with -Djot.enforce=false ignores these settings." }));
+    el("div", { class: "applied", text: c.agent && c.agent.known
+      ? "Agent " + (c.agent.app || "?") + " on " + (c.agent.host || "?") + ", started " + clock(c.agent.started) + ", loaded "
+        + c.agent.loaded.length + " JOTs from " + (c.agent.jots || "?") + ". An agent started with -Djot.protect=false ignores these settings."
+      : "No agent has reported its startup yet. An agent started with -Djot.protect=false ignores these settings." }));
 }
 
 function setMode(master) {
   if (controlState && controlState.master === master) return;
-  changeControl({ master }, master ? null : "Switch to Observe? Every rule will report only and nothing will be blocked.");
+  changeControl({ master }, master ? null : "Switch to Monitor? Every rule will report only and nothing will be blocked.");
 }
-$("tokenShow").addEventListener("click", () => {
-  const field = $("adminToken");
-  const hide = field.type === "text";
-  field.type = hide ? "password" : "text";
-  $("tokenShow").textContent = hide ? "Show" : "Hide";
-});
-$("modeObserve").addEventListener("click", () => setMode(false));
-$("modeBlock").addEventListener("click", () => setMode(true));
+$("modeMonitor").addEventListener("click", () => setMode(false));
+$("modeProtect").addEventListener("click", () => setMode(true));
 
 async function refreshControl() {
   try { drawControl(await api("/api/control")); } catch (e) { /* not available */ }
@@ -539,18 +555,22 @@ let lastStatus = null;
 async function refreshStatus() {
   const s = await api("/api/status");
   lastStatus = s;
+  const filtered = s.filter.blocked || s.filter.monitored;
   $("stats").replaceChildren(...[
     el("span", {}, el("b", { text: s.events.toLocaleString() }), " events"),
     el("span", { class: s.blocked ? "blocked" : "" }, el("b", { text: s.blocked.toLocaleString() }), " blocked"),
     el("span", {}, el("b", { text: s.monitored.toLocaleString() }), " reported only"),
     el("span", { text: "last event " + ago(s.last_ts) }),
-    s.filtered ? el("span", { title: "Observed events with no frame from the application, like the JDK checking a jar signature. Untick App events only to see them.",
-      text: s.filtered.toLocaleString() + " JDK and server events left out" }) : null,
+    s.filtered ? el("span", { title: filtered ? "Untick Blocked and Monitored to see them." : "Observed events with no frame from the application, like the JDK checking a jar signature. Untick App events only to see them.",
+      text: s.filtered.toLocaleString() + (filtered ? " other events left out" : " JDK and server events left out") }) : null,
     s.since ? el("span", { title: "Cleared, Show all brings the earlier events back",
       text: "showing since " + clock(s.since) + ", " + s.hidden.toLocaleString() + " earlier hidden" }) : null,
   ].filter(Boolean));
   $("showAllBtn").hidden = !s.since;
   $("appOnly").checked = s.app_only;
+  $("filterBlocked").checked = s.filter.blocked;
+  $("filterMonitored").checked = s.filter.monitored;
+  $("showJotControl").checked = s.show_jot_control;
   $("notice").replaceChildren(...(s.llm ? [] : [el("div", { class: "notice",
     text: "Natural language is off because ANTHROPIC_API_KEY isn't set. The views and the SQL box still work." })]));
 }
@@ -559,17 +579,35 @@ async function refreshStatus() {
 async function setSince(value) {
   try {
     await api("/api/since", { since: value });
-    await refreshStatus();
-    if (current) await runSql(current.sql, current);
+    await filtersChanged();
   } catch (e) { showError(e.message); }
 }
 $("clearBtn").addEventListener("click", () => setSince("now"));
 $("showAllBtn").addEventListener("click", () => setSince(null));
+// a filter changed, so whatever is on screen is drawn again. The graph and the views share the filters.
+async function filtersChanged() {
+  await refreshStatus();
+  if (currentPage === "graph") await loadGraph();
+  else if (current) await runSql(current.sql, current);
+}
+$("showJotControl").addEventListener("change", async (ev) => {
+  try {
+    await api("/api/jot-control-events", { on: ev.target.checked });
+    await filtersChanged();
+  } catch (e) { showError(e.message); }
+});
+for (const [id, key] of [["filterBlocked", "blocked"], ["filterMonitored", "monitored"]]) {
+  $(id).addEventListener("change", async (ev) => {
+    try {
+      await api("/api/action-filter", { [key]: ev.target.checked });
+      await filtersChanged();
+    } catch (e) { showError(e.message); }
+  });
+}
 $("appOnly").addEventListener("change", async (ev) => {
   try {
     await api("/api/app-only", { on: ev.target.checked });
-    await refreshStatus();
-    if (current) await runSql(current.sql, current);
+    await filtersChanged();
   } catch (e) { showError(e.message); }
 });
 
@@ -586,12 +624,20 @@ function cell(col, v) {
   return td;
 }
 
+// a column of numbers has its heading on the right, over the numbers. A time column is shown as text, so it isn't one.
+function numericColumn(r, i) {
+  const col = r.columns[i];
+  if (col === "ts" || col.endsWith("_ts") || col === "action") return false;
+  const values = r.rows.map((row) => row[i]).filter((v) => v !== null && v !== undefined);
+  return values.length > 0 && values.every(isNumber);
+}
+
 function tableView(r, hint) {
   if (!r.rows.length) return el("div", { class: "empty", text: hint || "No matching events" });
   // a column called pk makes each row open that event, and isn't shown itself
   const pkAt = r.columns.indexOf("pk");
   const shown = r.columns.map((c, i) => i).filter((i) => i !== pkAt);
-  const head = el("tr", {}, ...shown.map((i) => el("th", { text: r.columns[i] })));
+  const head = el("tr", {}, ...shown.map((i) => el("th", { class: numericColumn(r, i) ? "num" : "", text: r.columns[i] })));
   const body = r.rows.map((row) => {
     const tr = el("tr", {}, ...shown.map((i) => cell(r.columns[i], row[i])));
     if (pkAt >= 0 && row[pkAt] != null) {
@@ -790,21 +836,21 @@ async function drawReports() {
 // ---- sensors, rules and reports, read only. How each is defined and whether it fires.
 let jots = null;
 let jotSelected = null;       // "kind:name"
-let pendingSelect = null;     // a name from the address, like #policy/get-routes, selected once the list has loaded
+let pendingSelect = null;     // a name from the address, like #jots/get-routes, selected once the list has loaded
 
 function selectJot(key, name) {
   jotSelected = key;
-  $("policyGrid").classList.add("has-detail");
+  $("jotsGrid").classList.add("has-detail");
   $("jotDetail").hidden = false;
-  try { history.replaceState(null, "", "#policy/" + encodeURIComponent(name)); } catch (e) { /* ignore */ }
+  try { history.replaceState(null, "", "#jots/" + encodeURIComponent(name)); } catch (e) { /* ignore */ }
   drawJots();
 }
 
 function closeDetail() {
   jotSelected = null;
-  $("policyGrid").classList.remove("has-detail");
+  $("jotsGrid").classList.remove("has-detail");
   $("jotDetail").hidden = true;
-  try { history.replaceState(null, "", "#policy"); } catch (e) { /* ignore */ }
+  try { history.replaceState(null, "", "#jots"); } catch (e) { /* ignore */ }
   drawJots();
 }
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && jotSelected) closeDetail(); });
@@ -844,7 +890,7 @@ function drawJots() {
   if (pendingSelect) {
     const wanted = all.find((i) => i.name === pendingSelect);
     pendingSelect = null;
-    if (wanted) { jotSelected = wanted.key; $("policyGrid").classList.add("has-detail"); $("jotDetail").hidden = false; }
+    if (wanted) { jotSelected = wanted.key; $("jotsGrid").classList.add("has-detail"); $("jotDetail").hidden = false; }
   }
   drawSensors(all);
   drawReportList(all);
@@ -866,9 +912,13 @@ function drawSensors(all) {
     ? [el("details", {}, el("summary", { class: "hint", text: issues.length + " things to look at" }), ...issues.map(issueRow))]
     : issues.map(issueRow)));
 
-  const head = el("tr", {}, ...["Name", "Kind", "Watches", "File", "Last hour", "Total", "Last fired"].map((t) => el("th", { text: t })));
+  const head = el("tr", {}, ...["Name", "Kind", "Watches or inside", "File", "Last hour", "Total", "Last fired"].map((t) => el("th", { class: t === "Last hour" || t === "Total" ? "num" : "", text: t })));
   const body = shown.map((i) => {
-    const watches = (i.methods[0] || "") + (i.methods.length > 1 ? " +" + (i.methods.length - 1) : "");
+    // A rule limited to certain methods is identified by where it applies. Its watched methods are often the same
+    // list for every rule, like the expression and process sinks in the CVE microsandboxes.
+    const watches = i.scopes.length
+      ? "inside " + i.scopes[0] + (i.scopes.length > 1 ? " +" + (i.scopes.length - 1) : "")
+      : (i.methods[0] || "") + (i.methods.length > 1 ? " +" + (i.methods.length - 1) : "");
     return el("tr", { class: i.key === jotSelected ? "selected" : "", onclick: () => selectJot(i.key, i.name) },
       el("td", { text: i.name }), el("td", {}, kindBadge(i)), el("td", {}, ...dotted(watches)), el("td", { text: i.file || "" }),
       el("td", { class: "num", text: String(i.last_hour) }), el("td", { class: "num", text: String(i.events) }),
@@ -993,6 +1043,7 @@ function drawGraph() {
   }
   const L = JotGraph.layout(nodes, edges);
   const lit = graphPicked ? JotGraph.through(graphPicked, edges) : null;
+  const litEdges = graphPicked ? JotGraph.pathEdges(graphPicked, edges) : null;
   // fitted to the width of the page when it can be, but never shrunk below a size that can be read, it scrolls instead
   const svg = svgEl("svg", { class: "graph", width: L.width, height: L.height, viewBox: "0 0 " + L.width + " " + L.height, role: "img",
     style: "width:100%;height:auto;min-width:" + Math.round(L.width * 0.85) + "px;display:block",
@@ -1003,7 +1054,7 @@ function drawGraph() {
     if (!L.pos.has(e.from) || !L.pos.has(e.to)) continue;
     const path = svgEl("path", { d: JotGraph.curve(mid(e.from), mid(e.to), L.nodeW),
       "stroke-width": String(Math.min(6, 1 + Math.log2(e.events) / 1.6)),
-      class: "edge" + (lit ? (lit.has(e.from) && lit.has(e.to) ? " on" : " off") : "") });
+      class: "edge" + (litEdges ? (litEdges.has(e) ? " on" : " off") : "") });
     path.append(svgEl("title", {}, nodes.find((n) => n.id === e.from).label + " → " + nodes.find((n) => n.id === e.to).label + ", " + e.events + " events"));
     svg.append(path);
   }
@@ -1089,7 +1140,7 @@ async function refreshNow() {
   button.disabled = true;
   try {
     await Promise.all([refreshStatus(), refreshControl()]);
-    if (currentPage === "policy") await loadJots();
+    if (currentPage === "jots") await loadJots();
     else if (currentPage === "graph") await loadGraph();
     else if (current && !busy) {
       const r = await api("/api/sql", { sql: current.sql, limit: current.chart === "grid" ? 5000 : undefined });
@@ -1104,7 +1155,7 @@ async function tick() {
   try {
     await Promise.all([refreshStatus(), refreshControl()]);
     stamp();
-    if (currentPage === "policy") { await loadJots(); return; }
+    if (currentPage === "jots") { await loadJots(); return; }
     if (currentPage === "graph") { if (lastStatus && lastStatus.last_pk !== graphAt) await loadGraph(); return; }
     // refresh the current view, unless someone is editing its SQL
     if ($("live").checked && current && !busy && !$("results").querySelector("details[open]")) {

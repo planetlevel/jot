@@ -153,7 +153,7 @@ def rule(shield, catalog, deny, observe, policy=()):
         text += "  captures:\n  - \"#ARGS\"\n"
         text += "  exception: %s\n" % q("%s microsandbox blocked %s" % (shield["cve"], ", ".join(caps)))
         if (behavior != "BLOCK" and not from_policy) or overridden:
-            text += "  enforce: false\n"   # reports what it would have blocked until someone turns it on
+            text += "  protect: false\n"   # reports what it would have blocked until someone turns it on
         texts.append(text)
     if texts:
         return "\n".join(texts)

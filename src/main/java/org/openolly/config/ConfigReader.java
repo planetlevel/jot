@@ -13,6 +13,7 @@ import org.openolly.reporting.RouteGraph;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.google.common.flogger.FluentLogger;
@@ -31,26 +32,87 @@ public class ConfigReader {
 	
 	public static void init(String filename) throws IOException {
 		if ( filename == null ) {
-			//System.err.println( "[JOT] Error: no JOT file or directory provided");
-			logger.atSevere().log( "[JOT] Error: no JOT file or directory provided");
-			//System.err.println( "[JOT] Try using -javaagent:jot-x.x.jar=JOTFILE" );
-			logger.atSevere().log( "[JOT] Try using -javaagent:jot-x.x.jar=JOTFILE" );
+			logger.atSevere().log( "[JOT] Error: no jots file provided");
+			//System.err.println( "[JOT] Try using -javaagent:jot-x.x.jar=jots.yaml" );
+			logger.atSevere().log( "[JOT] Try using -javaagent:jot-x.x.jar=jots.yaml" );
 			return;
 		}
 		//System.err.println( "[JOT] Loading JOTs from " + filename );
 		logger.atWarning().log("[JOT] Loading JOTs from " + filename );
-		yaml = new File( filename );
-		if ( yaml.isDirectory() ) {
-			for ( File f : yaml.listFiles() ) {
-				//System.out.println( "Loading JOTs from " + f );
+		// The argument is a jots file, which lists the .jot files and directories to load. The dashboard reads
+		// the same file, so the two always agree. The first definition of a name wins.
+		File jots = new File( filename.trim() );
+		if ( !jots.isFile() || jots.getName().endsWith( ".jot" ) ) {
+			logger.atSevere().log( "[JOT] " + jots + " is not a jots file. The agent argument is a jots.yaml that lists "
+				+ "the .jot files and directories, like -javaagent:jot.jar=jots.yaml" );
+			return;
+		}
+		List<String> entries = readJotsFile( jots );
+		for ( String entry : entries ) {
+			if ( entry.isBlank() ) continue;
+			File path = new File( entry.trim() );
+			if ( !path.exists() ) {
+				logger.atWarning().log( "[JOT] " + path + " does not exist. Skipping." );
+				continue;
+			}
+			for ( File f : jotFiles( path ) ) {
 				logger.atInfo().log("Loading JOTs from " + f );
 				load( f );
 			}
 		}
-		else {
-			load( yaml );
+	}
+
+	/**
+	 * Reads a jots file, shared by the agent and the dashboard.
+	 *
+	 *   jots:
+	 *   - jots                    # a file or directory
+	 *   - rules
+	 *   control: jot-control.yaml
+	 *
+	 * Relative paths are relative to the jots file. Returns the absolute paths to load. If -Djot.control isn't
+	 * set, the jots file's control path is used.
+	 */
+	public static List<String> readJotsFile( File jotsFile ) throws IOException {
+		ObjectMapper mapper = new ObjectMapper( new YAMLFactory() );
+		JsonNode root = mapper.readTree( jotsFile );
+		File base = jotsFile.getAbsoluteFile().getParentFile();
+		List<String> paths = new ArrayList<>();
+		if ( root == null || !root.has( "jots" ) ) {
+			logger.atWarning().log( "[JOT] " + jotsFile + " has no jots list" );
 		}
-	}	
+		else {
+			for ( JsonNode item : root.get( "jots" ) ) {
+				String path = item.isTextual() ? item.asText() : item.path( "path" ).asText( null );
+				if ( path == null ) continue;
+				paths.add( new File( path ).isAbsolute() ? path : new File( base, path ).getPath() );
+			}
+		}
+		if ( root != null && root.hasNonNull( "control" ) && System.getProperty( "jot.control" ) == null ) {
+			String control = root.get( "control" ).asText();
+			System.setProperty( "jot.control", new File( control ).isAbsolute() ? control : new File( base, control ).getPath() );
+		}
+		return paths;
+	}
+
+	// A file is used as given. A directory contributes every .jot file under it.
+	public static List<File> jotFiles( File path ) {
+		List<File> found = new ArrayList<>();
+		if ( path.isDirectory() ) {
+			File[] children = path.listFiles();
+			if ( children == null ) return found;
+			Arrays.sort( children );
+			for ( File child : children ) {
+				if ( child.isDirectory() || child.getName().endsWith( ".jot" ) ) {
+					found.addAll( jotFiles( child ) );
+				}
+			}
+		}
+		else {
+			found.add( path );
+		}
+		return found;
+	}
 
 	
 	// Sensors are added to the Sensor class, reports are added to the EventBus as sinks
@@ -86,7 +148,7 @@ public class ConfigReader {
 						.captures( entry.captures )
 						.matchers( entry.matchers )
 						.exception( entry.exception )
-						.enforce( entry.enforce )
+						.protect( entry.protect )
 						.debug( entry.debug );
 				}
 			}
@@ -139,7 +201,7 @@ public class ConfigReader {
 		public List<String> captures = new ArrayList<String>();
 		public List<String> matchers = new ArrayList<String>();
 		public String exception = null;
-		public Boolean enforce = null;
+		public Boolean protect = null;
 		public boolean debug = false;
 	}
 

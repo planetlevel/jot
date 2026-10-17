@@ -28,17 +28,17 @@ class ControlFileTest {
 
 	@BeforeEach
 	void setUp() {
-		file = dir.resolve( "control.json" );
+		file = dir.resolve( "control.yaml" );
 		events = new ArrayList<Event>();
 		EventBus.configure( List.of( (EventSink) events::add ), 100 );
 		a = new Sensor().name( "rule-a" ).method( "x.Y.a" ).capture( "#P0" ).exception( "no a" );
-		b = new Sensor().name( "rule-b" ).method( "x.Y.b" ).capture( "#P0" ).exception( "no b" ).enforce( false );
+		b = new Sensor().name( "rule-b" ).method( "x.Y.b" ).capture( "#P0" ).exception( "no b" ).protect( false );
 	}
 
 	@AfterEach
 	void tearDown() {
 		Sensor.applyControl( true, java.util.Map.of() );
-		Sensor.enforceAll( true );
+		Sensor.protectAll( true );
 		EventBus.shutdown();
 	}
 
@@ -57,30 +57,30 @@ class ControlFileTest {
 	@Test
 	void testWithoutAFileNothingChanges() {
 		Assertions.assertFalse( new ControlFile( file ).poll() );
-		Assertions.assertTrue( a.isEnforced() );
-		Assertions.assertFalse( b.isEnforced() );
+		Assertions.assertTrue( a.isProtected() );
+		Assertions.assertFalse( b.isProtected() );
 	}
 
 	@Test
 	void testMasterSwitchOffMakesEveryRuleReportOnly() throws IOException {
-		Assertions.assertTrue( apply( "{\"v\":1,\"enforce\":false}" ) );
-		Assertions.assertFalse( a.isEnforced() );
-		Assertions.assertFalse( b.isEnforced() );
-		Assertions.assertEquals( List.of( "enforcement=off" ), changes() );
+		Assertions.assertTrue( apply( "{\"v\":1,\"protect\":false}" ) );
+		Assertions.assertFalse( a.isProtected() );
+		Assertions.assertFalse( b.isProtected() );
+		Assertions.assertEquals( List.of( "protect=off" ), changes() );
 	}
 
 	@Test
 	void testOneRuleCanBeSwitchedToMonitorAndOthersKeepBlocking() throws IOException {
-		apply( "{\"v\":1,\"enforce\":true,\"rules\":{\"rule-a\":false}}" );
-		Assertions.assertFalse( a.isEnforced() );
-		Assertions.assertFalse( b.isEnforced() );   // still its own enforce: false
+		apply( "{\"v\":1,\"protect\":true,\"rules\":{\"rule-a\":false}}" );
+		Assertions.assertFalse( a.isProtected() );
+		Assertions.assertFalse( b.isProtected() );   // still its own protect: false
 		Assertions.assertEquals( List.of( "rule-a=monitor" ), changes() );
 	}
 
 	@Test
 	void testTheFileCanSwitchOnARuleThatTheJotFileStagedAsReportOnly() throws IOException {
 		apply( "{\"rules\":{\"rule-b\":true}}" );
-		Assertions.assertTrue( b.isEnforced() );
+		Assertions.assertTrue( b.isProtected() );
 		Assertions.assertThrows( SensorException.class, () -> b.execute( "t", "sig", null, new Object[] { "x" }, null ) );
 	}
 
@@ -91,16 +91,16 @@ class ControlFileTest {
 		control.poll();
 		Files.writeString( file, "{\"rules\":{}}" );
 		Assertions.assertTrue( control.poll() );
-		Assertions.assertTrue( a.isEnforced() );
-		Assertions.assertFalse( b.isEnforced() );
+		Assertions.assertTrue( a.isProtected() );
+		Assertions.assertFalse( b.isProtected() );
 		Assertions.assertTrue( changes().contains( "rule-a=default" ) );
 	}
 
 	@Test
 	void testTheFileCannotOverrideTheStartupSwitch() throws IOException {
-		Sensor.enforceAll( false );
-		apply( "{\"enforce\":true,\"rules\":{\"rule-a\":true}}" );
-		Assertions.assertFalse( a.isEnforced() );
+		Sensor.protectAll( false );
+		apply( "{\"protect\":true,\"rules\":{\"rule-a\":true}}" );
+		Assertions.assertFalse( a.isProtected() );
 	}
 
 	@Test
@@ -108,29 +108,29 @@ class ControlFileTest {
 		ControlFile control = new ControlFile( file );
 		Files.writeString( file, "{\"rules\":{\"rule-a\":false}}" );
 		Assertions.assertTrue( control.poll() );
-		for ( String bad : List.of( "not json", "[]", "{\"enforce\":\"no\"}", "{\"rules\":[]}", "{\"rules\":{\"rule-a\":\"yes\"}}",
+		for ( String bad : List.of( "not json", "[]", "{\"protect\":\"no\"}", "{\"rules\":[]}", "{\"rules\":{\"rule-a\":\"yes\"}}",
 				"{\"v\":2}", "" ) ) {
 			Files.writeString( file, bad );
 			Assertions.assertFalse( control.poll(), bad );
-			Assertions.assertFalse( a.isEnforced(), "last good settings stay in force after: " + bad );
+			Assertions.assertFalse( a.isProtected(), "last good settings stay in force after: " + bad );
 		}
 	}
 
 	@Test
 	void testDeletingTheFileKeepsTheLastSettings() throws IOException {
 		ControlFile control = new ControlFile( file );
-		Files.writeString( file, "{\"enforce\":false}" );
+		Files.writeString( file, "{\"protect\":false}" );
 		control.poll();
 		Files.delete( file );
 		Assertions.assertFalse( control.poll() );
-		Assertions.assertFalse( a.isEnforced() );
+		Assertions.assertFalse( a.isProtected() );
 	}
 
 	@Test
 	void testAnOversizedFileIsIgnored() throws IOException {
-		Files.writeString( file, "{\"enforce\":false,\"pad\":\"" + "x".repeat( 70 * 1024 ) + "\"}" );
+		Files.writeString( file, "{\"protect\":false,\"pad\":\"" + "x".repeat( 70 * 1024 ) + "\"}" );
 		Assertions.assertFalse( new ControlFile( file ).poll() );
-		Assertions.assertTrue( a.isEnforced() );
+		Assertions.assertTrue( a.isProtected() );
 	}
 
 	@Test
@@ -145,7 +145,7 @@ class ControlFileTest {
 	@Test
 	void testNamesThatMatchNoSensorAreIgnored() throws IOException {
 		Assertions.assertTrue( apply( "{\"rules\":{\"nobody\":false}}" ) );
-		Assertions.assertTrue( a.isEnforced() );
+		Assertions.assertTrue( a.isProtected() );
 	}
 
 	@Test

@@ -79,19 +79,32 @@
     };
   }
 
-  // every node on a path through this one, in both directions
-  function through(id, edges) {
-    const seen = new Set([id]);
-    for (const [from, to] of [["from", "to"], ["to", "from"]]) {
-      const stack = [id];
-      while (stack.length) {
-        const here = stack.pop();
-        for (const e of edges) {
-          if (e[from] === here && !seen.has(e[to])) { seen.add(e[to]); stack.push(e[to]); }
-        }
+  // the nodes reached from this one by following the edges one way, not counting the node itself unless a cycle returns to it
+  function reached(id, edges, a, b) {
+    const seen = new Set();
+    const stack = [id];
+    while (stack.length) {
+      const here = stack.pop();
+      for (const e of edges) {
+        if (e[a] === here && !seen.has(e[b])) { seen.add(e[b]); stack.push(e[b]); }
       }
     }
     return seen;
+  }
+
+  // every node on a path through this one, in both directions
+  function through(id, edges) {
+    return new Set([id, ...reached(id, edges, "to", "from"), ...reached(id, edges, "from", "to")]);
+  }
+
+  // the edges on a path through this node, which is a smaller set than the edges between nodes that are on one. A call
+  // that skips this node, like init calling a method that this node also calls, is not on a path through it.
+  function pathEdges(id, edges) {
+    const before = reached(id, edges, "to", "from");
+    const after = reached(id, edges, "from", "to");
+    const into = new Set([id, ...before]);
+    const out = new Set([id, ...after]);
+    return new Set(edges.filter((e) => (before.has(e.from) && into.has(e.to)) || (out.has(e.from) && after.has(e.to))));
   }
 
   function curve(a, b, w) {
@@ -100,7 +113,7 @@
     return "M" + x1 + "," + y1 + " C" + (x1 + dx) + "," + y1 + " " + (x2 - dx) + "," + y2 + " " + x2 + "," + y2;
   }
 
-  const api = { layout, through, curve };
+  const api = { layout, through, pathEdges, curve };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.JotGraph = api;
 })(typeof window !== "undefined" ? window : globalThis);

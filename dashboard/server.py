@@ -2,7 +2,7 @@
 """JOT dashboard. Follows JOT's JSON event logs into SQLite and answers questions about them,
 in plain English or SQL, as tables and charts that can update live.
 
-    python3 server.py --log jot-events.jsonl --jot ../src/main/resources
+    python3 server.py --log jot-events.jsonl --jots ../demo/ticketbook/jots.yaml
     ANTHROPIC_API_KEY=... python3 server.py --log '/var/log/app/*.jsonl'
 """
 
@@ -64,7 +64,7 @@ class App:
         self.db_path = db_path
         self.ingestor = ingestor
         self.generate = generate
-        self.control = control      # a ControlStore, or None when --control wasn't given
+        self.control = control      # a ControlStore, or None when the jots file has no control
 
     def sensors(self):
         db = sqlite3.connect(self.db_path)
@@ -98,7 +98,7 @@ class App:
         is in, whether it has fired, and what looks wrong."""
         db = sqlite3.connect(self.db_path)
         try:
-            rows = db.execute("""SELECT name, description, methods, scopes, captures, blocks, enforce, source,
+            rows = db.execute("""SELECT name, description, methods, scopes, captures, blocks, protect, source,
                                         matchers, excludes, definition FROM sensors ORDER BY rowid""").fetchall()
             issues = [{"level": l, "text": t, "file": f} for l, t, f in db.execute(
                 "SELECT level, text, source FROM jot_issues ORDER BY rowid")]
@@ -119,10 +119,10 @@ class App:
             modes = {r["name"]: r["mode"] for r in control["rules"]}
 
         sensors = []
-        for (name, description, methods, scopes, captures, blocks, enforce, source,
+        for (name, description, methods, scopes, captures, blocks, protect, source,
              matchers, excludes, definition) in rows:
             rule = blocks is not None
-            mode = modes.get(name, "monitor" if enforce == "false" else "block") if rule else "observe"
+            mode = modes.get(name, "monitor" if protect == "false" else "block") if rule else "observe"
             sensors.append({
                 "name": name, "kind": "rule" if rule else "sensor", "mode": mode, "description": description,
                 "methods": json.loads(methods or "[]"), "scopes": json.loads(scopes or "[]"),
@@ -132,7 +132,7 @@ class App:
                 **stats.get(name, {"events": 0, "last_ts": None, "last_hour": 0, "blocked": 0, "monitored": 0})})
 
         known = {x["name"] for x in sensors}
-        for sensor in sorted(set(stats) - known - {"jot-control"}):
+        for sensor in sorted(set(stats) - known - {"jot-control", "jot-config"}):
             issues.append({"level": "info", "file": None,
                            "text": "the log has %d events from %s, which isn't in the loaded .jot files"
                                    % (stats[sensor]["events"], sensor)})
@@ -193,7 +193,8 @@ class App:
         """The paths through the application, from each route through the methods that ran to what the sensors saw."""
         rows = store.graph_rows(self.db_path, route or None)
         routes = [r[0] for r in store.run_query(self.db_path, """
-            SELECT capture, COUNT(*) FROM events WHERE sensor = 'get-routes' GROUP BY capture ORDER BY capture""", limit=2000)["rows"]]
+            SELECT capture, COUNT(*) FROM events_raw WHERE sensor = 'get-routes' AND ts >= %d
+            GROUP BY capture ORDER BY capture""" % (store.get_since(self.db_path) or 0), limit=2000)["rows"]]
         return store.build_graph(rows["rows"], routes, self.ingestor.app_prefixes, bool(details), rows["truncated"])
 
     def set_app_only(self, on):
@@ -201,6 +202,19 @@ class App:
         application server do on their own. Blocked and reported events always show."""
         with self.ingestor.lock:
             store.set_app_only(self.ingestor.db, bool(on))
+        return self.status()
+
+    def set_action_filter(self, blocked, monitored):
+        """Limit what is shown to blocked events, monitored ones, or both. Neither means everything."""
+        with self.ingestor.lock:
+            store.set_action_filter(self.ingestor.db, None if blocked is None else bool(blocked),
+                                    None if monitored is None else bool(monitored))
+        return self.status()
+
+    def set_show_jot_control(self, on):
+        """Show or leave out the agent's own jot-control events, which record a rule being switched."""
+        with self.ingestor.lock:
+            store.set_show_jot_control(self.ingestor.db, bool(on))
         return self.status()
 
     def rule_names(self):
@@ -212,13 +226,35 @@ class App:
         try:
             return [{"name": n, "description": d, "message": m, "staged": e == "false"}
                     for n, d, m, e in db.execute(
-                        "SELECT name, description, blocks, enforce FROM sensors WHERE blocks IS NOT NULL ORDER BY name")]
+                        "SELECT name, description, blocks, protect FROM sensors WHERE blocks IS NOT NULL ORDER BY name")]
         finally:
             db.close()
 
+    def agent_state(self):
+        """What the most recent agent said it started with, from its jot-config events. Nothing is guessed from
+        files. {"known": False} when no agent has reported yet, which is the case for an agent older than this."""
+        latest = store.run_query(self.db_path, """
+            SELECT run, host, app, MAX(ts) FROM events WHERE sensor = 'jot-config'
+            GROUP BY run ORDER BY MAX(ts) DESC LIMIT 1""")["rows"]
+        if not latest:
+            return {"known": False, "locked": False, "loaded": []}
+        run, host, app, ts = latest[0]
+        db = sqlite3.connect(self.db_path)
+        try:
+            said = [c for (c,) in db.execute(
+                "SELECT capture FROM events WHERE sensor = 'jot-config' AND run = ? ORDER BY pk", (run,))]
+        finally:
+            db.close()
+        def values(key):
+            return [c[len(key) + 1:] for c in said if c.startswith(key + "=")]
+        return {"known": True, "run": run, "host": host, "app": app, "started": ts,
+                "locked": "monitor" in values("lock"), "jots": (values("jots") or [None])[0],
+                "control": (values("control") or [None])[0], "loaded": values("loaded")}
+
     def control_state(self):
-        """What the Enforcement panel shows. Each rule's setting is what the control file says, or else what its
-        .jot file says. An agent started with -Djot.enforce=false ignores all of it, and this can't see that."""
+        """What the Protection panel shows. Each rule's setting is what the control file says, or else what its
+        .jot file says. An agent started with -Djot.protect=false ignores the file, and it says so in its
+        jot-config events, so a locked agent shows as monitor here whatever the file says."""
         if self.control is None:
             return {"enabled": False}
         file = self.control.read()
@@ -229,22 +265,25 @@ class App:
             GROUP BY sensor""")["rows"]
         for name, blocked, monitored in recent:
             counts[name] = {"blocked": blocked or 0, "monitored": monitored or 0}
+        agent = self.agent_state()
+        loaded = set(agent["loaded"])
         rules = []
         for r in self.rules_declared():
             setting = file["rules"].get(r["name"])
-            blocks = (setting if setting is not None else not r["staged"]) and file["enforce"]
+            blocks = (setting if setting is not None else not r["staged"]) and file["protect"] and not agent["locked"]
             rules.append({**r, "setting": setting, "mode": "block" if blocks else "monitor",
+                          "loaded": (r["name"] in loaded) if agent["known"] else None,
                           "last_hour": counts.get(r["name"], {"blocked": 0, "monitored": 0})})
         applied = store.run_query(self.db_path, """
-            SELECT ts, host, app, capture FROM events WHERE sensor = 'jot-control' ORDER BY pk DESC LIMIT 10""")["rows"]
-        return {"enabled": True, "writable": self.control.writable, "master": file["enforce"], "rules": rules,
+            SELECT ts, host, app, capture FROM events_raw WHERE sensor = 'jot-control' ORDER BY pk DESC LIMIT 10""")["rows"]
+        return {"enabled": True, "master": file["protect"] and not agent["locked"],
+                "file_master": file["protect"], "agent": agent, "rules": rules,
                 "updated": file["updated"], "by": file["by"], "file_exists": file["exists"],
                 "applied": [{"ts": t, "host": h, "app": a, "change": c} for t, h, a, c in applied]}
 
-    def change_control(self, token, master, rules):
+    def change_control(self, master, rules):
         if self.control is None:
-            raise control_module.ControlError("this dashboard was started without --control")
-        self.control.check_token(token)
+            raise control_module.ControlError("this dashboard was started without a jots file that names a control file")
         self.control.write(master=master, rules=rules, known_rules=self.rule_names())
         return self.control_state()
 
@@ -273,6 +312,8 @@ class App:
             SELECT COALESCE(SUM(ts < %d), 0), COALESCE(SUM(ts >= %d), 0) FROM events_raw""" % (since, since))["rows"][0]
         status["hidden"] = counts[0]                       # before the start time
         status["app_only"] = store.get_app_only(self.db_path)
+        status["filter"] = store.get_action_filter(self.db_path)
+        status["show_jot_control"] = store.get_show_jot_control(self.db_path)
         status["filtered"] = counts[1] - status["events"]  # JDK and server events left out
         status["llm"] = llm.configured()
         status["model"] = llm.model() if llm.configured() else None
@@ -417,16 +458,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.sql(body.get("sql"), body.get("limit")))
             if url.path == "/api/since":
                 return self._send(200, self.app.set_since(body.get("since")))
+            if url.path == "/api/jot-control-events":
+                return self._send(200, self.app.set_show_jot_control(body.get("on")))
+            if url.path == "/api/action-filter":
+                return self._send(200, self.app.set_action_filter(body.get("blocked"), body.get("monitored")))
             if url.path == "/api/app-only":
                 return self._send(200, self.app.set_app_only(body.get("on")))
             if url.path == "/api/control":
-                token = self.headers.get("X-JOT-Admin")
-                return self._send(200, self.app.change_control(token, body.get("master"), body.get("rules")))
+                return self._send(200, self.app.change_control(body.get("master"), body.get("rules")))
         except store.QueryError as e:
             return self._send(400, {"error": str(e)})
         except control_module.ControlError as e:
-            code = 429 if "too many" in str(e) else 403 if "token" in str(e) else 400
-            return self._send(code, {"error": str(e)})
+            return self._send(400, {"error": str(e)})
         except llm.LLMError as e:
             return self._send(502, {"error": str(e)})
         except (ValueError, AttributeError, TypeError):
@@ -457,7 +500,8 @@ def main(argv=None):
     p = argparse.ArgumentParser(description="JOT dashboard")
     p.add_argument("--log", action="append", help="JOT event log to follow, may be a glob. Repeatable. "
                    "Default jot-events.jsonl")
-    p.add_argument("--jot", action="append", default=[], help=".jot file or directory, for sensor descriptions. Repeatable")
+    p.add_argument("--jots", help="the jots file that lists the JOTs and the control file. Start each agent with "
+                   "-javaagent:jot.jar=<this path> so the agent and the dashboard use the same definitions. ")
     p.add_argument("--db", default="jot-dashboard.db", help="SQLite file to keep events in")
     p.add_argument("--host", default="127.0.0.1", help="address to listen on. There is no login, "
                    "so only change this on a network you trust")
@@ -467,8 +511,6 @@ def main(argv=None):
                    "Without it, anything that is not the JDK or the server counts as the application.")
     p.add_argument("--since", help="show only events from this time on, now, or a date and time like 2026-10-16T09:30. "
                    "Nothing is deleted, the Clear and Show all buttons on the Events page change it later")
-    p.add_argument("--control", help="control file that agents poll, to switch rules between monitor and block. "
-                   "Start each agent with -Djot.control=<this path>. Changes need JOT_DASHBOARD_ADMIN_TOKEN")
     p.add_argument("--env", default=os.path.join(HERE, ".env"),
                    help="file of KEY=VALUE settings, such as ANTHROPIC_API_KEY. Default dashboard/.env")
     args = p.parse_args(argv)
@@ -476,14 +518,16 @@ def main(argv=None):
     if loaded_env:
         print("  read %s from %s" % (", ".join(loaded_env), args.env))
 
-    ingestor = store.Ingestor(args.db, args.log or ["jot-events.jsonl"], app_prefixes=args.app or [])
-    loaded = store.load_sensors(ingestor.db, args.jot)
-    reports = store.load_reports(ingestor.db, args.jot)
+    jot_paths, control_path, jots_app = store.read_jots_file(args.jots) if args.jots else ([], None, [])
+
+    ingestor = store.Ingestor(args.db, args.log or ["jot-events.jsonl"], app_prefixes=list(dict.fromkeys((jots_app or []) + (args.app or []))))
+    loaded = store.load_sensors(ingestor.db, jot_paths)
+    reports = store.load_reports(ingestor.db, jot_paths)
     first = ingestor.poll()
     ingestor.start()
     control = None
-    if args.control:
-        control = control_module.ControlStore(args.control, os.environ.get("JOT_DASHBOARD_ADMIN_TOKEN"))
+    if control_path:
+        control = control_module.ControlStore(control_path)
     app = App(args.db, ingestor, control=control)
     if args.since:
         app.set_since(parse_since(args.since))
@@ -492,10 +536,8 @@ def main(argv=None):
     print("JOT dashboard on http://%s:%d" % (args.host, args.port))
     print("  following %s, %d events so far, %d sensor definitions, %d reports"
           % (", ".join(ingestor.patterns), first, loaded, reports))
-    if control and control.writable:
-        print("  enforcement can be changed, agents read %s. Every change is logged in %s" % (control.path, control.audit_path))
-    elif control:
-        print("  enforcement is read only because JOT_DASHBOARD_ADMIN_TOKEN is not set")
+    if control:
+        print("  protection can be changed, agents read %s. Every change is logged in %s" % (control.path, control.audit_path))
     if llm.configured():
         print("  questions go to %s. Only the table definitions, sensor descriptions and your questions are sent."
               % llm.model())
