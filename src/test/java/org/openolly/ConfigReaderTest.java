@@ -57,6 +57,31 @@ class ConfigReaderTest {
 	}
 
 	@Test
+	void aSensorWrittenWithEnabledFalseIsOffAndTheOthersAreOn(@TempDir Path dir) throws Exception {
+		Path jot = dir.resolve( "enabled.jot" );
+		Files.writeString( jot, String.join( "\n",
+			"sensors:",
+			"- name: 'enabled-off'",
+			"  enabled: false",
+			"  methods:",
+			"  - 'java.lang.String.length'",
+			"- name: 'enabled-on'",
+			"  enabled: true",
+			"  methods:",
+			"  - 'java.lang.String.isEmpty'",
+			"- name: 'enabled-unsaid'",
+			"  methods:",
+			"  - 'java.lang.String.trim'",
+			"" ) );
+		ConfigReader.load( jot.toFile() );
+		var byName = new java.util.HashMap<String, Sensor>();
+		for ( Sensor sensor : Sensor.getSensors() ) byName.put( sensor.getName(), sensor );
+		Assertions.assertFalse( byName.get( "enabled-off" ).isEnabled() );
+		Assertions.assertTrue( byName.get( "enabled-on" ).isEnabled() );
+		Assertions.assertTrue( byName.get( "enabled-unsaid" ).isEnabled(), "a sensor is on unless it says otherwise" );
+	}
+
+	@Test
 	void jotsFileListsEverythingAndSearchesDirectoriesRecursively(@TempDir Path dir) throws Exception {
 		Path rules = Files.createDirectories( dir.resolve( "rules/deep" ) );
 		Files.writeString( dir.resolve( "base.jot" ), "sensors:\n- name: 'jots-base'\n  methods:\n  - 'java.lang.String.length'\n" );

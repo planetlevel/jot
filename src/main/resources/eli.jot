@@ -7,6 +7,7 @@ sensors:
   description: "Identifies the route for this HTTP request"
   methods:
   - "javax.servlet.Servlet.service"
+  - "jakarta.servlet.Servlet.service"
   captures:
   - "#P0.getRequestURI()"
 
@@ -17,6 +18,7 @@ sensors:
   - "java.io.Socket.<init>"
   scopes:
   - "javax.el.ValueExpression.getValue"
+  - "jakarta.el.ValueExpression.getValue"
   captures:
   - "#P0"
   exception: "Attempt to escape expression language sandbox prevented by JST rule 'sandbox-expressions'"

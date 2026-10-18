@@ -96,6 +96,70 @@ class ControlFileTest {
 		Assertions.assertTrue( changes().contains( "rule-a=default" ) );
 	}
 
+	private void call(Sensor s) {
+		s.execute( "t", "sig", null, new Object[] { "x" }, null );
+	}
+
+	@Test
+	void testADisabledRuleNeitherBlocksNorReports() throws IOException {
+		apply( "{\"sensors\":{\"rule-a\":{\"enabled\":false}}}" );
+		Assertions.assertFalse( a.isEnabled() );
+		Assertions.assertTrue( b.isEnabled() );
+		Assertions.assertDoesNotThrow( () -> call( a ) );
+		EventBus.shutdown();
+		for ( Event e : events ) Assertions.assertNotEquals( "rule-a", e.getRule(), "a disabled rule publishes nothing" );
+		Assertions.assertTrue( changes().contains( "rule-a=disabled" ) );
+	}
+
+	@Test
+	void testARuleTakenOffTheDisabledSettingBlocksAgainAndGoesBackToDefault() throws IOException {
+		ControlFile control = new ControlFile( file );
+		Files.writeString( file, "{\"sensors\":{\"rule-a\":{\"enabled\":false}}}" );
+		control.poll();
+		Files.writeString( file, "{\"sensors\":{}}" );
+		Assertions.assertTrue( control.poll() );
+		Assertions.assertTrue( a.isEnabled() );
+		Assertions.assertThrows( SensorException.class, () -> call( a ) );
+		Assertions.assertTrue( changes().contains( "rule-a=default" ) );
+	}
+
+	@Test
+	void testASensorThatOnlyObservesCanBeDisabledToo() throws IOException {
+		Sensor plain = new Sensor().name( "plain" ).method( "x.Y.c" ).capture( "#P0" );
+		Assertions.assertTrue( plain.isEnabled() );
+		apply( "{\"sensors\":{\"plain\":{\"enabled\":false}}}" );
+		Assertions.assertFalse( plain.isEnabled() );
+		Assertions.assertTrue( plain.execute( "t", "sig", null, new Object[] { "x" }, null ).isEmpty(), "a disabled sensor records nothing" );
+		EventBus.shutdown();
+		for ( Event e : events ) Assertions.assertNotEquals( "plain", e.getRule() );
+	}
+
+	@Test
+	void testASensorWrittenWithEnabledFalseIsOffAndTheControlFileCanSwitchItOn() throws IOException {
+		Sensor off = new Sensor().name( "off" ).method( "x.Y.d" ).capture( "#P0" ).enabled( false );
+		Assertions.assertFalse( off.isEnabled() );
+		Assertions.assertTrue( off.execute( "t", "sig", null, new Object[] { "x" }, null ).isEmpty() );
+		apply( "{\"sensors\":{\"off\":{\"enabled\":true}}}" );
+		Assertions.assertTrue( off.isEnabled() );
+		Assertions.assertFalse( off.execute( "t", "sig", null, new Object[] { "x" }, null ).isEmpty() );
+	}
+
+	@Test
+	void testTurningARuleOffLeavesItsProtectSettingAlone() throws IOException {
+		apply( "{\"sensors\":{\"rule-b\":{\"protect\":true,\"enabled\":false}}}" );
+		Assertions.assertTrue( b.isProtected() );
+		Assertions.assertFalse( b.isEnabled() );
+		Assertions.assertDoesNotThrow( () -> call( b ) );
+	}
+
+	@Test
+	void testProtectCanBeWrittenUnderTheSensorAndWinsOverTheOlderRulesMap() throws IOException {
+		apply( "{\"rules\":{\"rule-a\":false},\"sensors\":{\"rule-a\":{\"protect\":true}}}" );
+		Assertions.assertTrue( a.isProtected() );
+		apply( "{\"sensors\":{\"rule-a\":{\"protect\":false}}}" );
+		Assertions.assertFalse( a.isProtected() );
+	}
+
 	@Test
 	void testTheFileCannotOverrideTheStartupSwitch() throws IOException {
 		Sensor.protectAll( false );
@@ -108,7 +172,7 @@ class ControlFileTest {
 		ControlFile control = new ControlFile( file );
 		Files.writeString( file, "{\"rules\":{\"rule-a\":false}}" );
 		Assertions.assertTrue( control.poll() );
-		for ( String bad : List.of( "not json", "[]", "{\"protect\":\"no\"}", "{\"rules\":[]}", "{\"rules\":{\"rule-a\":\"yes\"}}",
+		for ( String bad : List.of( "not json", "[]", "{\"protect\":\"no\"}", "{\"rules\":[]}", "{\"rules\":{\"rule-a\":\"yes\"}}", "{\"sensors\":[]}", "{\"sensors\":{\"rule-a\":true}}", "{\"sensors\":{\"rule-a\":{\"enabled\":\"no\"}}}", "{\"sensors\":{\"rule-a\":{\"enable\":false}}}",
 				"{\"v\":2}", "" ) ) {
 			Files.writeString( file, bad );
 			Assertions.assertFalse( control.poll(), bad );

@@ -4,7 +4,7 @@
 #   monitor   the rules only report, nothing is stopped, the attacks still work
 #   protect   the rules stop the call
 # The dashboard's Protection panel can switch single rules between the two while the app runs.
-# javax names also match jakarta, so these work on Tomcat 9 and Tomcat 11.
+# Each rule lists both the javax and the jakarta names, so these work on Tomcat 9 and Tomcat 11.
 
 sensors:
 
@@ -15,6 +15,7 @@ sensors:
   - "java.lang.ProcessBuilder.<init>"
   scopes:
   - "javax.servlet.Servlet.service"
+  - "jakarta.servlet.Servlet.service"
   captures:
   - "#ARGS"
   exception: "Attempt to create a process from within Servlet.service() prevented by JOT rule 'block-native-process'"
@@ -27,6 +28,7 @@ sensors:
   - "java.io.ObjectInputStream.readUnshared"
   scopes:
   - "javax.servlet.Servlet.service"
+  - "jakarta.servlet.Servlet.service"
   captures:
   - "#ARGS"
   exception: "Attempt to deserialize an object from within Servlet.service() prevented by JOT rule 'block-deserialization'"
@@ -40,6 +42,7 @@ sensors:
   - "java.net.Socket.<init>"
   scopes:
   - "javax.el.ValueExpression.getValue"
+  - "jakarta.el.ValueExpression.getValue"
   captures:
   - "#ARGS"
   exception: "Expression language sandbox escape prevented by JOT rule 'sandbox-expressions'"
@@ -51,6 +54,7 @@ sensors:
   description: "Blocks expressions that contain reflection or process APIs"
   methods:
   - "javax.el.ExpressionFactory.createValueExpression"
+  - "jakarta.el.ExpressionFactory.createValueExpression"
   captures:
   - "#P1"
   matchers:

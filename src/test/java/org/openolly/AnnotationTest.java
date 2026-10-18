@@ -116,10 +116,12 @@ class AnnotationTest {
 	}
 
 	@Test
-	void sensorAddsTheJakartaTwinOfAnAnnotation() {
-		Sensor s = new Sensor().method( "@javax.annotation.security.RolesAllowed" );
-		Assertions.assertEquals( 2, s.getMethods().size() );
-		Assertions.assertEquals( "jakarta.annotation.security.RolesAllowed", s.getMethods().get( 1 ).annotationName() );
+	void anAnnotationIsWatchedAsWrittenAndBothSpellingsAreListed() {
+		Sensor one = new Sensor().method( "@javax.annotation.security.RolesAllowed" );
+		Assertions.assertEquals( 1, one.getMethods().size(), "nothing is added behind the JOT's back" );
+		Sensor both = new Sensor().method( "@javax.annotation.security.RolesAllowed" ).method( "@jakarta.annotation.security.RolesAllowed" );
+		Assertions.assertEquals( 2, both.getMethods().size() );
+		Assertions.assertEquals( "jakarta.annotation.security.RolesAllowed", both.getMethods().get( 1 ).annotationName() );
 	}
 
 	@Test

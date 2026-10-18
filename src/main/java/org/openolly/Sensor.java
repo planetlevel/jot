@@ -69,6 +69,10 @@ public class Sensor {
 	// what the control file says, see ControlFile. The master switch, and this rule's own setting if it has one
 	private static volatile boolean controlMaster = true;
 	private volatile Boolean controlProtect = null;
+	// false switches this sensor or rule off, so it does nothing at all. Null leaves it on
+	private Boolean enabled = null;
+	// what the control file says about enabled, which wins over the .jot file. Null leaves it to the .jot file
+	private volatile Boolean controlEnabled = null;
 	private boolean hasReturn = false;
 
 	private Pattern namePattern = Pattern.compile( "[a-z][a-z0-9]*(\\-[a-z0-9]+)*");
@@ -169,6 +173,9 @@ public class Sensor {
 
 		// no sensor fires while JOT's own code is running, in this sensor or any other
 		if ( JotScope.active() ) return new ArrayList<Object>();
+
+		// a sensor that is not enabled records nothing, and a rule that is not enabled neither stops a call nor reports one
+		if ( !isEnabled() ) return new ArrayList<Object>();
 
 		// return results for making tests easier
 		List<Object> results = new ArrayList<Object>();
@@ -281,8 +288,6 @@ public class Sensor {
 			logger.atWarning().log( "[JOT %s] YAML error: malformed method (" + value + ") must match " + pattern.pattern() + ". Continuing", this );
 		}
 		addMethod( value );
-		String alias = annotation ? jakartaAlias( value.substring( 1 ) ) : jakartaAlias( value );
-		if ( alias != null ) addMethod( annotation ? "@" + alias : alias );
 		return this;
 	}
 
@@ -301,45 +306,6 @@ public class Sensor {
 				&& java.util.Objects.equals( loc.methodName(), other.methodName() );
 	}
 
-	/**
-	 * The packages Jakarta EE 9 renamed from javax to jakarta. Applications on Tomcat 9 and earlier use
-	 * the javax names and Tomcat 10 and later the jakarta ones. Most javax packages are part of the JDK
-	 * and were not renamed, such as javax.crypto, javax.naming and javax.sql, so this is a list and not a rule.
-	 */
-	private static final String[] JAKARTA_PACKAGES = { "servlet", "el", "websocket", "persistence", "validation",
-			"ws.rs", "mail", "jms", "transaction", "ejb", "faces", "inject", "enterprise", "json", "jws",
-			"xml.bind", "xml.ws", "activation", "annotation", "interceptor", "batch", "resource",
-			"security.enterprise", "security.auth.message" };
-
-	/** Packages under a renamed one that belong to the JDK and keep their javax name. */
-	private static final String[] STAYS_JAVAX = { "transaction.xa", "annotation.processing" };
-
-	/**
-	 * The jakarta name for a javax name, and the other way round, so a JOT written for either works on
-	 * both. Returns null if the name isn't in a package that was renamed.
-	 */
-	static String jakartaAlias(String sig) {
-		if ( sig == null ) return null;
-		String from;
-		String to;
-		if ( sig.startsWith( "javax." ) ) {
-			from = "javax.";
-			to = "jakarta.";
-		} else if ( sig.startsWith( "jakarta." ) ) {
-			from = "jakarta.";
-			to = "javax.";
-		} else {
-			return null;
-		}
-		String rest = sig.substring( from.length() );
-		for ( String stays : STAYS_JAVAX ) {
-			if ( rest.startsWith( stays + "." ) ) return null;
-		}
-		for ( String pkg : JAKARTA_PACKAGES ) {
-			if ( rest.startsWith( pkg + "." ) ) return to + rest;
-		}
-		return null;
-	}
 	public Sensor methods( List<String> list ) {
 		if ( list == null || list.isEmpty() ) {
 			return this;
@@ -367,9 +333,6 @@ public class Sensor {
 			logger.atWarning().log( "[JOT %s] YAML error: malformed scope (" + value + ") must match " + methodPattern.pattern(), this );
 		}
 		addScope( value, negative );
-		// a negative scope isn't aliased, "not in javax" or "not in jakarta" would be true inside either
-		String alias = negative ? null : jakartaAlias( value );
-		if ( alias != null ) addScope( alias, false );
 		return this;
 	}
 
@@ -508,15 +471,35 @@ public class Sensor {
 		return !Boolean.FALSE.equals( protect );
 	}
 
+	/** Written as enabled: false in the .jot file, this switches the sensor or rule off. Null leaves it on. */
+	public Sensor enabled( Boolean value ) {
+		enabled = value;
+		return this;
+	}
+
 	/**
-	 * Applies settings from the control file. A rule that isn't in the map goes back to its .jot setting,
-	 * and names that match no sensor are ignored.
+	 * True if this sensor or rule runs. The control file's setting wins over the .jot file's, so one written with
+	 * enabled: false can be switched on while the application runs, and one that is on can be switched off.
 	 */
-	public static void applyControl(boolean master, java.util.Map<String, Boolean> rules) {
+	public boolean isEnabled() {
+		if ( controlEnabled != null ) return controlEnabled;
+		return !Boolean.FALSE.equals( enabled );
+	}
+
+	/**
+	 * Applies settings from the control file. protect is whether each rule blocks and enabled is whether each sensor
+	 * or rule runs. One that isn't in its map goes back to its .jot setting, and names that match no sensor are ignored.
+	 */
+	public static void applyControl(boolean master, java.util.Map<String, Boolean> protect, java.util.Map<String, Boolean> enabled) {
 		controlMaster = master;
 		for ( Sensor s : sensors ) {
-			s.controlProtect = rules.get( s.getName() );
+			s.controlProtect = protect.get( s.getName() );
+			s.controlEnabled = enabled.get( s.getName() );
 		}
+	}
+
+	public static void applyControl(boolean master, java.util.Map<String, Boolean> protect) {
+		applyControl( master, protect, java.util.Map.of() );
 	}
 
 	/** Whether the control file's master switch has protection on. */

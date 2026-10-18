@@ -27,12 +27,18 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
  *
  *   v: 1
  *   protect: true
- *   rules:
- *     cve-log4shell-no-exec: false
+ *   sensors:
+ *     cve-log4shell-no-exec:
+ *       protect: false
+ *     get-ciphers:
+ *       enabled: false
  *
- * protect is the master switch. When false, every rule only reports. rules sets individual rules, false to
- * report only and true to block. A rule that isn't listed goes back to its .jot setting. -Djot.protect=false
- * can't be overridden from here.
+ * protect is the master switch. When false, every rule only reports. Under sensors, each name has the settings
+ * for that sensor or rule. protect is false to report only and true to block, for a rule, and it takes priority over
+ * the rule's own protect in its .jot file. enabled is false to switch a sensor or rule off, so a sensor records
+ * nothing and a rule neither blocks nor reports, and true to switch on one the .jot file wrote with enabled: false.
+ * A setting that isn't listed goes back to its .jot file. The older rules map, a rule name and true or false for
+ * protect, is still read. -Djot.protect=false can't be overridden from here.
  *
  * It fails safe. A file that is missing, unreadable, too large or invalid changes nothing, and the last good
  * settings stay in force. Each change is published as an event from the sensor "jot-control" so the log
@@ -48,6 +54,7 @@ public final class ControlFile {
 	private String lastText = null;
 	private boolean master = true;
 	private Map<String, Boolean> rules = new LinkedHashMap<String, Boolean>();
+	private Map<String, Boolean> enabled = new LinkedHashMap<String, Boolean>();
 	private boolean warnedPermissions = false;
 	private String lastProblem = null;
 
@@ -100,6 +107,7 @@ public final class ControlFile {
 
 		boolean newMaster;
 		Map<String, Boolean> newRules = new LinkedHashMap<String, Boolean>();
+		Map<String, Boolean> newEnabled = new LinkedHashMap<String, Boolean>();
 		try {
 			JsonNode root = new ObjectMapper( new YAMLFactory() ).readTree( text );
 			if ( root == null || !root.isObject() ) throw new IllegalArgumentException( "must be a YAML mapping" );
@@ -120,6 +128,28 @@ public final class ControlFile {
 					newRules.put( entry.getKey(), entry.getValue().asBoolean() );
 				}
 			}
+			JsonNode all = root.get( "sensors" );
+			if ( all != null ) {
+				if ( !all.isObject() ) throw new IllegalArgumentException( "sensors must be an object" );
+				java.util.Iterator<Map.Entry<String, JsonNode>> it = all.fields();
+				while ( it.hasNext() ) {
+					Map.Entry<String, JsonNode> entry = it.next();
+					String name = entry.getKey();
+					if ( !entry.getValue().isObject() ) {
+						throw new IllegalArgumentException( "sensor " + name + " must be an object with enabled or protect" );
+					}
+					java.util.Iterator<Map.Entry<String, JsonNode>> settings = entry.getValue().fields();
+					while ( settings.hasNext() ) {
+						Map.Entry<String, JsonNode> setting = settings.next();
+						if ( !setting.getValue().isBoolean() ) {
+							throw new IllegalArgumentException( name + " " + setting.getKey() + " must be true or false" );
+						}
+						if ( setting.getKey().equals( "enabled" ) ) newEnabled.put( name, setting.getValue().asBoolean() );
+						else if ( setting.getKey().equals( "protect" ) ) newRules.put( name, setting.getValue().asBoolean() );
+						else throw new IllegalArgumentException( "sensor " + name + " has an unknown setting " + setting.getKey() );
+					}
+				}
+			}
 		} catch ( IOException | IllegalArgumentException e ) {
 			lastText = text;      // don't complain again about the same content
 			problem( "is not valid, keeping the last settings, " + e.getMessage() );
@@ -129,15 +159,17 @@ public final class ControlFile {
 		lastText = text;
 		lastProblem = null;
 		Map<String, Boolean> before = rules;
+		Map<String, Boolean> beforeEnabled = enabled;
 		boolean beforeMaster = master;
 		master = newMaster;
 		rules = newRules;
-		Sensor.applyControl( master, rules );
-		publishChanges( beforeMaster, before );
+		enabled = newEnabled;
+		Sensor.applyControl( master, rules, enabled );
+		publishChanges( beforeMaster, before, beforeEnabled );
 		return true;
 	}
 
-	private void publishChanges(boolean beforeMaster, Map<String, Boolean> before) {
+	private void publishChanges(boolean beforeMaster, Map<String, Boolean> before, Map<String, Boolean> beforeEnabled) {
 		if ( beforeMaster != master ) {
 			publish( "protect=" + ( master ? "on" : "off" ) );
 		}
@@ -146,9 +178,19 @@ public final class ControlFile {
 				publish( e.getKey() + "=" + ( e.getValue() ? "block" : "monitor" ) );
 			}
 		}
+		Set<String> back = new java.util.LinkedHashSet<String>();
 		for ( String name : before.keySet() ) {
-			if ( !rules.containsKey( name ) ) publish( name + "=default" );
+			if ( !rules.containsKey( name ) ) back.add( name );
 		}
+		for ( Map.Entry<String, Boolean> e : enabled.entrySet() ) {
+			if ( !e.getValue().equals( beforeEnabled.get( e.getKey() ) ) ) {
+				publish( e.getKey() + "=" + ( e.getValue() ? "enabled" : "disabled" ) );
+			}
+		}
+		for ( String name : beforeEnabled.keySet() ) {
+			if ( !enabled.containsKey( name ) ) back.add( name );
+		}
+		for ( String name : back ) publish( name + "=default" );
 	}
 
 	private void publish(String change) {

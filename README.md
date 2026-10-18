@@ -139,6 +139,12 @@ have stopped and check it for false positives before turning it on.
 `jot.protect=false` is a master switch. A rule can turn its own protection off with `protect: false`, but it can't
 turn it back on when the master switch is off.
 
+Any sensor or rule can be switched off with `enabled: false`. It records nothing, and a rule neither blocks nor reports.
+A sensor that doesn't say is enabled.
+
+    - name: "get-ciphers"
+      enabled: false
+
 ### Switching while the application runs
 Start the agent with `-Djot.control=/etc/jot/control.yaml` and it reads that file once a second. This is how the
 dashboard switches rules between monitor and block. The agent only ever reads the file. It opens no port and accepts
@@ -146,12 +152,19 @@ no connections, so nothing can reach into it.
 
     v: 1
     protect: true
-    rules:
-      cve-log4shell-no-exec: false
+    sensors:
+      cve-log4shell-no-exec:
+        protect: false
+      get-ciphers:
+        enabled: false
 
-`protect` is the master switch, and when it is false every rule only reports. `rules` sets single rules, `false` to
-report only and `true` to block, and it takes priority over the rule's own `protect:` in its .jot file. A rule that
-isn't listed goes back to its .jot setting. `-Djot.protect=false` can't be overridden by the file.
+`protect` is the master switch, and when it is false every rule only reports. Under `sensors`, each name has the
+settings for that sensor or rule. Its `protect` is `false` to report only and `true` to block, and it takes priority over
+the rule's own `protect:` in its .jot file. Its `enabled` is `false` to switch it off and `true` to switch on one that the
+.jot file wrote with `enabled: false`. A setting that isn't listed goes back to its .jot setting, and a rule keeps its
+`protect` setting while it is off. An older file with a `rules` map, a rule name and `true` or `false` for protect, is
+still read. `-Djot.protect=false` can't be overridden by the file. Any other setting under a sensor makes the file
+invalid, so a typo like `enable:` is caught, not ignored.
 
 The agent fails safe. A file that is missing, unreadable, over 64 KB or invalid changes nothing, and the last good
 settings stay in force. Each change is logged as an event from the sensor `jot-control`. Because anyone who can write
@@ -161,10 +174,16 @@ group or other users can write it.
 ## Servlet Applications
 JOT works with both `javax` (Tomcat 9 and earlier) and `jakarta` (Tomcat 10 and later) applications. Jakarta EE 9
 renamed packages such as `servlet`, `el`, `websocket`, `persistence`, `mail`, `jms` and `validation` from `javax.*` to
-`jakarta.*`. A sensor written with `javax.servlet.Servlet.service` also applies to `jakarta.servlet.Servlet.service`,
-and the other way round, so one .jot file works on either. The same goes for positive scopes. Packages that belong to
-the JDK, such as `javax.crypto`, `javax.naming` and `javax.sql`, were not renamed and are left alone. A negative scope
-such as `!javax.servlet.Servlet.service` is not mirrored, because "not inside javax" would be true inside the Jakarta one.
+`jakarta.*`. A sensor watches only the names it lists, so a sensor for servlets lists both spellings and one .jot file
+works on either server. A name that isn't in the application is simply never seen.
+
+    methods:
+    - "javax.servlet.Servlet.service"
+    - "jakarta.servlet.Servlet.service"
+
+The same goes for scopes. Packages that belong to the JDK, such as `javax.crypto`, `javax.naming` and `javax.sql`, were not
+renamed, so they are listed once. A negative scope such as `!javax.servlet.Servlet.service` applies to the name it lists
+and nothing else.
 
 The `demo/ticketbook` directory runs a sample servlet application under Tomcat 11 with JOT attached, for use with
 the dashboard. See `demo/ticketbook/run.sh`.
@@ -339,7 +358,7 @@ A rule can use the same capture and a matcher to stop a call based on what the a
       - "auditor"
       exception: "auditors may not call this"
 
-A few things to know. An annotation written with javax or jakarta also matches the other, as it does for classes.
+A few things to know. An annotation is matched by the name it is written with, so list both spellings for an annotation that Jakarta EE renamed.
 The annotation must be kept at runtime, so annotations with source retention, like Lombok's, can't be used. Only the
 annotation on the method or its class counts, not an annotation that is itself annotated with it, and annotations
 inherited from a superclass or interface are not looked at. An annotation can't be a scope, and it doesn't select

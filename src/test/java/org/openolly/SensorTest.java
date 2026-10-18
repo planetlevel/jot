@@ -215,83 +215,63 @@ class SensorTest {
 		return out;
 	}
 
+	// A JOT watches the names it lists. A servlet sensor lists both spellings, nothing is added behind its back.
 	@Test
-	void testServletMethodsApplyToBothJavaxAndJakarta() {
-		Sensor s = new Sensor().method( "javax.servlet.Servlet.service" );
-		Assertions.assertEquals( java.util.List.of( "javax.servlet.Servlet.service", "jakarta.servlet.Servlet.service" ),
-				names( s.getMethods() ) );
+	void testAMethodIsWatchedExactlyAsWritten() {
+		Sensor javax = new Sensor().method( "javax.servlet.Servlet.service" );
+		Assertions.assertEquals( java.util.List.of( "javax.servlet.Servlet.service" ), names( javax.getMethods() ) );
+		Sensor jakarta = new Sensor().method( "jakarta.servlet.ServletRequest.isUserInRole" );
+		Assertions.assertEquals( java.util.List.of( "jakarta.servlet.ServletRequest.isUserInRole" ), names( jakarta.getMethods() ) );
+	}
+
+	@Test
+	void testNamingBothSpellingsWatchesBothWithTheirOwnIndex() {
+		Sensor s = new Sensor().methods( java.util.List.of( "javax.servlet.Servlet.service", "jakarta.servlet.Servlet.service" ) );
+		Assertions.assertEquals( java.util.List.of( "javax.servlet.Servlet.service", "jakarta.servlet.Servlet.service" ), names( s.getMethods() ) );
 		Assertions.assertEquals( 0, s.getMethods().get( 0 ).getIndex() );
 		Assertions.assertEquals( 1, s.getMethods().get( 1 ).getIndex() );
 	}
 
 	@Test
-	void testJakartaNamesAlsoApplyToJavax() {
-		Sensor s = new Sensor().method( "jakarta.servlet.ServletRequest.isUserInRole" );
-		Assertions.assertEquals( java.util.List.of( "jakarta.servlet.ServletRequest.isUserInRole",
-				"javax.servlet.ServletRequest.isUserInRole" ), names( s.getMethods() ) );
+	void testNamingTheSameMethodTwiceDoesNotInstrumentTwice() {
+		Sensor s = new Sensor().methods( java.util.List.of( "javax.servlet.Servlet.service", "javax.servlet.Servlet.service" ) );
+		Assertions.assertEquals( 1, s.getMethods().size() );
 	}
 
 	@Test
-	void testNamingBothSpellingsDoesNotInstrumentTwice() {
-		Sensor s = new Sensor().methods( java.util.List.of( "javax.servlet.Servlet.service", "jakarta.servlet.Servlet.service" ) );
-		Assertions.assertEquals( 2, s.getMethods().size() );
-	}
-
-	@Test
-	void testOtherMethodsAreNotAliased() {
+	void testOtherMethodsAreTakenAsWritten() {
 		Sensor s = new Sensor().method( "javax.crypto.Cipher.getInstance" ).method( "a.b.Servlet.service" );
 		Assertions.assertEquals( java.util.List.of( "javax.crypto.Cipher.getInstance", "a.b.Servlet.service" ), names( s.getMethods() ) );
 	}
 
 	@Test
-	void testScopesGetTheirOwnIndexAndPositiveServletScopesAreAliased() {
-		Sensor s = new Sensor().scope( "x.Y.z" ).scope( "javax.servlet.Servlet.service" );
+	void testScopesAreTakenAsWrittenAndGetTheirOwnIndex() {
+		Sensor s = new Sensor().scope( "x.Y.z" ).scope( "javax.servlet.Servlet.service" ).scope( "jakarta.servlet.Servlet.service" );
 		Assertions.assertEquals( java.util.List.of( "x.Y.z", "javax.servlet.Servlet.service", "jakarta.servlet.Servlet.service" ),
 				names( s.getScopes() ) );
 		for ( int i = 0; i < 3; i++ ) Assertions.assertEquals( i, s.getScopes().get( i ).getIndex() );
 	}
 
 	@Test
-	void testNegativeServletScopesAreNotAliased() {
+	void testAScopeWrittenForOneSpellingDoesNotCoverTheOther() {
+		Sensor s = new Sensor().scope( "javax.servlet.Servlet.service" );
+		Assertions.assertEquals( 1, s.getScopes().size() );
+	}
+
+	@Test
+	void testNegativeScopesAreTakenAsWritten() {
 		Sensor s = new Sensor().scope( "!javax.servlet.Servlet.service" );
 		Assertions.assertEquals( java.util.List.of( "javax.servlet.Servlet.service" ), names( s.getScopes() ) );
 		Assertions.assertTrue( s.getScopes().get( 0 ).isNegative() );
 	}
 
 	@Test
-	void testScopeInEitherServletFlavourEnablesTheSensor() {
-		Sensor s = new Sensor().method( "a.Class.method" ).capture( "#P0" ).scope( "javax.servlet.Servlet.service" );
+	void testBeingInEitherListedServletFlavourEnablesTheSensor() {
+		Sensor s = new Sensor().method( "a.Class.method" ).capture( "#P0" )
+				.scope( "javax.servlet.Servlet.service" ).scope( "jakarta.servlet.Servlet.service" );
 		s.getScopes().get( 1 ).enterScope();  // the jakarta one
 		Object ret = s.execute( "test", "sig", "foo", new String[] { "bar" }, "zoo", new Exception().getStackTrace() );
 		Assertions.assertEquals( "[bar]", SafeString.format( ret, false ) );
-	}
-
-
-	@Test
-	void testElAndOtherRenamedPackagesAreAliasedToo() {
-		Sensor s = new Sensor().method( "javax.el.ValueExpression.getValue" )
-				.scope( "javax.websocket.Session.getBasicRemote" ).method( "javax.mail.Transport.send" );
-		Assertions.assertEquals( java.util.List.of( "javax.el.ValueExpression.getValue", "jakarta.el.ValueExpression.getValue",
-				"javax.mail.Transport.send", "jakarta.mail.Transport.send" ), names( s.getMethods() ) );
-		Assertions.assertEquals( java.util.List.of( "javax.websocket.Session.getBasicRemote", "jakarta.websocket.Session.getBasicRemote" ),
-				names( s.getScopes() ) );
-	}
-
-	@Test
-	void testJdkPackagesThatStartWithJavaxAreNotAliased() {
-		for ( String jdk : java.util.List.of( "javax.crypto.Cipher.getInstance", "javax.naming.Context.lookup",
-				"javax.sql.DataSource.getConnection", "javax.net.ssl.SSLContext.getInstance", "javax.xml.parsers.DocumentBuilder.parse",
-				"javax.script.ScriptEngine.eval", "javax.security.auth.Subject.doAs", "javax.transaction.xa.XAResource.start",
-				"javax.annotation.processing.Processor.process", "javax.management.MBeanServer.invoke" ) ) {
-			Sensor s = new Sensor().method( jdk );
-			Assertions.assertEquals( java.util.List.of( jdk ), names( s.getMethods() ), jdk );
-		}
-	}
-
-	@Test
-	void testPackageNamesThatOnlyStartLikeARenamedOneAreNotAliased() {
-		Sensor s = new Sensor().method( "javax.electric.Meter.read" ).method( "javax.servletx.Foo.bar" );
-		Assertions.assertEquals( 2, s.getMethods().size() );
 	}
 
 }

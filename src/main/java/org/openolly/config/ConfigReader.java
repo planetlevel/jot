@@ -149,6 +149,7 @@ public class ConfigReader {
 						.matchers( entry.matchers )
 						.exception( entry.exception )
 						.protect( entry.protect )
+						.enabled( entry.enabled )
 						.debug( entry.debug );
 				}
 			}
@@ -202,6 +203,7 @@ public class ConfigReader {
 		public List<String> matchers = new ArrayList<String>();
 		public String exception = null;
 		public Boolean protect = null;
+		public Boolean enabled = null;
 		public boolean debug = false;
 	}
 

@@ -78,6 +78,7 @@ sensors:
   - "Exception.<init>"
   scopes:
   - "javax.servlet.Servlet.service"
+  - "jakarta.servlet.Servlet.service"
   captures:
   - "#P0"
 

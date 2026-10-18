@@ -7,6 +7,7 @@ sensors:
   description: "Identifies the route for this HTTP request"
   methods:
   - "javax.servlet.Servlet.service"
+  - "jakarta.servlet.Servlet.service"
   captures:
   - "#P0.getRequestURI()"
 
@@ -16,6 +17,7 @@ sensors:
   - "java.lang.ProcessBuilder.<init>"
   scopes:
   - "javax.servlet.Servlet.service"
+  - "jakarta.servlet.Servlet.service"
   captures:
   - "#ARGS"
   exception: "Attempt to create ProcessBuilder from within Servlet.service() prevented 'block-native-process' JOT sensor"

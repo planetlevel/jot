@@ -1,6 +1,6 @@
 ---
 # TicketBook demo, the observe set. Every sensor here only records what it sees and never stops anything.
-# It works on javax and jakarta servlet applications, a javax.servlet name also matches jakarta.servlet.
+# It works on javax and jakarta servlet applications. A sensor watches only the names it lists, so each one lists both.
 # The blocking rules are in ../rules/protect.jot, run.sh adds them in monitor and protect modes.
 
 sensors:
@@ -11,6 +11,7 @@ sensors:
   description: "Identifies the route for this HTTP request"
   methods:
   - "javax.servlet.Servlet.service"
+  - "jakarta.servlet.Servlet.service"
   captures:
   - "#P0.getRequestURI()"
 
@@ -18,6 +19,7 @@ sensors:
   description: "Identifies user names"
   methods:
   - "javax.servlet.Servlet.service"
+  - "jakarta.servlet.Servlet.service"
   captures:
   - "#P0.getRemoteUser()==null ? \"Guest\" : #P0.getRemoteUser()"
 
@@ -25,6 +27,7 @@ sensors:
   description: "Identifies roles"
   methods:
   - "javax.servlet.ServletRequest.isUserInRole"
+  - "jakarta.servlet.ServletRequest.isUserInRole"
   captures:
   - "#P0"
 
@@ -32,6 +35,7 @@ sensors:
   description: "Figures out which users have which roles"
   methods:
   - "javax.servlet.ServletRequest.isUserInRole"
+  - "jakarta.servlet.ServletRequest.isUserInRole"
   captures:
   - "#RET ? #P0 : \"null\""
   matchers:
@@ -41,6 +45,7 @@ sensors:
   description: "Identifies parameter names used in HTTP requests"
   methods:
   - "javax.servlet.Servlet.service"
+  - "jakarta.servlet.Servlet.service"
   captures:
   - "#P0.getParameterNames()"
   matchers:
@@ -50,7 +55,9 @@ sensors:
   description: "Identifies parameter names referenced by the app"
   methods:
   - "javax.servlet.ServletRequest.getParameter"
+  - "jakarta.servlet.ServletRequest.getParameter"
   - "javax.servlet.ServletRequest.getParameterValues"
+  - "jakarta.servlet.ServletRequest.getParameterValues"
   captures:
   - "#P0"
   matchers:
@@ -60,6 +67,7 @@ sensors:
   description: "Extracts any response redirects in this app"
   methods:
   - "javax.servlet.ServletResponse.sendRedirect"
+  - "jakarta.servlet.ServletResponse.sendRedirect"
   captures:
   - "#P0"
   matchers:
@@ -69,7 +77,9 @@ sensors:
   description: "Extracts any request forwards in this app"
   methods:
   - "javax.servlet.ServletRequest.getRequestDispatcher"
+  - "jakarta.servlet.ServletRequest.getRequestDispatcher"
   - "javax.servlet.ServletContext.getRequestDispatcher"
+  - "jakarta.servlet.ServletContext.getRequestDispatcher"
   captures:
   - "#P0"
   matchers:
@@ -79,6 +89,7 @@ sensors:
   description: "Extracts the filters in this app"
   methods:
   - "javax.servlet.ServletContext.addFilter"
+  - "jakarta.servlet.ServletContext.addFilter"
   captures:
   - "#RET.getUrlPatternMappings()"
   matchers:
@@ -88,6 +99,7 @@ sensors:
   description: "Identifies the servlets in this app"
   methods:
   - "javax.servlet.ServletContext.addServlet"
+  - "jakarta.servlet.ServletContext.addServlet"
   captures:
   - "#RET.getMappings()"
   matchers:
@@ -97,6 +109,7 @@ sensors:
   description: "Identifies whether cache header is set"
   methods:
   - "javax.servlet.ServletResponse.setHeader"
+  - "jakarta.servlet.ServletResponse.setHeader"
   captures:
   - "#P0.equalsIgnoreCase(\"Cache-Control\")?#P1:null"
   matchers:
@@ -158,11 +171,11 @@ sensors:
   captures:
   - "#OBJ.getCanonicalPath()"
   matchers:
-  - "!\\/ticketbook"
-  - "!\\/apache\\-tomcat"
-  - "!\\/tomcat\\-base"
-  - "!\\/openjdk"
-  - "!\\/Cellar\\/"
+  - "!/ticketbook"
+  - "!/apache-tomcat"
+  - "!/tomcat-base"
+  - "!/openjdk"
+  - "!/Cellar/"
 
 - name: "get-sockets"
   description: "Identifies the use of sockets"
@@ -171,5 +184,5 @@ sensors:
   captures:
   - "\"\"+#P0+\":\"+#P1"     # ""+#P0 is a shorthand String conversion
   matchers:
-  - "!null\\:null"
-  - "!\\:8080"               # any port that's not 8080
+  - "!null:null"
+  - "!:8080"               # any port that's not 8080

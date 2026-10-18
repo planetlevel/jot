@@ -7,6 +7,7 @@ sensors:
   description: "Identifies the route for this HTTP request"
   methods:
   - "javax.servlet.Servlet.service"
+  - "jakarta.servlet.Servlet.service"
   captures:
   - "#P0.getRequestURI()"
 
@@ -15,6 +16,7 @@ sensors:
   description: "Identifies user names"
   methods:
   - "javax.servlet.Servlet.service"
+  - "jakarta.servlet.Servlet.service"
   captures:
   - "#P0.getRemoteUser()==null ? \"Guest\" : #P0.getRemoteUser()"
   
@@ -23,6 +25,7 @@ sensors:
   description: "Identifies roles"
   methods:
   - "javax.servlet.ServletRequest.isUserInRole"
+  - "jakarta.servlet.ServletRequest.isUserInRole"
   captures:
   - "#P0"
     
@@ -31,6 +34,7 @@ sensors:
   description: "Figures out which users have which roles"
   methods:
   - "javax.servlet.ServletRequest.isUserInRole"
+  - "jakarta.servlet.ServletRequest.isUserInRole"
   captures:
   - "#RET ? #P0 : \"null\""
   matchers:
@@ -42,6 +46,7 @@ sensors:
   description: "Identifies parameter names used in HTTP requests"
   methods:
   - "javax.servlet.Servlet.service"
+  - "jakarta.servlet.Servlet.service"
   captures:
   - "#P0.getParameterNames()"
   matchers:
@@ -52,7 +57,9 @@ sensors:
   description: "Identifies parameter names referenced by the app"
   methods:
   - "javax.servlet.ServletRequest.getParameter"
+  - "jakarta.servlet.ServletRequest.getParameter"
   - "javax.servlet.ServletRequest.getParameterValues"
+  - "jakarta.servlet.ServletRequest.getParameterValues"
   captures:
   - "#P0"
   matchers:
@@ -63,6 +70,7 @@ sensors:
   description: "Extracts any response redirects in this app"
   methods:
   - "javax.servlet.ServletResponse.sendRedirect"
+  - "jakarta.servlet.ServletResponse.sendRedirect"
   captures:
   - "#P0"
   matchers:
@@ -73,7 +81,9 @@ sensors:
   description: "Extracts any request forwards in this app"
   methods:
   - "javax.servlet.ServletRequest.getRequestDispatcher"
+  - "jakarta.servlet.ServletRequest.getRequestDispatcher"
   - "javax.servlet.ServletContext.getRequestDispatcher"
+  - "jakarta.servlet.ServletContext.getRequestDispatcher"
   captures:
   - "#P0"
   matchers:
@@ -84,6 +94,7 @@ sensors:
   description: Extracts the filters in this app"
   methods:
   - "javax.servlet.ServletContext.addFilter"
+  - "jakarta.servlet.ServletContext.addFilter"
   captures:
   - "#RET.getUrlPatternMappings()"
   matchers:
@@ -94,6 +105,7 @@ sensors:
   description: "Identifies the servlets in this app"
   methods:
   - "javax.servlet.ServletContext.addServlet"
+  - "jakarta.servlet.ServletContext.addServlet"
   captures:
   - "#RET.getMappings()"
   matchers:
@@ -104,6 +116,7 @@ sensors:
   description: "Identifies whether cache header is set"
   methods:
   - "javax.servlet.ServletResponse.setHeader"
+  - "jakarta.servlet.ServletResponse.setHeader"
   captures:
   - "#P0.equalsIgnoreCase(\"Cache-Control\")?#P1:null"
   matchers:
@@ -114,9 +127,12 @@ sensors:
   description: "Identifies PII creation"
   methods:
   - "javax.servlet.ServletRequest.getParameter"
+  - "jakarta.servlet.ServletRequest.getParameter"
   - "javax.servlet.ServletRequest.getParameterValues"
+  - "jakarta.servlet.ServletRequest.getParameterValues"
   scopes:
   - "javax.servlet.Servlet.service"
+  - "jakarta.servlet.Servlet.service"
   captures:
   - "#P0"
   matchers:
@@ -135,6 +151,7 @@ sensors:
   description: "Blocks expresssions containing dangerous patterns from being evaluated"
   methods:
   - "javax.servlet.jsp.el.ExpressionEvaluator.evaluate"
+  - "jakarta.servlet.jsp.el.ExpressionEvaluator.evaluate"
   - "org.springframework.expression.parseExpression"
   captures:
   - "#P0"
@@ -150,6 +167,7 @@ sensors:
   - "java.io.Socket.<init>"
   scopes:
   - "javax.servlet.jsp.el.ExpressionEvaluator.evaluate"
+  - "jakarta.servlet.jsp.el.ExpressionEvaluator.evaluate"
   - "org.springframework.expression.parseExpression"
   captures:
   - "#P0"

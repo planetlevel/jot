@@ -7,6 +7,7 @@ sensors:
   description: "Identifies the route for this HTTP request"
   methods:
   - "javax.servlet.Servlet.service"
+  - "jakarta.servlet.Servlet.service"
   captures:
   - "#P0.getRequestURI()"
 
@@ -14,6 +15,7 @@ sensors:
   description: "Identifies user names"
   methods:
   - "javax.servlet.Servlet.service"
+  - "jakarta.servlet.Servlet.service"
   captures:
   - "#P0.getRemoteUser() ?: \"Guest\""
 
@@ -21,6 +23,7 @@ sensors:
   description: "Identifies roles"
   methods:
   - "javax.servlet.ServletRequest.isUserInRole"
+  - "jakarta.servlet.ServletRequest.isUserInRole"
   captures:
   - "#P0"
     
