@@ -81,11 +81,15 @@
       }
     }
 
+    // every column is as tall as the tallest. A shorter one is spread over that height, each node in the middle of its
+    // own share of it, so a lone node sits at the middle and the edges between columns stay level
+    const tallest = Math.max(1, ...columns.map((col) => col.length));
+    const slot = NODE_H + GAP_Y, span = tallest * slot;
     const pos = new Map();
     columns.forEach((col, c) => col.forEach((n, i) => {
-      pos.set(n.id, { x: PAD + c * (NODE_W + COL_GAP), y: PAD + HEADER + i * (NODE_H + GAP_Y), column: c });
+      const share = span / col.length;
+      pos.set(n.id, { x: PAD + c * (NODE_W + COL_GAP), y: PAD + HEADER + (i + 0.5) * share - NODE_H / 2, column: c });
     }));
-    const tallest = Math.max(1, ...columns.map((col) => col.length));
     return {
       pos, titles, columns: columns.length, colX: columns.map((_, c) => PAD + c * (NODE_W + COL_GAP)),
       width: PAD * 2 + Math.max(1, columns.length) * NODE_W + Math.max(0, columns.length - 1) * COL_GAP,
@@ -128,7 +132,95 @@
     return "M" + x1 + "," + y1 + " C" + (x1 + dx) + "," + y1 + " " + (x2 - dx) + "," + y2 + " " + x2 + "," + y2;
   }
 
-  const api = { layout, through, pathEdges, curve };
+  // the class a method belongs to, from its full name
+  const classOf = (full) => { const i = full.lastIndexOf("."); return i < 0 ? full : full.slice(0, i); };
+
+  // Folds a straight run of methods of one class into a single node, like a static initializer that makes the instance
+  // whose constructor calls init. A step joins the run only when it is the one thing its caller calls, its caller is the
+  // one thing that calls it, and the same events pass through both, so nothing that branches is ever hidden. The merged
+  // node keeps the first member's id, lists every member in members, and edges are rewired to its ends.
+  function collapseRuns(nodes, edges) {
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const out = new Map(nodes.map((n) => [n.id, []]));
+    const inn = new Map(nodes.map((n) => [n.id, []]));
+    for (const e of edges) {
+      if (!byId.has(e.from) || !byId.has(e.to)) continue;
+      out.get(e.from).push(e);
+      inn.get(e.to).push(e);
+    }
+    const next = new Map();   // a step to the step after it in its run
+    for (const a of nodes) {
+      if (a.kind !== "code" || out.get(a.id).length !== 1) continue;
+      const b = byId.get(out.get(a.id)[0].to);
+      if (b.id !== a.id && b.kind === "code" && inn.get(b.id).length === 1 && a.events === b.events && classOf(a.full) === classOf(b.full)) next.set(a.id, b.id);
+    }
+    const follows = new Set(next.values());
+    const head = new Map();   // every member of a run to the id of the node that stands for it
+    const merged = new Map();
+    for (const a of nodes) {
+      if (follows.has(a.id)) continue;
+      const run = [a];
+      while (next.has(run[run.length - 1].id)) run.push(byId.get(next.get(run[run.length - 1].id)));
+      if (run.length < 2) continue;
+      for (const m of run) head.set(m.id, a.id);
+      const cls = classOf(a.full), method = (m) => m.label.slice(m.label.lastIndexOf(".") + 1);
+      merged.set(a.id, Object.assign({}, a, {
+        label: cls.slice(cls.lastIndexOf(".") + 1) + " (" + run.map(method).join(", ") + ")",
+        full: run.map((m) => m.full).join("\n"),
+        members: run.map((m) => m.id),
+        firstUse: run.reduce((sum, m) => sum + (m.firstUse || 0), 0) || undefined,
+      }));
+    }
+    return {
+      nodes: nodes.filter((n) => !head.has(n.id) || merged.has(n.id)).map((n) => merged.get(n.id) || n),
+      edges: edges.filter((e) => next.get(e.from) !== e.to)
+        .map((e) => head.has(e.from) || head.has(e.to) ? Object.assign({}, e, { from: head.get(e.from) || e.from, to: head.get(e.to) || e.to }) : e),
+      head,
+    };
+  }
+
+  // A static initializer runs once, when its class is first used, so it is setup rather than a step of the request, and
+  // its constructor has plenty of other callers. When all it leads to is a method of its own class, it isn't drawn.
+  // Whatever called it calls that method instead, and the method says how many events were that first use.
+  function foldInitializers(nodes, edges) {
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const out = new Map(nodes.map((n) => [n.id, []]));
+    for (const e of edges) if (byId.has(e.from) && byId.has(e.to)) out.get(e.from).push(e);
+    const head = new Map();   // a dropped initializer to the node that stands for it
+    const firstUse = new Map();
+    for (const a of nodes) {
+      if (a.kind !== "code" || !a.full.endsWith(".<clinit>") || out.get(a.id).length !== 1) continue;
+      const b = byId.get(out.get(a.id)[0].to);
+      if (b.kind !== "code" || b.id === a.id || classOf(b.full) !== classOf(a.full) || head.has(b.id)) continue;
+      head.set(a.id, b.id);
+      firstUse.set(b.id, (firstUse.get(b.id) || 0) + a.events);
+    }
+    const merged = new Map();
+    for (const e of edges) {
+      if (head.has(e.from)) continue;   // the initializer's own edge
+      const from = e.from, to = head.get(e.to) || e.to;
+      if (from === to) continue;
+      const key = from + "\n" + to;
+      if (merged.has(key)) merged.get(key).events += e.events;
+      else merged.set(key, to === e.to ? e : Object.assign({}, e, { to }));
+    }
+    return {
+      nodes: nodes.filter((n) => !head.has(n.id)).map((n) => firstUse.has(n.id) ? Object.assign({}, n, { firstUse: (n.firstUse || 0) + firstUse.get(n.id) }) : n),
+      edges: [...merged.values()].map((e) => Object.assign({}, e)),
+      head,
+    };
+  }
+
+  // the two folds one after the other, and where each node that was folded away went
+  function collapse(nodes, edges) {
+    const first = foldInitializers(nodes, edges);
+    const second = collapseRuns(first.nodes, first.edges);
+    const head = new Map(second.head);
+    for (const [id, to] of first.head) head.set(id, second.head.get(to) || to);
+    return { nodes: second.nodes, edges: second.edges, head };
+  }
+
+  const api = { layout, through, pathEdges, curve, collapse };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.JotGraph = api;
 })(typeof window !== "undefined" ? window : globalThis);

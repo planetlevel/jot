@@ -60,10 +60,8 @@
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
   .card + .card, .card + div, div + .card { margin-top: 16px; }
   .jots { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
-  .jots.has-detail { grid-template-columns: minmax(0, 1fr) 440px; }
   .jots > .wide { grid-column: 1 / -1; }
   .jots > * + * { margin-top: 0; }
-  @media (max-width: 960px) { .jots.has-detail { grid-template-columns: minmax(0, 1fr); } }
 
   form.ask { display: flex; gap: 8px; }
   input[type=text], input[type=search], input[type=password], textarea, select {
@@ -131,53 +129,59 @@
   .seg button.active.monitor { background: var(--monitored-bg); color: var(--monitored); }
   .seg button.active.block { background: var(--blocked-bg); color: var(--blocked); }
   .seg button:disabled { cursor: default; }
-  .modehelp { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
-  .modehelp b { color: var(--text); }
-  .rule { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 16px; padding: 12px 0; border-top: 1px solid var(--line); align-items: center; }
-  .rule:first-of-type { margin-top: 12px; }
-  .rule .name { font-weight: 600; overflow-wrap: anywhere; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
-  .rule .why, .rule .counts { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-  .rule .sw { grid-row: 1 / span 3; grid-column: 2; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
   button.switch { position: relative; width: 44px; height: 24px; padding: 0; border-radius: 999px; background: var(--line); border: 0; }
   button.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--panel);
                          box-shadow: 0 1px 2px rgba(0,0,0,0.3); transition: left 0.12s; }
   button.switch[aria-checked="true"] { background: var(--blocked); }
   button.switch[aria-checked="true"]::after { left: 23px; }
+  button.switch.enable[aria-checked="true"] { background: var(--observed); }
+  /* the JOTs list, one line to a JOT */
+  #jotList table.list td { white-space: nowrap; vertical-align: middle; }
+  #jotList table.list td.watch { max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+  #jotList table.list td.sw, #jotList table.list th.sw { width: 1%; }
+  #jotList table.list tr.off td:not(.sw) { opacity: 0.5; }
+  .modeswitch { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .modeswitch .on { color: var(--text); font-weight: 600; }
+  .badge.rule { background: var(--code); color: var(--muted); }
   .applied { color: var(--muted); font-size: 12px; margin-top: 8px; }
-  .stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
   .jotbar { display: flex; gap: 8px; }
   .jotbar input { flex: 1; }
   table.list tbody tr { cursor: pointer; }
-  #jotList table.list td:nth-child(4) { white-space: nowrap; }
   table.list tbody tr:hover td { background: var(--code); }
   table.list tbody tr.selected td { background: var(--observed-bg); }
   .issue { padding: 6px 10px; border-radius: 6px; margin-top: 6px; font-size: 13px; background: var(--monitored-bg); color: var(--monitored); overflow-wrap: anywhere; }
   .issue.info { background: var(--code); color: var(--muted); }
-  #jotDetail { position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 32px); overflow: auto; }
-  #graphDetail .close, #jotDetail .close { float: right; border: 0; background: transparent; color: var(--muted); font-size: 22px; line-height: 1; padding: 0 4px; }
-  #graphDetail .close:hover, #jotDetail .close:hover { color: var(--text); }
+  #graphDetail .close { float: right; border: 0; background: transparent; color: var(--muted); font-size: 22px; line-height: 1; padding: 0 4px; }
+  #graphDetail .close:hover { color: var(--text); }
   table.list td { overflow-wrap: normal; }
   table.list td:first-child { white-space: nowrap; }
-  #jotDetail h2 { margin: 0 0 4px; font-size: 17px; overflow-wrap: anywhere; }
-  #jotDetail h4 { margin: 14px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+  .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 18px; }
+  .fact { background: var(--code); border-radius: 8px; padding: 10px 12px; }
+  .fact b { display: block; font-size: 18px; }
+  .fact span { color: var(--muted); font-size: 12px; }
+  /* the event viewer and the sensor, rule and report viewer, panels that slide over the page */
+  #eventBackdrop, #jotBackdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 40; }
+  #eventDrawer, #jotDetail { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100vw); background: var(--panel);
+    border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0,0,0,.35); z-index: 41; overflow-y: auto; padding: 16px 20px 32px; }
+  #eventDrawer .top, #jotDetail .top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  #eventDrawer .top .spacer, #jotDetail .top .spacer { flex: 1; }
+  #eventDrawer h2, #jotDetail h2 { margin: 0; font-size: 18px; overflow-wrap: anywhere; }
+  #eventDrawer h4, #jotDetail h4 { margin: 18px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  #eventDrawer .when, #jotDetail .when { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  #eventDrawer pre.value, #jotDetail pre.value { margin: 0; padding: 10px 12px; background: var(--code); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere;
+    font-size: 13px; max-height: 260px; overflow: auto; }
+  #jotDetail .codebox { position: relative; }
+  #jotDetail .codebox pre.value { padding-right: 44px; }
+  #jotDetail .codebox .copy { position: absolute; top: 6px; right: 6px; display: flex; align-items: center; gap: 6px; padding: 4px 6px;
+    background: transparent; border: 1px solid transparent; border-radius: 6px; color: var(--muted); cursor: pointer; }
+  #jotDetail .codebox .copy:hover, #jotDetail .codebox .copy:focus-visible { color: var(--text); background: var(--panel); border-color: var(--line); }
+  #jotDetail .codebox .copy svg { width: 16px; height: 16px; display: block; }
+  #jotDetail .codebox .copy .note { font-size: 12px; }
+  #jotDetail .explain { margin: 14px 0 0; line-height: 1.5; }
+  #jotDetail .notice { margin-top: 18px; }
+  #jotDetail .hint { margin-top: 14px; }
   #jotDetail ul { margin: 0; padding-left: 18px; }
   #jotDetail li { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
-  #jotDetail pre { margin: 0; padding: 10px; background: var(--code); border-radius: 8px; overflow: auto; font-size: 12px; max-height: 320px; }
-  .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 6px; }
-  .fact { background: var(--code); border-radius: 8px; padding: 6px 10px; }
-  .fact b { display: block; font-size: 16px; }
-  .fact span { color: var(--muted); font-size: 12px; }
-  /* the event viewer, a panel that slides over the page */
-  #eventBackdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 40; }
-  #eventDrawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100vw); background: var(--panel);
-    border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0,0,0,.35); z-index: 41; overflow-y: auto; padding: 16px 20px 32px; }
-  #eventDrawer .top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  #eventDrawer .top .spacer { flex: 1; }
-  #eventDrawer h2 { margin: 0; font-size: 18px; overflow-wrap: anywhere; }
-  #eventDrawer h4 { margin: 18px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
-  #eventDrawer .when { color: var(--muted); font-size: 13px; margin-top: 4px; }
-  #eventDrawer pre.value { margin: 0; padding: 10px 12px; background: var(--code); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere;
-    font-size: 13px; max-height: 260px; overflow: auto; }
   #eventDrawer dl { display: grid; grid-template-columns: 120px 1fr; gap: 4px 14px; margin: 0; font-size: 13px; }
   #eventDrawer dt { color: var(--muted); }
   #eventDrawer dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
@@ -192,6 +196,8 @@
   #eventDrawer table.rel tr { cursor: pointer; }
   #eventDrawer table.rel tr:hover td { background: var(--code); }
   #eventDrawer table.rel tr.here td { background: var(--observed-bg); font-weight: 600; }
+  .pager { display: inline-flex; align-items: center; gap: 4px; }
+  .pager .pos { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 52px; text-align: center; }
   .updated { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
   tr.clickable { cursor: pointer; }
   tr.clickable:hover td { background: var(--code); }
@@ -236,7 +242,8 @@
   <nav aria-label="Pages">
     <a href="#events" id="navEvents" class="active">Events</a>
     <a href="#graph" id="navGraph">Graph</a>
-<a href="#jots" id="navJots">JOTs</a>
+    <a href="#jots" id="navJots">JOTs</a>
+    <a href="#reports" id="navReports">Reports</a>
   </nav>
   <div class="menu" id="recentMenu">
     <button type="button" id="recentBtn" aria-haspopup="true" aria-expanded="false">Recent questions &#9662;</button>
@@ -300,6 +307,7 @@
     <div class="graphtools">
       <label>Route <select id="graphRoute" aria-label="Route"><option value="">All routes</option></select></label>
       <label title="Also show the sensors that only describe the request, like who the user was and which parameters it had"><input type="checkbox" id="graphDetails"> Include request details</label>
+      <label title="Fold a straight run of methods of one class, like a static initializer, constructor and init, into one node. A run that branches stays open"><input type="checkbox" id="graphCollapse" checked> Collapse setup chains</label>
       <button type="button" class="small" id="graphRefresh">Refresh</button>
       <span class="hint" id="graphSummary"></span>
     </div>
@@ -330,54 +338,57 @@
           <button type="button" id="modeProtect">Protect</button>
         </div>
       </div>
-      <p class="modehelp"><b>Monitor</b> rules report what they would stop, and stop nothing.
-        <b>Protect</b> rules stop the calls they are written to stop. Sensors that aren't rules only ever observe.</p>
       <div id="controlBody"></div>
     </div>
 
-    <div class="stack" id="definitions">
-      <div class="card" id="sensorsCard">
-        <h2 class="section">Sensors and rules</h2>
-        <div class="jotbar" style="margin-top:8px">
-          <input type="text" id="jotFilter" autocomplete="off" aria-label="Filter sensors and rules" placeholder="Filter by name, method, file or description">
-          <select id="jotKind" aria-label="Show">
-            <option value="">Sensors and rules</option><option value="sensor">Sensors only</option><option value="rule">Rules only</option>
-          </select>
-        </div>
-        <div class="hint" id="jotSummary"></div>
-        <div id="jotIssues"></div>
-        <div class="tablewrap" id="jotList" style="margin-top:12px"></div>
+    <div class="card wide" id="sensorsCard">
+      <h2 class="section">JOTs</h2>
+      <div class="jotbar" style="margin-top:8px">
+        <input type="text" id="jotFilter" autocomplete="off" aria-label="Filter JOTs" placeholder="Filter by name, method, file or description">
+        <select id="jotKind" aria-label="Show">
+          <option value="">Sensors and rules</option><option value="sensor">Sensors only</option><option value="rule">Rules only</option>
+        </select>
       </div>
-      <div class="card" id="reportsCard">
-        <h2 class="section">Reports</h2>
-        <div class="hint">A report turns what sensors recorded into a grid, like which routes use which ciphers.</div>
-        <div class="jotbar" style="margin-top:8px">
-          <input type="text" id="reportFilter" autocomplete="off" aria-label="Filter reports" placeholder="Filter by name, sensor or file">
-        </div>
-        <div class="hint" id="reportSummary"></div>
-        <div class="tablewrap" id="reportList" style="margin-top:12px"></div>
-      </div>
+      <div class="hint" id="jotSummary"></div>
+      <div id="jotIssues"></div>
+      <div class="tablewrap" id="jotList" style="margin-top:12px"></div>
     </div>
-    <aside class="card" id="jotDetail" hidden></aside>
   </div>
 </main>
 
+<main id="reportsPage" hidden>
+  <div class="jots">
+    <div class="card wide" id="reportsCard">
+      <h2 class="section">Reports</h2>
+      <div class="hint">A report turns what sensors recorded into a grid, like which routes use which ciphers.</div>
+      <div class="jotbar" style="margin-top:8px">
+        <input type="text" id="reportFilter" autocomplete="off" aria-label="Filter reports" placeholder="Filter by name, sensor or file">
+      </div>
+      <div class="hint" id="reportSummary"></div>
+      <div class="tablewrap" id="reportList" style="margin-top:12px"></div>
+    </div>
+  </div>
+</main>
+
+<div id="jotBackdrop" hidden></div>
+<aside id="jotDetail" role="dialog" aria-label="Sensor, rule or report details" hidden></aside>
 <div id="eventBackdrop" hidden></div>
 <aside id="eventDrawer" role="dialog" aria-label="Event details" hidden></aside>
 <script src="/dom.js"></script>
 <script src="/grid.js"></script>
 <script src="/recent.js"></script>
 <script src="/graph.js"></script>
+<script src="/cells.js"></script>
 <script>
 "use strict";
 
 const PRESETS = [
   { label: "Latest events", chart: "table", title: "Latest events",
-    sql: "SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, sensor, capture, call_site_name AS call_site, message\nFROM events ORDER BY ts DESC LIMIT 100" },
+    sql: "SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, sensor, call_site_name AS call_site, capture\nFROM events ORDER BY ts DESC LIMIT 100" },
   { label: "Violations", chart: "table", title: "Violations, blocked and would-have-been-blocked",
-    sql: "SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, sensor, capture, message, call_site_name AS call_site\nFROM events WHERE action IN ('blocked', 'monitored') ORDER BY ts DESC LIMIT 200" },
+    sql: "SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, sensor, call_site_name AS call_site, capture\nFROM events WHERE action IN ('blocked', 'monitored') ORDER BY ts DESC LIMIT 200" },
   { label: "Blocked", chart: "table", title: "Blocked calls",
-    sql: "SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, sensor, capture, message, call_site_name AS call_site\nFROM events WHERE action = 'blocked' ORDER BY ts DESC LIMIT 200" },
+    sql: "SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, sensor, call_site_name AS call_site, capture\nFROM events WHERE action = 'blocked' ORDER BY ts DESC LIMIT 200" },
   { label: "Events by sensor", chart: "bar", title: "Events by sensor",
     sql: "SELECT sensor || ' (' || action || ')' AS sensor, COUNT(*) AS events\nFROM events GROUP BY sensor, action ORDER BY events DESC" },
   { label: "Busiest call sites", chart: "bar", title: "Busiest call sites",
@@ -392,7 +403,7 @@ const PRESETS = [
   { label: "Sinks in CVEs", chart: "table", title: "Sinks in CVEs, the dangerous calls a CVE rule saw inside vulnerable code, one count for every call",
     sql: "SELECT method_name AS sink, sensor AS cve, action, COUNT(*) AS events, MAX(capture) AS example\nFROM events WHERE sensor LIKE 'cve-%' AND sensor NOT LIKE '%-entered' GROUP BY method_name, sensor, action ORDER BY events DESC" },
   { label: "CVE payloads", chart: "table", title: "CVE payloads, what was passed into vulnerable code",
-    sql: "SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, sensor AS cve, action, capture, call_site_name AS call_site\nFROM events WHERE sensor LIKE 'cve-%' ORDER BY ts DESC LIMIT 200" },
+    sql: "SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, sensor AS cve, action, call_site_name AS call_site, capture\nFROM events WHERE sensor LIKE 'cve-%' ORDER BY ts DESC LIMIT 200" },
   { label: "CVEs per minute", chart: "line", title: "CVE events per minute",
     sql: "SELECT strftime('%H:%M', ts/1000, 'unixepoch', 'localtime') AS minute, COUNT(*) AS events\nFROM events WHERE sensor LIKE 'cve-%' GROUP BY minute ORDER BY MIN(ts)" },
 ];
@@ -443,15 +454,20 @@ function showPage(address) {
     closeEvent();
     if (selected) pendingSelect = decodeURIComponent(selected);
   }
-  currentPage = name === "jots" ? "jots" : name === "graph" ? "graph" : "events";
+  const before = currentPage;
+  currentPage = ["jots", "graph", "reports"].includes(name) ? name : "events";
   $("eventsPage").hidden = currentPage !== "events";
   $("graphPage").hidden = currentPage !== "graph";
   $("jotsPage").hidden = currentPage !== "jots";
-  $("sharedBar").hidden = currentPage === "jots";
+  $("reportsPage").hidden = currentPage !== "reports";
+  if (currentPage !== before) hideJotDetail();     // the panel belongs to the page that opened it
+  $("sharedBar").hidden = currentPage === "jots" || currentPage === "reports";
   $("navEvents").className = currentPage === "events" ? "active" : "";
   $("navGraph").className = currentPage === "graph" ? "active" : "";
   $("navJots").className = currentPage === "jots" ? "active" : "";
-  if (currentPage === "jots") { refreshControl(); loadJots(); }
+  $("navReports").className = currentPage === "reports" ? "active" : "";
+  if (currentPage === "jots") refreshControl();
+  if (currentPage === "jots" || currentPage === "reports") loadJots();
   if (currentPage === "graph") {
     if (selected) graphPicked = decodeURIComponent(selected);
     loadGraph();
@@ -463,8 +479,7 @@ window.addEventListener("hashchange", () => showPage(location.hash.slice(1)));
 // ---- protection. Agents read a control file, nothing here reaches an agent.
 let controlState = null;
 
-async function changeControl(change, confirmText) {
-  if (confirmText && !window.confirm(confirmText)) return;
+async function changeControl(change) {
   try {
     drawControl(await api("/api/control", change));
   } catch (e) { showControlMessage(e.message); }
@@ -475,6 +490,11 @@ function showControlMessage(text) {
 }
 
 function drawControl(c) {
+  drawProtection(c);
+  if (jots) drawJots();      // each rule's switches are in the list
+}
+
+function drawProtection(c) {
   controlState = c;
   const pill = $("jotsPill");
   $("protectionCard").hidden = !c.enabled;
@@ -482,66 +502,36 @@ function drawControl(c) {
   if (!c.enabled) return;
 
   const locked = !!(c.agent && c.agent.locked);
-  const total = c.rules.length;
-  const blocking = c.rules.filter((r) => r.mode === "block").length;
+  const live = c.rules.filter((r) => r.enabled);
+  const total = live.length;
+  const off = c.rules.length - total;
+  const blocking = live.filter((r) => r.mode === "block").length;
+  const offNote = off ? " " + off + " disabled." : "";
   pill.className = !c.master ? "monitor" : blocking === total ? "block" : "partial";
-  pill.textContent = locked ? "Locked to monitor" : !c.master ? "Monitor, nothing is blocked" : blocking + " of " + total + " rules blocking";
+  pill.textContent = locked ? "Locked to monitor" : !c.master ? "Monitor, nothing is blocked"
+    : !total ? "All rules disabled" : blocking + " of " + total + " rules blocking";
 
-  $("protectStatus").textContent = locked
+  $("protectStatus").textContent = (locked
     ? "The agent was started with -Djot.protect=false, so every rule only reports. Monitor and Protect can't change that. Restart the agent without the flag."
     : !c.master
     ? "Monitor is on. Every rule reports what it would stop and stops nothing."
+    : !total ? "Every rule is disabled."
     : blocking === total ? "All " + total + " rules are blocking."
-    : blocking + " of " + total + " rules are blocking. " + (total - blocking) + " report only.";
+    : blocking + " of " + total + " rules are blocking. " + (total - blocking) + " report only.") + (total ? offNote : "");
 
   $("modeMonitor").className = c.master ? "" : "active monitor";
   $("modeProtect").className = c.master ? "active block" : "";
   for (const id of ["modeMonitor", "modeProtect"]) $(id).disabled = locked;
 
-  const rows = c.rules.map((r, index) => {
-    const block = r.mode === "block";
-    // what the rule is set to by itself, ignoring the master switch
-    const intended = r.setting !== null ? r.setting : !r.staged;
-    const changed = r.setting !== null && r.setting !== !r.staged;
-    const sw = el("button", { type: "button", id: "ruleSwitch" + index, class: "switch", role: "switch", "aria-checked": String(intended),
-      "aria-label": r.name + " blocks", disabled: !c.master || locked ? "" : null,
-      title: locked ? "The agent is locked to monitor" : !c.master ? "Monitor is on, so no rule blocks" : intended ? "Click to make this rule report only" : "Click to make this rule block",
-      onclick: () => {
-        const next = !intended;
-        // switching back to what the .jot file says removes the override
-        changeControl({ rules: { [r.name]: next === !r.staged ? null : next } },
-          next ? null : "Make " + r.name + " report only? It will stop blocking.");
-      } });
-    return el("div", { class: "rule" },
-      el("div", { class: "name" }, r.name, " ",
-        el("span", { class: "badge " + (block ? "blocked" : "monitored"), text: block ? "blocking" : "report only" }),
-        r.loaded === false ? el("span", { class: "hint", style: "margin:0", text: "(not loaded by the running agent) " }) : null,
-        locked ? el("span", { class: "hint", style: "margin:0", text: "(agent locked to monitor)" })
-          : !c.master ? el("span", { class: "hint", style: "margin:0", text: "(Monitor is on)" })
-          : changed ? el("span", { class: "hint", style: "margin:0", text: "(changed here, the .jot file says " + (r.staged ? "report only" : "block") + ")" })
-          : r.staged ? el("span", { class: "hint", style: "margin:0", text: "(staged as report only in its .jot file)" }) : null),
-      el("div", { class: "sw" }, el("label", { for: "ruleSwitch" + index, text: "Block", style: "cursor:pointer" }), sw),
-      el("div", { class: "why", text: (r.description ? r.description + ". " : "") + r.message }),
-      el("div", { class: "counts", text: r.last_hour.blocked + " blocked, " + r.last_hour.monitored + " reported in the last hour" }));
-  });
-  const applied = c.applied.length
-    ? el("div", { class: "applied" }, "Agents confirmed, latest first. " + c.applied.slice(0, 4).map((a) =>
-        clock(a.ts) + " " + (a.app || "?") + " " + a.change).join(". "))
-    : el("div", { class: "applied", text: c.file_exists
-        ? "No agent has confirmed these settings yet. Agents need -Djot.control pointing at the control file."
-        : "No control file yet. It is created the first time you change something." });
-  $("controlBody").replaceChildren(
-    ...(rows.length ? rows : [el("div", { class: "empty", text: "No rules were found. A rule is a sensor that has an exception." })]),
-    applied,
-    el("div", { class: "applied", text: c.agent && c.agent.known
-      ? "Agent " + (c.agent.app || "?") + " on " + (c.agent.host || "?") + ", started " + clock(c.agent.started) + ", loaded "
-        + c.agent.loaded.length + " JOTs from " + (c.agent.jots || "?") + ". An agent started with -Djot.protect=false ignores these settings."
-      : "No agent has reported its startup yet. An agent started with -Djot.protect=false ignores these settings." }));
+  // said only when something is wrong, a change nobody has picked up is the one thing worth telling
+  $("controlBody").replaceChildren(...(c.file_exists && !c.applied.length
+    ? [el("div", { class: "applied", text: "No agent has confirmed these settings yet. Agents need -Djot.control pointing at the control file." })]
+    : []));
 }
 
 function setMode(master) {
   if (controlState && controlState.master === master) return;
-  changeControl({ master }, master ? null : "Switch to Monitor? Every rule will report only and nothing will be blocked.");
+  changeControl({ master });
 }
 $("modeMonitor").addEventListener("click", () => setMode(false));
 $("modeProtect").addEventListener("click", () => setMode(true));
@@ -618,9 +608,11 @@ function cell(col, v) {
   if (v === null || v === undefined) return el("td", { class: "null", text: "—" });
   if ((col === "ts" || col.endsWith("_ts")) && isNumber(v)) return el("td", { text: new Date(v).toLocaleString() });
   if (col === "action" && typeof v === "string") return el("td", {}, el("span", { class: "badge " + v, text: v }));
-  const s = String(v);
+  const short = JotCells.shorten(col, v);
+  const s = String(short.text);
   const td = el("td", { class: isNumber(v) ? "num" : "", text: s.length > 300 ? s.slice(0, 300) + "…" : s });
-  if (s.length > 300) td.title = s.slice(0, 2000);
+  if (short.title) td.title = short.title;
+  else if (s.length > 300) td.title = s.slice(0, 2000);
   return td;
 }
 
@@ -632,10 +624,13 @@ function numericColumn(r, i) {
   return values.length > 0 && values.every(isNumber);
 }
 
+let eventOrder = [];        // the event ids of the table on the page, in order, so the viewer can step through them
+
 function tableView(r, hint) {
   if (!r.rows.length) return el("div", { class: "empty", text: hint || "No matching events" });
   // a column called pk makes each row open that event, and isn't shown itself
   const pkAt = r.columns.indexOf("pk");
+  eventOrder = pkAt >= 0 ? r.rows.map((row) => row[pkAt]).filter((pk) => pk != null) : [];
   const shown = r.columns.map((c, i) => i).filter((i) => i !== pkAt);
   const head = el("tr", {}, ...shown.map((i) => el("th", { class: numericColumn(r, i) ? "num" : "", text: r.columns[i] })));
   const body = r.rows.map((row) => {
@@ -720,6 +715,7 @@ function lineView(r) {
 
 function show(entry, r) {
   current = entry;
+  eventOrder = [];          // only a table with event ids sets it again
   let chart = entry.chart;
   if (chart === "grid" && r.columns.length < 2) chart = "table";
   else if ((chart === "bar" || chart === "line") && !chartable(r)) chart = "table";
@@ -836,24 +832,42 @@ async function drawReports() {
 // ---- sensors, rules and reports, read only. How each is defined and whether it fires.
 let jots = null;
 let jotSelected = null;       // "kind:name"
+let jotOrder = { jots: [], reports: [] };   // what each page's list shows, in order, so the panel can step through it
 let pendingSelect = null;     // a name from the address, like #jots/get-routes, selected once the list has loaded
 
-function selectJot(key, name) {
-  jotSelected = key;
-  $("jotsGrid").classList.add("has-detail");
+function showJotDetail() {
   $("jotDetail").hidden = false;
-  try { history.replaceState(null, "", "#jots/" + encodeURIComponent(name)); } catch (e) { /* ignore */ }
+  $("jotBackdrop").hidden = false;
+}
+
+// hides the panel without touching the address, for when the page is being left
+function hideJotDetail() {
+  jotSelected = null;
+  $("jotDetail").hidden = true;
+  $("jotBackdrop").hidden = true;
+}
+
+function stepJot(step) {
+  const list = jotOrder[currentPage] || [];
+  const next = list[list.findIndex((i) => i.key === jotSelected) + step];
+  if (next) selectJot(next.key, next.name);
+}
+
+function selectJot(key, name) {
+  if (key !== jotSelected) $("jotDetail").scrollTop = 0;
+  jotSelected = key;
+  showJotDetail();
+  try { history.replaceState(null, "", "#" + currentPage + "/" + encodeURIComponent(name)); } catch (e) { /* ignore */ }
   drawJots();
 }
 
 function closeDetail() {
-  jotSelected = null;
-  $("jotsGrid").classList.remove("has-detail");
-  $("jotDetail").hidden = true;
-  try { history.replaceState(null, "", "#jots"); } catch (e) { /* ignore */ }
+  hideJotDetail();
+  try { history.replaceState(null, "", "#" + currentPage); } catch (e) { /* ignore */ }
   drawJots();
 }
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && jotSelected) closeDetail(); });
+$("jotBackdrop").addEventListener("click", closeDetail);
 
 async function loadJots() {
   try { jots = await api("/api/jots"); drawJots(); } catch (e) { $("jotList").replaceChildren(el("div", { class: "error", text: e.message })); }
@@ -888,9 +902,9 @@ function drawJots() {
   if (!jots) return;
   const all = jotItems();
   if (pendingSelect) {
-    const wanted = all.find((i) => i.name === pendingSelect);
+    const wanted = all.find((i) => i.name === pendingSelect && (i.kind === "report") === (currentPage === "reports"));
     pendingSelect = null;
-    if (wanted) { jotSelected = wanted.key; $("jotsGrid").classList.add("has-detail"); $("jotDetail").hidden = false; }
+    if (wanted) { jotSelected = wanted.key; showJotDetail(); }
   }
   drawSensors(all);
   drawReportList(all);
@@ -912,21 +926,67 @@ function drawSensors(all) {
     ? [el("details", {}, el("summary", { class: "hint", text: issues.length + " things to look at" }), ...issues.map(issueRow))]
     : issues.map(issueRow)));
 
-  const head = el("tr", {}, ...["Name", "Kind", "Watches or inside", "File", "Last hour", "Total", "Last fired"].map((t) => el("th", { class: t === "Last hour" || t === "Total" ? "num" : "", text: t })));
+  const canSwitch = !!(controlState && controlState.enabled);
+  const controls = new Map(canSwitch ? controlState.rules.map((r) => [r.name, r]) : []);
+  const enabledNow = canSwitch ? controlState.enabled : {};
+  const head = el("tr", {}, el("th", { class: "sw", text: "Enabled" }),
+    ...["Name", "Kind", "Watches or inside", "File", "Last hour", "Total", "Last fired"].map((t) => el("th", { class: t === "Last hour" || t === "Total" ? "num" : "", text: t })),
+    el("th", { class: "sw", text: "Mode" }));
   const body = shown.map((i) => {
     // A rule limited to certain methods is identified by where it applies. Its watched methods are often the same
     // list for every rule, like the expression and process sinks in the CVE microsandboxes.
     const watches = i.scopes.length
       ? "inside " + i.scopes[0] + (i.scopes.length > 1 ? " +" + (i.scopes.length - 1) : "")
       : (i.methods[0] || "") + (i.methods.length > 1 ? " +" + (i.methods.length - 1) : "");
-    return el("tr", { class: i.key === jotSelected ? "selected" : "", onclick: () => selectJot(i.key, i.name) },
-      el("td", { text: i.name }), el("td", {}, kindBadge(i)), el("td", {}, ...dotted(watches)), el("td", { text: i.file || "" }),
+    const rule = controls.get(i.name);   // only a rule can be set to monitor or protect
+    const off = canSwitch && enabledNow[i.name] === false;
+    return el("tr", { class: [i.key === jotSelected ? "selected" : "", off ? "off" : ""].join(" ").trim(),
+        onclick: () => selectJot(i.key, i.name) },
+      el("td", { class: "sw" }, canSwitch ? enableSwitch(i, !off) : null),
+      el("td", { text: i.name }), el("td", {}, el("span", { class: "badge " + (i.kind === "rule" ? "rule" : "sensor"), text: i.kind === "rule" ? "rule" : "observe" })),
+      el("td", { class: "watch", title: watches, text: watches }), el("td", { text: i.file || "" }),
       el("td", { class: "num", text: String(i.last_hour) }), el("td", { class: "num", text: String(i.events) }),
-      el("td", { class: !i.events ? "null" : "", text: i.events ? ago(i.last_ts) : "never" }));
+      el("td", { class: !i.events ? "null" : "", text: i.events ? ago(i.last_ts) : "never" }),
+      el("td", { class: "sw" }, rule ? modeSwitch(rule) : null));
   });
+  jotOrder.jots = shown;
   $("jotList").replaceChildren(shown.length
     ? el("table", { class: "list" }, el("thead", {}, head), el("tbody", {}, ...body))
     : el("div", { class: "empty", text: "Nothing matches" }));
+}
+
+// on the left of every sensor and rule, whether it runs at all. A sensor that is not enabled records nothing and a rule
+// that is not enabled neither blocks nor reports.
+function enableSwitch(item, on) {
+  return el("button", { type: "button", class: "switch enable", role: "switch", "aria-checked": String(on), "aria-label": item.name + " enabled",
+    title: on ? "Enabled. Click to switch it off, it will " + (item.kind === "rule" ? "neither block nor report" : "record nothing") : "Not enabled. Click to enable it",
+    onclick: (ev) => {
+      ev.stopPropagation();
+      const next = !on;
+      // switching back to what the .jot file says removes the override
+      changeControl({ enabled: { [item.name]: next === item.jot_enabled ? null : next } });
+    } });
+}
+
+// on the right of a rule, whether it stops the call or only reports it
+function modeSwitch(r) {
+  const c = controlState;
+  const locked = !!(c.agent && c.agent.locked);
+  // what the rule is set to by itself, ignoring the master switch
+  const intended = r.setting !== null ? r.setting : !r.staged;
+  const shown = c.master && !locked && intended;
+  const stuck = !c.master || locked || !r.enabled;
+  const sw = el("button", { type: "button", class: "switch", role: "switch", "aria-checked": String(shown), "aria-label": r.name + " protects",
+    disabled: stuck ? "" : null,
+    title: locked ? "The agent is locked to monitor" : !c.master ? "Monitor is on, so no rule blocks" : !r.enabled ? "Enable the rule first"
+      : intended ? "Protect. Click to make this rule report only" : "Monitor. Click to make this rule block",
+    onclick: (ev) => {
+      ev.stopPropagation();
+      const next = !intended;
+      // switching back to what the .jot file says removes the override
+      changeControl({ rules: { [r.name]: next === !r.staged ? null : next } });
+    } });
+  return el("span", { class: "modeswitch" }, el("span", { class: shown ? "" : "on", text: "Monitor" }), sw, el("span", { class: shown ? "on" : "", text: "Protect" }));
 }
 
 function openReport(r) {
@@ -945,6 +1005,7 @@ function drawReportList(all) {
     el("td", { text: i.file || "" }),
     el("td", {}, i.sql ? el("button", { type: "button", class: "small", text: "Open", title: "Run this report on the Events page",
       onclick: (ev) => { ev.stopPropagation(); openReport(i); } }) : null)));
+  jotOrder.reports = shown;
   $("reportList").replaceChildren(mine.length
     ? (shown.length ? el("table", { class: "list" }, el("thead", {}, head), el("tbody", {}, ...body)) : el("div", { class: "empty", text: "Nothing matches" }))
     : el("div", { class: "empty", text: "No reports are defined. Add a report to a .jot file and it shows up here." }));
@@ -963,37 +1024,93 @@ function fact(value, label) {
   return el("div", { class: "fact" }, el("b", { text: String(value) }), el("span", { text: label }));
 }
 
+// Previous and next buttons with where this is in the list, for a drawer that goes through a list. at is the position
+// of what is shown, or -1 when it isn't in the list, which is when there is nothing to step through.
+function pager(at, total, go) {
+  if (at < 0 || total < 2) return null;
+  return el("span", { class: "pager" },
+    el("button", { type: "button", class: "small", text: "\u2039", title: "Previous (left arrow)", "aria-label": "Previous",
+      disabled: at > 0 ? null : "", onclick: () => go(-1) }),
+    el("span", { class: "pos", text: (at + 1) + " of " + total }),
+    el("button", { type: "button", class: "small", text: "\u203a", title: "Next (right arrow)", "aria-label": "Next",
+      disabled: at < total - 1 ? null : "", onclick: () => go(1) }));
+}
+
+// A 24 by 24 stroke icon from fixed paths. dom.js builds HTML elements only, so the svg is made here.
+function icon(...paths) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "2",
+    "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) svg.setAttribute(k, v);
+  for (const d of paths) {
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
+}
+const COPY_ICON = ["M9 9h11a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H11a2 2 0 0 1-2-2z", "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"];
+const CHECK_ICON = ["M20 6 9 17l-5-5"];
+
+// a block of text with a button that copies it
+function copyBlock(text, what) {
+  const button = el("button", { type: "button", class: "copy", title: "Copy", "aria-label": "Copy " + what });
+  let timer = null;
+  const show = (paths, note) => {
+    button.replaceChildren(...[note ? el("span", { class: "note", text: note }) : null, icon(...paths)].filter(Boolean));
+  };
+  show(COPY_ICON);
+  button.addEventListener("click", async () => {
+    let note = "Copied";
+    try { await navigator.clipboard.writeText(text); } catch (e) { note = "Copy failed"; }
+    show(note === "Copied" ? CHECK_ICON : COPY_ICON, note);
+    clearTimeout(timer);
+    timer = setTimeout(() => show(COPY_ICON), 1500);
+  });
+  return el("div", { class: "codebox" }, el("pre", { class: "value", text: text }), button);
+}
+
 function drawJotDetail(i) {
   const d = $("jotDetail");
-  const close = el("button", { type: "button", class: "close", "aria-label": "Close", title: "Close", text: "\u00d7", onclick: closeDetail });
+  const spacer = el("span", { class: "spacer" });
+  const close = el("button", { class: "small", text: "Close", title: "Escape", onclick: closeDetail });
+  const list = jotOrder[i.kind === "report" ? "reports" : "jots"];
+  const steps = pager(list.findIndex((x) => x.key === i.key), list.length, stepJot);
+  // replaceChildren turns a null into the text "null", so empty sections are dropped first
   if (i.kind === "report") {
-    d.replaceChildren(el("div", {},
-      close, el("h2", { text: i.name }), kindBadge(i), " ", el("span", { class: "hint", text: i.file }),
+    d.replaceChildren(...[
+      el("div", { class: "top" }, kindBadge(i), el("h2", { text: i.name }), spacer, steps,
+        i.sql ? el("button", { class: "small primary", text: "Open this report", onclick: () => openReport(i) }) : null, close),
+      el("div", { class: "when", text: i.file }),
       el("p", { class: "explain", text: i.type === "list"
         ? "One row per call site, with what " + i.cols + " captured there."
         : "Rows are the captures of " + i.rows + ". " + (i.type === "compare"
           ? "Columns come from the captures of " + i.cols + ", with an X where it was seen in the same request."
           : "One column for each of " + i.cols + ", showing what it captured in the same request.") }),
-      listSection("Rows", i.rows ? [i.rows] : null), listSection(i.type === "table" ? "Columns" : "Column source", (i.cols || "").split(",").map((c) => c.trim()).filter(Boolean)),
-      i.sql ? el("button", { class: "primary", text: "Open this report", onclick: () => openReport(i) }) : null));
+      listSection("Rows", i.rows ? [i.rows] : null),
+      listSection(i.type === "table" ? "Columns" : "Column source", (i.cols || "").split(",").map((c) => c.trim()).filter(Boolean)),
+    ].filter(Boolean));
     return;
   }
   const never = !i.events;
-  d.replaceChildren(el("div", {},
-    close, el("h2", { text: i.name }), kindBadge(i), " ", el("span", { class: "hint", text: i.file }),
+  const showEvents = () => {
+    closeDetail();
+    location.hash = "#events";
+    runSql("SELECT datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, call_site_name AS call_site, capture\nFROM events WHERE sensor = '"
+      + i.name.replace(/'/g, "''") + "' ORDER BY ts DESC LIMIT 200", { title: "Events from " + i.name, chart: "table" });
+  };
+  d.replaceChildren(...[
+    el("div", { class: "top" }, kindBadge(i), el("h2", { text: i.name }), spacer, steps,
+      el("button", { class: "small primary", text: "Show its events", onclick: showEvents }), close),
+    el("div", { class: "when", text: i.file }),
     i.description ? el("p", { class: "explain", text: i.description }) : null,
     el("div", { class: "facts" }, fact(i.events, "events"), fact(i.last_hour, "last hour"), fact(i.events ? ago(i.last_ts) : "never", "last fired"),
       ...(i.kind === "rule" ? [fact(i.blocked, "blocked"), fact(i.monitored, "reported only")] : [])),
     never ? el("div", { class: "hint", text: "No events in the log yet. A sensor only records when the code it watches runs, so check the method names if you expected it." }) : null,
     i.kind === "rule" ? el("div", { class: "notice", text: (i.mode === "block" ? "Blocks the call. " : "Only reports, nothing is stopped. ") + "Message: " + i.exception }) : null,
-    listSection("Watches", i.methods), listSection("Only inside", i.scopes), listSection("Skips", i.excludes),
-    listSection("Captures", i.captures), listSection("Matchers", i.matchers),
-    el("h4", { text: "As written" }), el("pre", { text: i.definition || "" }),
-    el("div", { class: "row" }, el("button", { class: "primary", text: "Show its events", onclick: () => {
-      location.hash = "#events";
-      runSql("SELECT datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, capture, call_site_name AS call_site, message\nFROM events WHERE sensor = '"
-        + i.name.replace(/'/g, "''") + "' ORDER BY ts DESC LIMIT 200", { title: "Events from " + i.name, chart: "table" });
-    } }))));
+    el("h4", { text: "YAML" }),
+    copyBlock(i.definition || "", "YAML"),
+  ].filter(Boolean));
 }
 
 $("jotFilter").addEventListener("input", drawJots);
@@ -1012,6 +1129,11 @@ async function loadGraph() {
     const query = "?route=" + encodeURIComponent(route) + "&details=" + ($("graphDetails").checked ? "1" : "0");
     graphData = await api("/api/graph" + query);
     graphAt = lastStatus ? lastStatus.last_pk : null;
+    if ($("graphCollapse").checked) {
+      const folded = JotGraph.collapse(graphData.nodes, graphData.edges);
+      graphData = Object.assign({}, graphData, { nodes: folded.nodes, edges: folded.edges });
+      if (folded.head.has(graphPicked)) graphPicked = folded.head.get(graphPicked);
+    }
     const select = $("graphRoute");
     select.replaceChildren(el("option", { value: "", text: "All routes" }),
       ...graphData.routes.map((r) => el("option", { value: r, text: r, selected: r === route ? "" : null })));
@@ -1063,7 +1185,7 @@ function drawGraph() {
     const cls = "node " + n.kind + (n.kind === "effect" && n.blocked ? " blocked" : n.kind === "effect" && n.monitored ? " monitored" : "")
       + (lit && !lit.has(n.id) ? " off" : "") + (n.id === graphPicked ? " picked" : "");
     const g = svgEl("g", { class: cls, transform: "translate(" + p.x + "," + p.y + ")", tabindex: "0", role: "button" });
-    g.append(svgEl("title", {}, n.full + " (" + n.events + " events)"));
+    g.append(svgEl("title", {}, n.full + " (" + n.events + " events" + (n.firstUse ? ", " + n.firstUse + " of them the first use of the class" : "") + ")"));
     g.append(svgEl("rect", { width: L.nodeW, height: L.nodeH, rx: 6 }));
     g.append(svgEl("text", { x: 8, y: 17 }, graphLabel(n.label, 28)));
     g.append(svgEl("text", { class: "count", x: L.nodeW - 8, y: 17 }, String(n.events)));
@@ -1102,6 +1224,7 @@ function drawGraphDetail() {
     el("h2", { text: n.label }),
     el("div", { class: "hint", text: kind }),
     n.full !== n.label ? el("div", { class: "hint", text: n.full }) : null,
+    n.firstUse ? el("div", { class: "hint", text: n.firstUse.toLocaleString() + " events were the first use of the class, which ran its static initializer" }) : null,
     el("div", { class: "hint", text: n.events.toLocaleString() + " events" + (n.blocked ? ", " + n.blocked + " blocked" : "") + (n.monitored ? ", " + n.monitored + " reported only" : "") }),
     n.captures.length ? el("h4", { text: "What it captured" }) : null,
     n.captures.length ? el("ul", {}, ...n.captures.map(([c, count]) => el("li", {}, el("span", { text: c === "" ? "(nothing)" : c }), el("span", { class: "n", text: "  " + count })))) : null,
@@ -1122,6 +1245,7 @@ function openSearch(query) {
 
 $("graphRoute").addEventListener("change", () => { graphPicked = null; history.replaceState(null, "", "#graph"); loadGraph(); });
 $("graphDetails").addEventListener("change", loadGraph);
+$("graphCollapse").addEventListener("change", loadGraph);
 $("graphRefresh").addEventListener("click", loadGraph);
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && graphPicked && currentPage === "graph") pickNode(null); });
 
@@ -1140,7 +1264,7 @@ async function refreshNow() {
   button.disabled = true;
   try {
     await Promise.all([refreshStatus(), refreshControl()]);
-    if (currentPage === "jots") await loadJots();
+    if (currentPage === "jots" || currentPage === "reports") await loadJots();
     else if (currentPage === "graph") await loadGraph();
     else if (current && !busy) {
       const r = await api("/api/sql", { sql: current.sql, limit: current.chart === "grid" ? 5000 : undefined });
@@ -1155,7 +1279,7 @@ async function tick() {
   try {
     await Promise.all([refreshStatus(), refreshControl()]);
     stamp();
-    if (currentPage === "jots") { await loadJots(); return; }
+    if (currentPage === "jots" || currentPage === "reports") { await loadJots(); return; }
     if (currentPage === "graph") { if (lastStatus && lastStatus.last_pk !== graphAt) await loadGraph(); return; }
     // refresh the current view, unless someone is editing its SQL
     if ($("live").checked && current && !busy && !$("results").querySelector("details[open]")) {
@@ -1204,8 +1328,10 @@ async function openEvent(pk) {
   try {
     const e = await api("/api/event?pk=" + pk);
     if (location.hash !== "#event/" + pk) return;   // moved on while it loaded
+    const another = !shownEvent || shownEvent.pk !== e.pk;
     shownEvent = e;
     drawEvent();
+    if (another) $("eventDrawer").scrollTop = 0;
   } catch (err) {
     shownEvent = { error: err.message };
     $("eventDrawer").replaceChildren(el("button", { class: "small", text: "Close", onclick: () => { location.hash = "#events"; } }),
@@ -1238,6 +1364,7 @@ function drawEvent() {
       e.action ? el("span", { class: "badge " + e.action, text: e.action }) : null,
       el("h2", { text: e.sensor || "event" }),
       el("span", { class: "spacer" }),
+      pager(eventOrder.indexOf(e.pk), eventOrder.length, stepEvent),
       copy,
       el("button", { class: "small", text: "Close", title: "Escape", onclick: () => { location.hash = "#events"; } })),
     el("div", { class: "when", text: when }),
@@ -1272,7 +1399,21 @@ function drawEvent() {
   $("eventDrawer").hidden = false;
   $("eventBackdrop").hidden = false;
 }
+function stepEvent(step) {
+  const next = eventOrder[eventOrder.indexOf(shownEvent && shownEvent.pk) + step];
+  if (next != null) location.hash = "#event/" + next;
+}
 $("eventBackdrop").addEventListener("click", () => { location.hash = "#events"; });
+
+// left and right arrows step through whichever list the open panel came from, unless someone is typing
+document.addEventListener("keydown", (ev) => {
+  if ((ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") || ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+  const t = ev.target;
+  if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
+  const step = ev.key === "ArrowLeft" ? -1 : 1;
+  if (shownEvent && !shownEvent.error && !$("eventDrawer").hidden) { stepEvent(step); ev.preventDefault(); }
+  else if (jotSelected && !$("jotDetail").hidden) { stepJot(step); ev.preventDefault(); }
+});
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && shownEvent) location.hash = "#events"; });
 
 showPage(location.hash.slice(1));

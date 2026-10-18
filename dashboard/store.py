@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS sensors (
   captures TEXT,        -- JSON array of expressions
   blocks TEXT,          -- the exception message if the sensor is a rule, otherwise null
   protect TEXT,         -- 'false' if the .jot file stages the rule as report only, otherwise null
+  enabled TEXT,         -- 'false' if the .jot file writes enabled: false, otherwise null
   source TEXT,          -- the .jot file it came from
   matchers TEXT,        -- JSON array
   excludes TEXT,        -- JSON array
@@ -370,10 +371,11 @@ def load_sensors(db, paths):
                 if not _METHOD.match(str(m).strip()):
                     _issue(db, "warning", "%s has %r, which doesn't look like Class.method" % (name, m), source)
             staged = "false" if s.get("protect") is False else None
-            db.execute("""INSERT INTO sensors (name, description, methods, scopes, captures, blocks, protect, source,
-                                               matchers, excludes, definition) VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (
+            off = "false" if s.get("enabled") is False else None
+            db.execute("""INSERT INTO sensors (name, description, methods, scopes, captures, blocks, protect, enabled, source,
+                                               matchers, excludes, definition) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", (
                 name, s.get("description"), json.dumps(methods), json.dumps(s.get("scopes") or []),
-                json.dumps(s.get("captures") or []), s.get("exception"), staged, source,
+                json.dumps(s.get("captures") or []), s.get("exception"), staged, off, source,
                 json.dumps(s.get("matchers") or []), json.dumps(s.get("excludes") or []),
                 yaml.safe_dump(s, sort_keys=False, default_flow_style=False, allow_unicode=True).rstrip()))
             loaded += 1
@@ -513,23 +515,41 @@ def _page_of(route):
 
 
 def graph_rows(db_path, route=None):
-    """One row per distinct (route, sensor, action, capture, stack) with the number of events. The route is the first
-    request the event happened in, as the get-routes sensor saw it."""
+    """The events of the graph in the order they happened, request by request. The route is the first request the
+    event happened in, as the get-routes sensor saw it. Events of one request are together and in the agent's own
+    order, which is the order the application caused them."""
     where = "WHERE sensor <> 'get-routes' AND stack IS NOT NULL"
-    sql = """SELECT route, sensor, action, capture, stack, COUNT(*) FROM (
+    sql = """SELECT route, run, trace, sensor, action, capture, stack FROM (
                SELECT (SELECT r.capture FROM events_raw r WHERE r.run = e.run AND r.trace = e.trace AND r.sensor = 'get-routes'
-                       ORDER BY r.pk LIMIT 1) AS route, e.sensor, e.action, e.capture, e.stack
-               FROM events e %s) %s GROUP BY 1, 2, 3, 4, 5""" % (where, "WHERE route = %s" % _lit(route) if route else "")
+                       ORDER BY r.pk LIMIT 1) AS route, e.run, e.trace, e.id, e.sensor, e.action, e.capture, e.stack
+               FROM events e %s) %s ORDER BY run, trace, id""" % (where, "WHERE route = %s" % _lit(route) if route else "")
     return run_query(db_path, sql, limit=GRAPH_ROW_LIMIT)
 
 
-GRAPH_ROW_LIMIT = 30000
+GRAPH_ROW_LIMIT = 50000
+
+
+def _requests(rows):
+    """The rows grouped into requests. An event with no trace is a request of its own."""
+    group, key = [], None
+    for i, row in enumerate(rows):
+        k = (row[1], row[2]) if row[2] is not None else ("event", i)
+        if group and k != key:
+            yield group
+            group = []
+        key = k
+        group.append(row)
+    if group:
+        yield group
 
 
 def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=False):
-    """Nodes and edges for the paths through the application. Every event is a path that starts at the route of its
-    request, goes through the application methods that were running, and ends at what the sensor saw, which is an
-    effect. A forward or a redirect also leads on to the route it names, which is an exit. Plumbing that only
+    """Nodes and edges for the paths through the application, drawn like subway lines. A request is one line. It starts
+    at the route, and each event is a stop along it in the order the events happened. Between stops it passes through
+    the application methods that were newly entered, since the stack of the last stop is still in force for the methods
+    the two have in common. Lines that reach the same stop share its node, so drawn together they show where requests
+    agree and where they part. Events in a row that are the same stop, like three get-role calls from one method,
+    are one stop. A forward or a redirect also leads on to the route it names, which is an exit. Plumbing that only
     describes the request, like who the user is, is left out unless details is set."""
     nodes, edges = {}, {}
 
@@ -541,51 +561,71 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
     def link(a, b, count):
         e = edges.setdefault((a["id"], b["id"]), {"from": a["id"], "to": b["id"], "events": 0})
         e["events"] += count
+        return e
 
     route_names = sorted(routes_seen)
-    for route, sensor, action, capture, stack, count in rows:
-        frames = json.loads(stack) if stack else []
-        if not frames:
-            continue
-        first = frame_name(frames[0]) or ""
-        # a sensor on a servlet's service method describes the request. One on sendRedirect or forward is something done
-        metadata = first.startswith(SERVLET_API) and first.endswith(".service")
-        if metadata and not details:
-            continue
+
+    def walk(route, events, count):
         route = route or NO_REQUEST
-        chain = [node("route", route, route)]
-        chain[0]["events"] += count
-        if not metadata:
+        start = node("route", route, route)
+        # the page the route names is compiled to a class, and every method of it, like the tag helpers Jasper
+        # generates, is that page. The route already stands for it, so it isn't drawn again
+        page = _page_of(route)
+        here, held, last_edges = start, [], []   # where the line is, the methods it is inside, the edges into that stop
+        for sensor, action, capture, stack in events:
+            frames = json.loads(stack) if stack else []
+            if not frames:
+                continue
+            first = frame_name(frames[0]) or ""
+            # a sensor on a servlet's service method describes the request. One on sendRedirect or forward is something done
+            metadata = first.startswith(SERVLET_API) and first.endswith(".service")
+            if metadata and not details:
+                continue
             names = []
-            for f in reversed(frames):
-                if frame_kind(f, app_prefixes) != "app":
-                    continue
-                name = frame_name(f)
-                if name and (not names or names[-1] != name) and not name.startswith(SERVLET_API):
-                    names.append(name)
-            # the page the route names is compiled to a class, and every method of it, like the tag helpers Jasper
-            # generates, is that page. The route already stands for it, so it isn't drawn again
-            page = _page_of(route)
-            if page:
-                names = [x for x in names if not x.startswith("org.apache.jsp.%s." % page)]
+            if not metadata:
+                for f in reversed(frames):
+                    if frame_kind(f, app_prefixes) != "app":
+                        continue
+                    name = frame_name(f)
+                    if name and (not names or names[-1] != name) and not name.startswith(SERVLET_API):
+                        names.append(name)
+                if page:
+                    names = [x for x in names if not x.startswith("org.apache.jsp.%s." % page)]
+            start["events"] += count
+            effect = node("effect", sensor, sensor)
+            shared = 0
+            while shared < min(len(held), len(names)) and held[shared] == names[shared]:
+                shared += 1
+            entering = [node("code", name, _short(name), name) for name in names[shared:]]
+            if here is effect and not entering:
+                # the same stop again, so the events add to the edges that led into it
+                if names == held:
+                    for e in last_edges:
+                        e["events"] += count
+            else:
+                path = [here] + entering + [effect]
+                last_edges = [link(a, b, count) for a, b in zip(path, path[1:])]
             for name in names:
-                n = node("code", name, _short(name), name)
-                n["events"] += count
-                chain.append(n)
-        effect = node("effect", sensor, sensor)
-        effect["events"] += count
-        if action in ("blocked", "monitored"):
-            effect[action] += count
-        effect["captures"][capture or ""] = effect["captures"].get(capture or "", 0) + count
-        chain.append(effect)
-        for a, b in zip(chain, chain[1:]):
-            link(a, b, count)
-        if sensor in JUMPS and capture:
-            target = capture.strip()
-            match = next((r for r in route_names if r == target or r.endswith("/" + target.lstrip("/"))), None)
-            exit_node = node("exit", match or target.lstrip("/"), match or target.lstrip("/"))
-            exit_node["events"] += count
-            link(effect, exit_node, count)
+                nodes[("code", name)]["events"] += count
+            effect["events"] += count
+            if action in ("blocked", "monitored"):
+                effect[action] += count
+            effect["captures"][capture or ""] = effect["captures"].get(capture or "", 0) + count
+            if sensor in JUMPS and capture:
+                target = capture.strip()
+                match = next((r for r in route_names if r == target or r.endswith("/" + target.lstrip("/"))), None)
+                exit_node = node("exit", match or target.lstrip("/"), match or target.lstrip("/"))
+                exit_node["events"] += count
+                link(effect, exit_node, count)
+            here, held = effect, names
+
+    # requests that did the same things in the same order are drawn once, and counted
+    same = {}
+    for group in _requests(rows):
+        key = (group[0][0], tuple((r[3], r[4], r[5], r[6]) for r in group))
+        same[key] = same.get(key, 0) + 1
+    for (route, events), count in same.items():
+        walk(route, events, count)
 
     out_nodes = sorted(nodes.values(), key=lambda n: (-n["events"], n["label"]))
     for n in out_nodes:

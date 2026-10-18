@@ -24,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_BODY = 64 * 1024
 MAX_REPAIRS = 2
 MAX_GRID_ROWS = 5000
-SCRIPTS = {"/dom.js": "dom.js", "/grid.js": "grid.js", "/recent.js": "recent.js", "/graph.js": "graph.js"}   # the only files served besides the page
+SCRIPTS = {"/dom.js": "dom.js", "/grid.js": "grid.js", "/recent.js": "recent.js", "/graph.js": "graph.js", "/cells.js": "cells.js"}   # the only files served besides the page
 
 
 def load_env(path):
@@ -99,7 +99,7 @@ class App:
         db = sqlite3.connect(self.db_path)
         try:
             rows = db.execute("""SELECT name, description, methods, scopes, captures, blocks, protect, source,
-                                        matchers, excludes, definition FROM sensors ORDER BY rowid""").fetchall()
+                                        matchers, excludes, definition, enabled FROM sensors ORDER BY rowid""").fetchall()
             issues = [{"level": l, "text": t, "file": f} for l, t, f in db.execute(
                 "SELECT level, text, source FROM jot_issues ORDER BY rowid")]
             report_rows = db.execute("SELECT name, type, rows, cols, source FROM reports ORDER BY rowid").fetchall()
@@ -120,7 +120,7 @@ class App:
 
         sensors = []
         for (name, description, methods, scopes, captures, blocks, protect, source,
-             matchers, excludes, definition) in rows:
+             matchers, excludes, definition, jot_enabled) in rows:
             rule = blocks is not None
             mode = modes.get(name, "monitor" if protect == "false" else "block") if rule else "observe"
             sensors.append({
@@ -128,7 +128,7 @@ class App:
                 "methods": json.loads(methods or "[]"), "scopes": json.loads(scopes or "[]"),
                 "captures": json.loads(captures or "[]"), "matchers": json.loads(matchers or "[]"),
                 "excludes": json.loads(excludes or "[]"), "exception": blocks, "file": source,
-                "definition": definition,
+                "definition": definition, "jot_enabled": jot_enabled != "false",
                 **stats.get(name, {"events": 0, "last_ts": None, "last_hour": 0, "blocked": 0, "monitored": 0})})
 
         known = {x["name"] for x in sensors}
@@ -182,8 +182,8 @@ class App:
         """The SQL that finds the events matching a search, newest first, and how many more matches the App events only
         filter leaves out. The dashboard runs the SQL like any other view, so it also refreshes and shows its SQL."""
         where = store.search_where(query)
-        sql = ("SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, sensor, capture,\n"
-               "       call_site_name AS call_site, message\nFROM events\nWHERE %s\nORDER BY ts DESC LIMIT 500" % where)
+        sql = ("SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, action, sensor,\n"
+               "       call_site_name AS call_site, capture\nFROM events\nWHERE %s\nORDER BY ts DESC LIMIT 500" % where)
         since = store.get_since(self.db_path) or 0
         shown = store.run_query(self.db_path, "SELECT COUNT(*) FROM events WHERE %s" % where)["rows"][0][0]
         every = store.run_query(self.db_path, "SELECT COUNT(*) FROM events_raw WHERE ts >= %d AND %s" % (since, where))["rows"][0][0]
@@ -216,6 +216,18 @@ class App:
         with self.ingestor.lock:
             store.set_show_jot_control(self.ingestor.db, bool(on))
         return self.status()
+
+    def sensors_enabled(self):
+        """Every sensor and rule the loaded .jot files define, and whether the .jot file leaves it on."""
+        db = sqlite3.connect(self.db_path)
+        try:
+            return {n: e != "false" for n, e in db.execute("SELECT name, enabled FROM sensors ORDER BY name")}
+        finally:
+            db.close()
+
+    def sensor_names(self):
+        """Every sensor and rule the loaded .jot files define. Any of them can be switched off."""
+        return list(self.sensors_enabled())
 
     def rule_names(self):
         """The sensors that are rules, meaning they have an exception. Only these can be switched."""
@@ -267,24 +279,27 @@ class App:
             counts[name] = {"blocked": blocked or 0, "monitored": monitored or 0}
         agent = self.agent_state()
         loaded = set(agent["loaded"])
+        # whether each sensor and rule runs, the control file's setting or else what its .jot file says
+        on = {name: file["enabled"].get(name, jot_on) for name, jot_on in self.sensors_enabled().items()}
         rules = []
         for r in self.rules_declared():
             setting = file["rules"].get(r["name"])
             blocks = (setting if setting is not None else not r["staged"]) and file["protect"] and not agent["locked"]
-            rules.append({**r, "setting": setting, "mode": "block" if blocks else "monitor",
+            rules.append({**r, "setting": setting, "enabled": on.get(r["name"], True), "mode": "block" if blocks else "monitor",
                           "loaded": (r["name"] in loaded) if agent["known"] else None,
                           "last_hour": counts.get(r["name"], {"blocked": 0, "monitored": 0})})
         applied = store.run_query(self.db_path, """
             SELECT ts, host, app, capture FROM events_raw WHERE sensor = 'jot-control' ORDER BY pk DESC LIMIT 10""")["rows"]
         return {"enabled": True, "master": file["protect"] and not agent["locked"],
-                "file_master": file["protect"], "agent": agent, "rules": rules,
+                "file_master": file["protect"], "agent": agent, "rules": rules, "enabled": on,
                 "updated": file["updated"], "by": file["by"], "file_exists": file["exists"],
                 "applied": [{"ts": t, "host": h, "app": a, "change": c} for t, h, a, c in applied]}
 
-    def change_control(self, master, rules):
+    def change_control(self, master, rules, enabled=None):
         if self.control is None:
             raise control_module.ControlError("this dashboard was started without a jots file that names a control file")
-        self.control.write(master=master, rules=rules, known_rules=self.rule_names())
+        self.control.write(master=master, rules=rules, enabled=enabled, known_rules=self.rule_names(),
+                           known_sensors=self.sensor_names())
         return self.control_state()
 
     def report_summaries(self):
@@ -465,7 +480,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == "/api/app-only":
                 return self._send(200, self.app.set_app_only(body.get("on")))
             if url.path == "/api/control":
-                return self._send(200, self.app.change_control(body.get("master"), body.get("rules")))
+                return self._send(200, self.app.change_control(body.get("master"), body.get("rules"), body.get("enabled")))
         except store.QueryError as e:
             return self._send(400, {"error": str(e)})
         except control_module.ControlError as e:

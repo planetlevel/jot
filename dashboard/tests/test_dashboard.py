@@ -679,20 +679,24 @@ class JotsViewTests(unittest.TestCase):
     @unittest.skipUnless(CHROME, "Chrome is not installed")
     def test_a_selected_sensor_is_shown_without_stray_null_text_and_nothing_shows_before_a_selection(self):
         page = self.render("#jots/never-fires")
-        detail = re.search(r'<aside class="card" id="jotDetail"([^>]*)>(.*?)</aside>', page, re.S)
+        detail = re.search(r'<aside id="jotDetail"([^>]*)>(.*?)</aside>', page, re.S)
         self.assertIsNotNone(detail, "the detail panel is not on the page")
         self.assertNotIn("hidden", detail.group(1), "the detail panel should be showing")
         text = re.sub(r"<[^>]+>", " ", detail.group(2))
         self.assertIn("never-fires", text)
         self.assertIn("No events in the log yet", text)
         self.assertNotIn("null", text.lower(), "an empty section was passed to the DOM as null, which prints the word null")
+        self.assertIn("YAML", text)
+        self.assertIn('aria-label="Copy YAML"', detail.group(2), "the definition has a copy button")
         self.assertNotIn("Select a sensor", page, "the empty placeholder panel is gone")
-        self.assertIn("has-detail", page)
+        backdrop = re.search(r'<div id="jotBackdrop"([^>]*)>', page)
+        self.assertNotIn("hidden", backdrop.group(1), "the page behind the panel is dimmed")
 
         page = self.render("#jots")
-        detail = re.search(r'<aside class="card" id="jotDetail"([^>]*)>', page)
+        detail = re.search(r'<aside id="jotDetail"([^>]*)>', page)
         self.assertIn("hidden", detail.group(1), "with nothing selected there is no detail panel")
-        self.assertNotIn("has-detail", re.search(r'<div class="jots[^"]*" id="jotsGrid"', page).group(0))
+        backdrop = re.search(r'<div id="jotBackdrop"([^>]*)>', page)
+        self.assertIn("hidden", backdrop.group(1), "and nothing is dimmed")
 
     def console(self, address):
         """What the page wrote to the browser console, which is where a script error shows up."""
@@ -712,21 +716,107 @@ class JotsViewTests(unittest.TestCase):
             errors = [l for l in self.console(address) if "Uncaught" in l or "TypeError" in l or "ReferenceError" in l]
             self.assertEqual([], errors, "script error on " + (address or "the events page"))
 
+    def page_section(self, page, name):
+        return re.search(r'<main id="%s"[^>]*>(.*?)</main>' % name, page, re.S).group(1)
+
     @unittest.skipUnless(CHROME, "Chrome is not installed")
-    def test_reports_are_in_their_own_section_apart_from_sensors_and_rules(self):
-        page = self.render("#jots")
-        sensors = re.search(r'<div class="card" id="sensorsCard">(.*?)<div class="card" id="reportsCard">', page, re.S).group(1)
-        reports = re.search(r'<div class="card" id="reportsCard">(.*)', page, re.S).group(1)
-        reports = reports[:reports.index("jotDetail")]
+    def test_reports_are_on_their_own_tab_apart_from_the_list_of_jots(self):
+        page = self.render("#reports")
+        self.assertRegex(page, r'<a href="#reports" id="navReports" class="active">Reports</a>')
+        self.assertNotIn("hidden", re.search(r'<main id="reportsPage"([^>]*)>', page).group(1), "the Reports tab is showing")
+        self.assertIn("hidden", re.search(r'<main id="jotsPage"([^>]*)>', page).group(1))
+        reports = self.page_section(page, "reportsPage")
+        jots = self.page_section(page, "jotsPage")
         report_names = [r["name"] for r in self.view["reports"]]
         self.assertTrue(report_names)
         for name in report_names:
-            self.assertIn(name, reports, "the report is listed in the Reports section")
-            self.assertNotIn(">%s<" % name, sensors, "and not among the sensors and rules")
+            self.assertIn(name, reports, "the report is listed on the Reports tab")
+            self.assertNotIn(">%s<" % name, jots, "and not among the JOTs")
         self.assertIn("Open</button>", reports)
         self.assertNotIn('value="report"', page, "there is no longer a report choice in the kind list")
         self.assertRegex(re.sub(r"<[^>]+>", "", reports), r"\d+ reports")
-        self.assertRegex(re.sub(r"<[^>]+>", "", sensors), r"\d+ sensors and \d+ rules")
+        self.assertRegex(re.sub(r"<[^>]+>", "", jots), r"\d+ sensors and \d+ rules")
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_a_report_selected_on_the_reports_tab_opens_its_panel_there(self):
+        page = self.render("#reports/Routes%20by%20users")
+        detail = re.search(r'<aside id="jotDetail"([^>]*)>(.*?)</aside>', page, re.S)
+        self.assertNotIn("hidden", detail.group(1))
+        self.assertIn("Routes by users", re.sub(r"<[^>]+>", " ", detail.group(2)))
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_the_panel_has_previous_and_next_buttons_with_the_position_in_the_list(self):
+        page = self.render("#jots/get-routes")
+        detail = re.search(r'<aside id="jotDetail"([^>]*)>(.*?)</aside>', page, re.S).group(2)
+        self.assertIn('aria-label="Previous"', detail)
+        self.assertIn('aria-label="Next"', detail)
+        position = re.search(r'<span class="pos">(\d+) of (\d+)</span>', detail)
+        self.assertIsNotNone(position, "the panel says where this is in the list")
+        self.assertEqual(len(self.view["sensors"]), int(position.group(2)), "the list is every sensor and rule")
+        first = re.search(r'<button[^>]*aria-label="Previous"[^>]*>', detail).group(0)
+        self.assertEqual(position.group(1) == "1", "disabled" in first, "there is nothing before the first one")
+
+    def switches_app(self, **settings):
+        """The page with a control file, so each rule has its switches. settings are written before it loads."""
+        path = os.path.join(self.env.dir, "control-switches.yaml")
+        store_ = control.ControlStore(path)
+        if settings:
+            store_.write(known_rules=["block-exec", "block-staged"], **settings)
+        self.app = server.App(self.env.db, self.env.ingestor, control=store_)
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_every_jot_is_one_line_with_an_enabled_switch_and_only_rules_have_a_mode_switch(self):
+        self.switches_app()
+        page = self.render("#jots")
+        jots = self.page_section(page, "jotsPage")
+        table = re.search(r'<table class="list">(.*?)</table>', jots, re.S).group(1)
+        rows = re.findall(r"<tr[^>]*>(.*?)</tr>", table.split("<tbody>")[1], re.S)
+        self.assertEqual(len(self.view["sensors"]), len(rows), "one row for each sensor and rule, and nothing else is listed")
+        for name in ("block-exec", "block-staged"):
+            self.assertIn('aria-label="%s enabled"' % name, jots, "a rule has an enabled switch on its left")
+            self.assertIn('aria-label="%s protects"' % name, jots, "and a monitor or protect switch on its right")
+        for sensor in ("get-routes", "never-fires"):
+            row = next(r for r in rows if ">%s<" % sensor in r)
+            self.assertIn('aria-label="%s enabled"' % sensor, row, "a sensor that only observes can be switched off too")
+            self.assertNotIn("protects", row, "but it has no monitor or protect switch")
+        for row in rows:
+            self.assertEqual(1, row.count("enabled\""), "every JOT has exactly one enabled switch")
+        first = next(r for r in rows if ">block-exec<" in r)
+        self.assertLess(first.index("block-exec enabled"), first.index(">block-exec<"))
+        self.assertGreater(first.index("block-exec protects"), first.index(">block-exec<"))
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_the_protection_panel_no_longer_lists_the_rules_a_second_time(self):
+        self.switches_app()
+        page = self.render("#jots")
+        panel = re.search(r'<div class="card wide" id="protectionCard"[^>]*>(.*?)</div>\s*<div class="card wide" id="sensorsCard"', page, re.S).group(1)
+        self.assertNotIn("block-exec", panel)
+        self.assertNotIn("role=\"switch\"", panel)
+        self.assertIn("Monitor", panel)
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_a_sensor_that_is_not_enabled_shows_off_too(self):
+        path = os.path.join(self.env.dir, "control-sensor.yaml")
+        store_ = control.ControlStore(path)
+        store_.write(enabled={"get-routes": False}, known_rules=["block-exec"], known_sensors=["get-routes"])
+        self.app = server.App(self.env.db, self.env.ingestor, control=store_)
+        jots = self.page_section(self.render("#jots"), "jotsPage")
+        rows = re.findall(r'<tr[^>]*>.*?</tr>', jots, re.S)
+        self.assertRegex(next(r for r in rows if ">get-routes<" in r), r'<tr class="off"')
+        self.assertNotIn('class="off"', next(r for r in rows if ">never-fires<" in r))
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_a_rule_that_is_not_enabled_shows_off_and_cannot_be_switched_between_monitor_and_protect(self):
+        self.switches_app(enabled={"block-exec": False})
+        page = self.render("#jots")
+        jots = self.page_section(page, "jotsPage")
+        row = next(r for r in re.findall(r'<tr[^>]*>.*?</tr>', jots, re.S) if ">block-exec<" in r)
+        self.assertRegex(row, r'<tr class="off"')
+        self.assertRegex(row, r'aria-checked="false"[^>]*aria-label="block-exec enabled"|aria-label="block-exec enabled"[^>]*aria-checked="false"')
+        protects = re.search(r"<button[^>]*aria-label=\"block-exec protects\"[^>]*>", row).group(0)
+        self.assertIn("disabled", protects)
+        other = next(r for r in re.findall(r'<tr[^>]*>.*?</tr>', jots, re.S) if ">block-staged<" in r)
+        self.assertNotIn('class="off"', other)
 
     def test_rule_modes_follow_the_control_file_when_there_is_one(self):
         path = os.path.join(self.env.dir, "control.yaml")
@@ -877,7 +967,8 @@ class ControlStoreTests(unittest.TestCase):
         with open(self.path) as f:
             doc = yaml.safe_load(f)
         self.assertEqual(1, doc["v"])
-        self.assertEqual({"rule-a": False}, doc["rules"])
+        self.assertEqual({"rule-a": {"protect": False}}, doc["sensors"])
+        self.assertNotIn("rules", doc, "settings are written under each sensor's name")
         self.assertEqual("jeff", doc["by"])
         self.assertEqual(0o644, os.stat(self.path).st_mode & 0o777)
 
@@ -891,8 +982,8 @@ class ControlStoreTests(unittest.TestCase):
         with open(self.control.audit_path) as f:
             entries = [json.loads(line) for line in f]
         self.assertEqual(2, len(entries))
-        self.assertEqual({"protect": True, "rules": {}}, entries[0]["before"])
-        self.assertEqual({"protect": True, "rules": {"rule-a": False}}, entries[0]["after"])
+        self.assertEqual({"protect": True, "rules": {}, "enabled": {}}, entries[0]["before"])
+        self.assertEqual({"protect": True, "rules": {"rule-a": False}, "enabled": {}}, entries[0]["after"])
         self.assertEqual(False, entries[1]["after"]["protect"])
 
     def test_bad_changes_are_refused_and_change_nothing(self):
@@ -902,6 +993,43 @@ class ControlStoreTests(unittest.TestCase):
                 with self.assertRaises(control.ControlError):
                     self.control.write(known_rules=self.known, **kwargs)
         self.assertEqual({"rule-a": False}, self.control.read()["rules"])
+
+    def test_enabled_is_a_setting_of_the_sensor_and_null_goes_back_to_the_jot_file(self):
+        self.control.write(enabled={"rule-a": False}, known_rules=self.known)
+        self.control.write(enabled={"rule-b": True}, known_rules=self.known)
+        self.assertEqual({"rule-a": False, "rule-b": True}, self.control.read()["enabled"])
+        with open(self.path) as f:
+            self.assertEqual({"rule-a": {"enabled": False}, "rule-b": {"enabled": True}}, yaml.safe_load(f)["sensors"])
+        self.control.write(enabled={"rule-a": None}, known_rules=self.known)
+        self.assertEqual({"rule-b": True}, self.control.read()["enabled"])
+        self.control.write(enabled={"rule-b": None}, known_rules=self.known)
+        self.assertEqual({}, self.control.read()["enabled"])
+
+    def test_one_sensor_keeps_protect_and_enabled_together_and_other_changes_keep_them(self):
+        self.control.write(rules={"rule-a": True}, enabled={"rule-a": False}, known_rules=self.known)
+        self.control.write(master=False, known_rules=self.known)
+        state = self.control.read()
+        self.assertEqual(({"rule-a": True}, {"rule-a": False}, False), (state["rules"], state["enabled"], state["protect"]))
+        with open(self.path) as f:
+            self.assertEqual({"rule-a": {"protect": True, "enabled": False}}, yaml.safe_load(f)["sensors"])
+
+    def test_the_older_rules_map_is_still_read_and_is_rewritten_under_the_sensors(self):
+        with open(self.path, "w") as f:
+            f.write("v: 1\nprotect: true\nrules:\n  rule-a: false\n")
+        self.assertEqual({"rule-a": False}, self.control.read()["rules"])
+        self.control.write(enabled={"rule-b": False}, known_rules=self.known)
+        with open(self.path) as f:
+            doc = yaml.safe_load(f)
+        self.assertEqual({"rule-a": {"protect": False}, "rule-b": {"enabled": False}}, doc["sensors"])
+        self.assertNotIn("rules", doc)
+
+    def test_bad_enabled_values_are_refused_and_change_nothing(self):
+        self.control.write(enabled={"rule-a": False}, known_rules=self.known)
+        for bad in [{"nobody": True}, {"rule-a": "yes"}, ["rule-a"]]:
+            with self.subTest(bad=bad):
+                with self.assertRaises(control.ControlError):
+                    self.control.write(enabled=bad, known_rules=self.known)
+        self.assertEqual({"rule-a": False}, self.control.read()["enabled"])
 
     def test_a_corrupt_file_reads_as_the_defaults(self):
         with open(self.path, "w") as f:
@@ -953,6 +1081,25 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(200, code)
         self.assertEqual({"rule-a": "monitor", "rule-b": "block"}, self.modes(state))
         self.assertEqual({"rule-a": False, "rule-b": True}, self.control.read()["rules"])
+
+    def test_a_rule_that_is_not_enabled_keeps_its_mode_and_enabling_it_again_removes_the_setting(self):
+        _, state = self.call({"enabled": {"rule-a": False}})
+        self.assertEqual({"rule-a": "block", "rule-b": "monitor"}, self.modes(state), "being off doesn't change what it would do")
+        self.assertEqual({"rule-a": False, "rule-b": True}, {r["name"]: r["enabled"] for r in state["rules"]})
+        self.assertEqual({"rule-a": False, "rule-b": True, "just-watching": True}, state["enabled"])
+        self.assertEqual({"rule-a": False}, self.control.read()["enabled"])
+        _, state = self.call({"enabled": {"rule-a": None}})
+        self.assertTrue(state["enabled"]["rule-a"])
+        self.assertEqual({}, self.control.read()["enabled"])
+
+    def test_a_sensor_that_only_observes_can_be_switched_off_but_an_unknown_name_is_refused(self):
+        code, state = self.call({"enabled": {"nobody": False}})
+        self.assertEqual(400, code)
+        self.assertFalse(self.control.read()["exists"])
+        code, state = self.call({"enabled": {"just-watching": False}})
+        self.assertEqual(200, code)
+        self.assertFalse(state["enabled"]["just-watching"])
+        self.assertEqual({"rule-a": "block", "rule-b": "monitor"}, self.modes(state), "it is not a rule, so no rule changes")
 
     def test_the_master_switch_makes_everything_monitor(self):
         _, state = self.call({"master": False, "rules": {"rule-b": True}})
@@ -1490,7 +1637,42 @@ class GraphTests(unittest.TestCase):
         g, nodes, edges = self.graph()
         self.assertEqual(1, nodes["effect:block-exec"]["blocked"])
         self.assertEqual(0, nodes["effect:get-ciphers"]["blocked"])
-        self.assertIn(("route:/app/list.jsp", "effect:block-exec"), edges)
+        self.assertIn(("effect:get-ciphers", "effect:block-exec"), edges, "it came after the ciphers in that request")
+
+    def test_a_request_is_one_line_with_a_stop_for_each_event_in_the_order_they_happened(self):
+        self.env.write(
+            event(30, sensor="get-routes", capture="/app/order.jsp", trace=30, stack=[self.SERVLET, self.FILTER]),
+            event(31, sensor="get-hashes", capture="MD5", trace=30, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]),
+            event(32, sensor="get-ciphers", capture="AES", trace=30, stack=["java.base/a.B.c(B.java:1)", self.ENCRYPT, self.GET, self.FILTER]),
+            event(33, sensor="get-ciphers", capture="DES", trace=30, stack=["java.base/a.B.c(B.java:1)", self.ENCRYPT, self.GET, self.FILTER]),
+            event(34, sensor="get-hashes", capture="SHA", trace=30, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
+        self.env.ingestor.poll()
+        g, nodes, edges = self.graph(route="/app/order.jsp")
+        get, enc = "code:com.acme.Database.getTickets", "code:com.acme.Ticket.encrypt"
+        self.assertEqual({("route:/app/order.jsp", get): 1, (get, "effect:get-hashes"): 1,
+                          ("effect:get-hashes", enc): 2, (enc, "effect:get-ciphers"): 2,
+                          ("effect:get-ciphers", "effect:get-hashes"): 1}, edges)
+        self.assertEqual(2, nodes["effect:get-ciphers"]["events"], "the repeat is one stop, both events are counted")
+
+    def test_a_method_the_line_is_already_inside_is_not_entered_again(self):
+        self.env.write(
+            event(40, sensor="get-routes", capture="/app/inside.jsp", trace=40, stack=[self.SERVLET, self.FILTER]),
+            event(41, sensor="get-hashes", capture="MD5", trace=40, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]),
+            event(42, sensor="get-ciphers", capture="AES", trace=40, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
+        self.env.ingestor.poll()
+        g, nodes, edges = self.graph(route="/app/inside.jsp")
+        self.assertIn(("effect:get-hashes", "effect:get-ciphers"), edges)
+        self.assertNotIn(("effect:get-hashes", "code:com.acme.Database.getTickets"), edges)
+
+    def test_requests_that_did_the_same_things_in_the_same_order_share_a_line(self):
+        for trace, base in ((60, 60), (61, 70)):
+            self.env.write(
+                event(base, sensor="get-routes", capture="/app/twice.jsp", trace=trace, stack=[self.SERVLET, self.FILTER]),
+                event(base + 1, sensor="get-ciphers", capture="AES", trace=trace, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]),
+                event(base + 2, sensor="get-hashes", capture="MD5", trace=trace, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
+        self.env.ingestor.poll()
+        g, nodes, edges = self.graph(route="/app/twice.jsp")
+        self.assertEqual(2, edges[("effect:get-ciphers", "effect:get-hashes")])
 
     def test_request_details_are_left_out_unless_asked_for(self):
         g, nodes, edges = self.graph()

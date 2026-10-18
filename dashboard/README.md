@@ -133,10 +133,16 @@ displays them as text.
 
 ## Switching rules between monitor and block
 
-Name the control file in the jots file (`control: control.yaml`), start the dashboard with `--jots`, and start each application with `-javaagent:jot.jar=<the same jots file>`. The Protection panel then lists every rule, meaning every
-sensor that has an `exception`, with a Monitor and a Block button, a master switch that makes all rules report only,
-and how many violations each saw in the last hour. It also shows which changes agents have confirmed applying, taken
-from the `jot-control` events in their logs.
+Name the control file in the jots file (`control: control.yaml`), start the dashboard with `--jots`, and start each application with `-javaagent:jot.jar=<the same jots file>`. The Protection panel then has a master Monitor and Protect switch that makes all rules report only,
+and says so when no agent has confirmed picking up the settings, which it knows from the `jot-control` events in their logs.
+
+The JOTs tab is one list with a line for every sensor and rule. Every sensor and rule has an enabled switch on its left. A sensor that isn't enabled
+records nothing and a rule that isn't enabled neither blocks nor reports. The switch writes `enabled` under the sensor's
+name in the control file, and puts it back to what the .jot file says when you switch it to that. A rule, meaning a sensor that has an `exception`, also has
+a slider on its right between Monitor and Protect for that rule alone. Reports are on their own tab.
+
+The panel that opens over a JOT or an event has Previous and Next buttons that go through the list it was opened from,
+so the list doesn't have to be closed and reopened. The left and right arrow keys do the same.
 
 Agents pull this. The dashboard writes the file and the agent reads it once a second. Nothing connects to an agent and
 agents accept no connections. The agent and the dashboard must share the file, so this suits one machine or a shared
