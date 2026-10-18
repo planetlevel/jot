@@ -176,6 +176,7 @@ sensors:
   - "!/tomcat-base"
   - "!/openjdk"
   - "!/Cellar/"
+  - "!/candidates/java/"
 
 - name: "get-sockets"
   description: "Identifies the use of sockets"

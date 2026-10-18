@@ -41,6 +41,11 @@
 					<groupId>junit</groupId>
 					<artifactId>junit</artifactId>
 				</exclusion>
+				<!-- only ESAPI's optional bean shell WAF rule uses it -->
+				<exclusion>
+					<groupId>org.beanshell</groupId>
+					<artifactId>bsh-core</artifactId>
+				</exclusion>
 			</exclusions>
 		</dependency>
 		<dependency>
@@ -54,11 +59,6 @@
 			<version>2.14.1</version>
 		</dependency>
 		<dependency>
-			<groupId>org.codehaus.jackson</groupId>
-			<artifactId>jackson-mapper-asl</artifactId>
-			<version>1.9.13</version>
-		</dependency>
-		<dependency>
 			<groupId>com.fasterxml.jackson.core</groupId>
 			<artifactId>jackson-databind</artifactId>
 			<version>2.9.8</version>
@@ -67,16 +67,6 @@
 			<groupId>commons-fileupload</groupId>
 			<artifactId>commons-fileupload</artifactId>
 			<version>1.3.1</version>
-		</dependency>
-		<dependency>
-			<groupId>ognl</groupId>
-			<artifactId>ognl</artifactId>
-			<version>3.1.12</version>
-		</dependency>
-		<dependency>
-			<groupId>org.apache.httpcomponents</groupId>
-			<artifactId>httpclient</artifactId>
-			<version>4.5.2</version>
 		</dependency>
 		<dependency>
 			<groupId>commons-httpclient</groupId>
@@ -142,11 +132,6 @@
 			<groupId>xom</groupId>
 			<artifactId>xom</artifactId>
 			<version>1.2.5</version>
-		</dependency>
-		<dependency>
-			<groupId>wsdl4j</groupId>
-			<artifactId>wsdl4j</artifactId>
-			<version>1.5.1</version>
 		</dependency>
 		<dependency>
 			<groupId>net.sourceforge.nekohtml</groupId>
