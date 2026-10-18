@@ -4,37 +4,27 @@
 #   demo/ticketbook/run.sh            start Tomcat on port 8080, then browse http://localhost:8080/ticketbook
 #   python3 dashboard/server.py --log jot-events.jsonl --jots demo/ticketbook/jots.yaml
 #
-# Tomcat 11 is downloaded into demo/ticketbook/target on first use and checked against Apache's SHA-512.
-# To use an install you already have, set CATALINA_HOME. Needs Java 17 or newer, found through JAVA_HOME or the PATH.
+# Tomcat 11 is downloaded into demo/ticketbook/target on first use, see tomcat.sh. To use an install you already have,
+# set CATALINA_HOME. Needs Java 17 or newer, found through JAVA_HOME or the PATH.
 #
-# TicketBook is served from demo/ticketbook/webapp, which must use jakarta.servlet. If there is a
-# webapp.javax directory and no webapp, Tomcat's migration tool converts it.
+# TicketBook is served from demo/ticketbook/webapp, which must use jakarta.servlet. build.sh makes its classes and libraries
+# from src/ and pom.xml, and run.sh runs it when WEB-INF/lib has no jars. If there is a webapp.javax directory and no
+# webapp, Tomcat's migration tool converts it.
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT=$(cd ../.. && pwd)
 HERE=$(pwd)
-TOMCAT_VERSION=${TOMCAT_VERSION:-11.0.27}
-
-if [ -z "${CATALINA_HOME:-}" ]; then
-  CATALINA_HOME=$HERE/target/apache-tomcat-$TOMCAT_VERSION
-  if [ ! -x "$CATALINA_HOME/bin/catalina.sh" ]; then
-    DL=$HERE/target/dl-tomcat-$TOMCAT_VERSION
-    URL=https://archive.apache.org/dist/tomcat/tomcat-${TOMCAT_VERSION%%.*}/v$TOMCAT_VERSION/bin
-    mkdir -p "$DL"
-    echo "Downloading Tomcat $TOMCAT_VERSION from archive.apache.org"
-    curl -sSfo "$DL/apache-tomcat-$TOMCAT_VERSION.tar.gz" "$URL/apache-tomcat-$TOMCAT_VERSION.tar.gz"
-    curl -sSfo "$DL/apache-tomcat-$TOMCAT_VERSION.tar.gz.sha512" "$URL/apache-tomcat-$TOMCAT_VERSION.tar.gz.sha512"
-    (cd "$DL" && shasum -a 512 -c "apache-tomcat-$TOMCAT_VERSION.tar.gz.sha512")
-    tar -xzf "$DL/apache-tomcat-$TOMCAT_VERSION.tar.gz" -C "$HERE/target"
-  fi
-fi
-[ -x "$CATALINA_HOME/bin/catalina.sh" ] || { echo "No Tomcat at $CATALINA_HOME" >&2; exit 1; }
+. ./tomcat.sh
 
 if [ ! -d webapp ] && [ -d webapp.javax ]; then
   echo "Converting webapp.javax to jakarta.servlet"
   "$CATALINA_HOME/bin/migrate.sh" webapp.javax webapp > target/migrate.log 2>&1
 fi
 [ -d webapp ] || { echo "No demo/ticketbook/webapp to serve" >&2; exit 1; }
+if ! ls webapp/WEB-INF/lib/*.jar > /dev/null 2>&1; then
+  echo "No libraries in webapp/WEB-INF/lib, running build.sh"
+  ./build.sh
+fi
 
 VERSION=$(cd "$ROOT" && mvn -q help:evaluate -Dexpression=project.version -DforceStdout)
 JAR=$ROOT/target/jot-$VERSION.jar

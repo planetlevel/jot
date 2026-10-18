@@ -49,10 +49,6 @@ hs_err_pid*.log
 /jot-control.yaml
 /jot-control.yaml.audit
 
-# TicketBook needs its compiled classes and library jars, the rules above would drop them
-!demo/ticketbook/webapp/**/*.class
-!demo/ticketbook/webapp/**/*.jar
-
 # A payload jar is fixture data, not a build artifact
 !payloads/**/*.jar
 

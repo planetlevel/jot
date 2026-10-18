@@ -37,7 +37,7 @@ The agent polls a control file, so the dashboard can flip the rules without a re
     python3 dashboard/server.py --log jot-events.jsonl \
         --jots demo/ticketbook/jots.yaml
 
-The header has a Monitor and Protect toggle, and the Protection panel has a switch per rule. `run.sh` starts each run
+The header has a Monitor and Protect toggle, and the JOTs tab has an enabled switch and a Monitor and Protect switch for each rule. `run.sh` starts each run
 with no control file, so a setting from an earlier session can't change what the run does. `MODE=monitor` is fixed for the
 life of the process and can't be switched to protect from the dashboard.
 
@@ -57,12 +57,16 @@ vulnerable. It has expression injection, cross-site scripting, XXE, command inje
 weak access control, so that there is something for JOT to observe and stop. Run it only on a machine you control and
 never expose it to a network.
 
-- **No Java source.** The repository has the JSPs, the stylesheet and the compiled classes (`WEB-INF/classes`), but not the
-  Java source for those classes. The JSPs and `css/ticketbook.css` can be edited. The classes can only be replaced.
-- **Old libraries.** `WEB-INF/lib` holds about 15 MB of third-party jars, many of them old versions with known
-  vulnerabilities, such as commons-collections 3.2, xalan 2.7.0, log4j 1.2 and spring-security 3.0.5. Dependency
-  scanners will flag them, and they are not to be reused in a real application. They keep their own licenses, which
-  differ from this repository's and include at least one LGPL library (xom), so check each jar before redistributing it.
+- **Build.** The Java source is in `src/main/java` and the libraries are listed in `pom.xml`. `./build.sh` compiles the
+  classes for Java 17 and Jakarta EE 11, fetches the libraries, converts them from `javax` to `jakarta` with Tomcat's
+  migration tool, and puts both in `webapp/WEB-INF`. Neither is committed, and `run.sh` runs `build.sh` when `WEB-INF/lib`
+  is empty. Stop Tomcat before rebuilding, replacing a jar under a running JVM can crash it. The JSPs and
+  `css/ticketbook.css` are edited in place.
+- **Old libraries.** `pom.xml` pins about 47 third-party jars, many of them old versions with known vulnerabilities, such as
+  commons-collections 3.2, xalan 2.7.0, log4j 1.2 and spring-security 3.0.5. Dependency scanners will flag them, and they
+  are not to be reused in a real application. They are deliberately not upgraded, each CVE microsandbox and page goes with
+  one of them. They keep their own licenses, which differ from this repository's and include at least one LGPL library
+  (xom), so check each jar before redistributing it.
 - **Demo secrets.** `WEB-INF/classes/esapi/ESAPI.properties` contains an ESAPI master key and salt, and the demo users in
   `conf/tomcat-users.xml` all have the password `test`. They protect nothing real.
 - **Look.** `css/ticketbook.css` gives it a dark theme over Bootstrap 3, and `menu.jsp` builds the sidebar and highlights the
