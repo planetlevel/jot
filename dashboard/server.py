@@ -24,7 +24,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_BODY = 64 * 1024
 MAX_REPAIRS = 2
 MAX_GRID_ROWS = 5000
-SCRIPTS = {"/dom.js": "dom.js", "/grid.js": "grid.js", "/recent.js": "recent.js", "/graph.js": "graph.js", "/cells.js": "cells.js"}   # the only files served besides the page
+SCRIPTS = {"/dom.js": "dom.js", "/grid.js": "grid.js", "/recent.js": "recent.js", "/graph.js": "graph.js", "/cells.js": "cells.js",
+           "/codemirror.js": "codemirror.js"}   # the only files served besides the page
 
 
 def load_env(path):
@@ -108,9 +109,9 @@ class App:
 
         stats = {}
         for sensor, total, last, hour, blocked, monitored in store.run_query(self.db_path, """
-                SELECT sensor, COUNT(*), MAX(ts), SUM(ts > (strftime('%s','now') - 3600) * 1000),
+                SELECT %s AS jot, COUNT(*), MAX(ts), SUM(ts > (strftime('%%s','now') - 3600) * 1000),
                        SUM(action = 'blocked'), SUM(action = 'monitored')
-                FROM events GROUP BY sensor""")["rows"]:
+                FROM events GROUP BY jot""" % store.JOT_NAME_SQL)["rows"]:
             stats[sensor] = {"events": total, "last_ts": last, "last_hour": hour or 0,
                              "blocked": blocked or 0, "monitored": monitored or 0}
         modes = {}
@@ -189,13 +190,14 @@ class App:
         every = store.run_query(self.db_path, "SELECT COUNT(*) FROM events_raw WHERE ts >= %d AND %s" % (since, where))["rows"][0][0]
         return {"sql": sql, "matches": shown, "left_out": every - shown}
 
-    def graph(self, route=None, details=False):
+    def graph(self, route=None, details=False, split=False):
         """The paths through the application, from each route through the methods that ran to what the sensors saw."""
         rows = store.graph_rows(self.db_path, route or None)
         routes = [r[0] for r in store.run_query(self.db_path, """
             SELECT capture, COUNT(*) FROM events_raw WHERE sensor = 'get-routes' AND ts >= %d
             GROUP BY capture ORDER BY capture""" % (store.get_since(self.db_path) or 0), limit=2000)["rows"]]
-        return store.build_graph(rows["rows"], routes, self.ingestor.app_prefixes, bool(details), rows["truncated"])
+        build = store.build_graphs if split else store.build_graph
+        return build(rows["rows"], routes, self.ingestor.app_prefixes, bool(details), rows["truncated"])
 
     def set_app_only(self, on):
         """Leave out observed events that have no frame from the application, which is everything the JDK and the
@@ -272,9 +274,9 @@ class App:
         file = self.control.read()
         counts = {}
         recent = store.run_query(self.db_path, """
-            SELECT sensor, SUM(action = 'blocked'), SUM(action = 'monitored') FROM events
-            WHERE action IN ('blocked', 'monitored') AND ts > (strftime('%s','now') - 3600) * 1000
-            GROUP BY sensor""")["rows"]
+            SELECT %s AS jot, SUM(action = 'blocked'), SUM(action = 'monitored') FROM events
+            WHERE action IN ('blocked', 'monitored') AND ts > (strftime('%%s','now') - 3600) * 1000
+            GROUP BY jot""" % store.JOT_NAME_SQL)["rows"]
         for name, blocked, monitored in recent:
             counts[name] = {"blocked": blocked or 0, "monitored": monitored or 0}
         agent = self.agent_state()
@@ -414,6 +416,9 @@ class Handler(BaseHTTPRequestHandler):
     def _host_ok(self):
         if not self.enforce_host:
             return True
+        # only this machine, whatever address the server ended up listening on
+        if self.client_address[0] not in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
+            return False
         host = (self.headers.get("Host") or "").lower()
         return host in ("localhost:%d" % self.port, "127.0.0.1:%d" % self.port, "[::1]:%d" % self.port)
 
@@ -440,7 +445,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.sensors())
             if url.path == "/api/graph":
                 q = parse_qs(url.query)
-                return self._send(200, self.app.graph(q.get("route", [""])[0], q.get("details", [""])[0] == "1"))
+                return self._send(200, self.app.graph(q.get("route", [""])[0], q.get("details", [""])[0] == "1",
+                                                        q.get("split", [""])[0] == "1"))
             if url.path == "/api/search":
                 return self._send(200, self.app.search(parse_qs(url.query).get("q", [""])[0]))
             if url.path == "/api/event":
@@ -471,6 +477,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.ask(body.get("question"), body.get("history") or []))
             if url.path == "/api/sql":
                 return self._send(200, self.app.sql(body.get("sql"), body.get("limit")))
+            if url.path == "/api/jots/check":
+                return self._send(200, {"problems": store.check_jot_text(body.get("text"))})
             if url.path == "/api/since":
                 return self._send(200, self.app.set_since(body.get("since")))
             if url.path == "/api/jot-control-events":
@@ -505,9 +513,12 @@ def parse_since(text):
     return int(datetime.fromisoformat(text).timestamp() * 1000)
 
 
+LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
 def make_server(app, host, port):
     handler = type("BoundHandler", (Handler,), {
-        "app": app, "port": port, "enforce_host": host in ("127.0.0.1", "localhost", "::1")})
+        "app": app, "port": port, "enforce_host": host in LOCAL_HOSTS})
     return ThreadingHTTPServer((host, port), handler)
 
 
@@ -518,8 +529,11 @@ def main(argv=None):
     p.add_argument("--jots", help="the jots file that lists the JOTs and the control file. Start each agent with "
                    "-javaagent:jot.jar=<this path> so the agent and the dashboard use the same definitions. ")
     p.add_argument("--db", default="jot-dashboard.db", help="SQLite file to keep events in")
-    p.add_argument("--host", default="127.0.0.1", help="address to listen on. There is no login, "
-                   "so only change this on a network you trust")
+    p.add_argument("--host", default="127.0.0.1", help="address to listen on. Only this machine can reach the "
+                   "dashboard unless --allow-remote is also given")
+    p.add_argument("--allow-remote", action="store_true", help="let other machines reach the dashboard. There is no "
+                   "login, so anyone who can reach the port can read every event and switch rules, only use this on "
+                   "a network you trust")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--app", action="append", help="a package of the application, like com.acme, may be repeated. "
                    "Events whose stack has no frame from these packages are left out by App events only. "
@@ -529,6 +543,9 @@ def main(argv=None):
     p.add_argument("--env", default=os.path.join(HERE, ".env"),
                    help="file of KEY=VALUE settings, such as ANTHROPIC_API_KEY. Default dashboard/.env")
     args = p.parse_args(argv)
+    if args.host not in LOCAL_HOSTS and not args.allow_remote:
+        p.error("--host %s would let other machines in, and the dashboard has no login. Add --allow-remote if you "
+                "really want that" % args.host)
     loaded_env = load_env(args.env)
     if loaded_env:
         print("  read %s from %s" % (", ".join(loaded_env), args.env))

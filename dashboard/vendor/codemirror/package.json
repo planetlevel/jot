@@ -1,0 +1,18 @@
+{
+  "name": "jot-dashboard-editor",
+  "private": true,
+  "description": "Builds static/codemirror.js, the YAML editor of the JOTs page, from entry.js. Run npm run build after changing the versions or entry.js, the built file is committed so the dashboard needs no build step.",
+  "scripts": {
+    "build": "esbuild entry.js --bundle --minify --format=iife --global-name=JotEditor --target=es2019 --outfile=../../static/codemirror.js"
+  },
+  "dependencies": {
+    "@codemirror/commands": "6.8.1",
+    "@codemirror/lang-yaml": "6.1.2",
+    "@codemirror/language": "6.11.0",
+    "@codemirror/lint": "6.8.5",
+    "@codemirror/state": "6.5.2",
+    "@codemirror/view": "6.37.1",
+    "@lezer/highlight": "1.2.1",
+    "esbuild": "0.25.5"
+  }
+}

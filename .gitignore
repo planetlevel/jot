@@ -62,3 +62,5 @@ __pycache__/
 *.db-wal
 *.db-journal
 *.sqlite
+
+dashboard/vendor/codemirror/node_modules/

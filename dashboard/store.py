@@ -103,6 +103,22 @@ CREATE TABLE IF NOT EXISTS sources (
 # bytes from the start of a log kept to recognise it again
 HEAD_BYTES = 256
 
+# A rule names its events for what it did, cve-x-entered, cve-x-blocked or cve-x-monitored. This is the rule's own
+# name in SQL, so what a rule did can be counted against the rule.
+RULE_SUFFIXES = ("-entered", "-blocked", "-monitored")
+
+
+def rule_name(sensor):
+    for suffix in RULE_SUFFIXES:
+        if sensor and sensor.endswith(suffix):
+            return sensor[:-len(suffix)]
+    return sensor
+
+
+JOT_NAME_SQL = ("CASE WHEN sensor LIKE '%-entered' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 8) "
+                "WHEN sensor LIKE '%-blocked' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 8) "
+                "WHEN sensor LIKE '%-monitored' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 10) ELSE sensor END")
+
 # the part of the schema the model is told about
 MODEL_TABLES = ("events", "sensors")
 
@@ -129,8 +145,16 @@ PLATFORM_PREFIXES = ("java.", "javax.", "jdk.", "sun.", "com.sun.", "jakarta.", 
 
 
 # raise this when classify changes, so events stored under the old rules are tagged again
-CLASSIFIER_VERSION = 2
+CLASSIFIER_VERSION = 5
 SERVLET_API = ("javax.servlet.", "jakarta.servlet.")
+
+# The platform doing work that nothing in the application asked for. Loading a class opens jars to check their
+# signatures, and compiling a page reads and parses source. What they do along the way isn't the application's.
+# Work the application starts, like fetching an https address, is left out on purpose, it stays whatever the
+# platform does to carry it out.
+PLATFORM_WORK_PREFIXES = ("java.lang.ClassLoader.", "java.net.URLClassLoader.", "jdk.internal.loader.",
+                          "org.apache.catalina.loader.", "org.apache.jasper.compiler.", "org.apache.jasper.JspCompilationContext.compile",
+                          "org.eclipse.jdt.")
 
 
 def frame_kind(frame, app_prefixes=()):
@@ -148,14 +172,26 @@ def classify(stack, app_prefixes=()):
     library when the stack has code that is neither the application nor the platform, and platform otherwise.
     With no application packages given, any frame that is not the platform counts as the application.
     A servlet's service method is the application being asked to handle a request. The container calls it, so the
-    stack holds only server frames, but the request is the application's. Those events count as the application."""
+    stack holds only server frames, but the request is the application's. Those events count as the application.
+    An event is the platform's, whatever is further out, when the way from it out to a class loader or the page
+    compiler is nothing but JDK and server code. That work happens in the middle of a request, so an application
+    frame is always further out, but the application did nothing. Code that is the application's or a library's,
+    closer in than that work, like a class initializer, still counts. So does work the application asked for, such as
+    a page fetching an https address, where the platform does a handshake on its behalf.
+    The event's own frame, the call the sensor watches, doesn't count as the work, an application can call it."""
     if not stack:
         return "none", None
     if (frame_name(stack[0]) or "").startswith(SERVLET_API):
         return "app", stack[0]
     library = False
-    for frame in stack:
+    only_platform = True
+    for position, frame in enumerate(stack):
         kind = frame_kind(frame, app_prefixes)
+        if kind == "platform":
+            if only_platform and position > 0 and (frame_name(frame) or "").startswith(PLATFORM_WORK_PREFIXES):
+                return "platform", None
+        else:
+            only_platform = False
         if kind == "app":
             return "app", frame
         library = library or kind == "library"
@@ -331,6 +367,90 @@ def jot_files(paths):
     return files
 
 
+SENSOR_KEYS = ("name", "description", "methods", "scopes", "excludes", "captures", "matchers", "exception", "protect",
+               "enabled", "debug")
+_SENSOR_NAME = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
+_LISTS = ("methods", "scopes", "excludes", "captures", "matchers")
+_BOOLEANS = ("protect", "enabled", "debug")
+
+
+def check_jot_text(text):
+    """What is wrong with a sensor or rule as written, as a list of {"line", "message"}, line counting from 1. The
+    same things the agent would complain about at startup, found before anything is saved. Nothing wrong is []."""
+    if len(text or "") > 64 * 1024:
+        return [{"line": 1, "message": "is too large to be one sensor"}]
+    try:
+        root = yaml.compose(text or "")
+    except yaml.YAMLError as e:
+        mark = getattr(e, "problem_mark", None)
+        what = (getattr(e, "problem", None) or "isn't valid YAML").strip()
+        return [{"line": mark.line + 1 if mark else 1, "message": what}]
+    if root is None:
+        return [{"line": 1, "message": "is empty"}]
+    problems = []
+
+    def add(node, message):
+        problems.append({"line": node.start_mark.line + 1, "message": message})
+
+    def text_of(node):
+        return node.value if isinstance(node, yaml.ScalarNode) else None
+
+    def entries(node):
+        return {text_of(k): (k, v) for k, v in node.value} if isinstance(node, yaml.MappingNode) else {}
+
+    top = entries(root)
+    if not isinstance(root, yaml.MappingNode) or "sensors" not in top:
+        add(root, "needs a sensors list, like  sensors:  followed by  - name: ...")
+        return problems
+    sensors = top["sensors"][1]
+    if not isinstance(sensors, yaml.SequenceNode):
+        add(sensors, "sensors must be a list, with each sensor starting with  - name:")
+        return problems
+    seen = set()
+    for node in sensors.value:
+        keys = entries(node)
+        if not isinstance(node, yaml.MappingNode):
+            add(node, "each sensor must be a block of name, methods and so on")
+            continue
+        for k, (key, _) in keys.items():
+            if k not in SENSOR_KEYS:
+                add(key, "%s isn't something a sensor has. These are %s" % (k, ", ".join(SENSOR_KEYS)))
+        name = text_of(keys["name"][1]) if "name" in keys else None
+        if not name:
+            add(node, "needs a name")
+        else:
+            if not _SENSOR_NAME.match(name):
+                add(keys["name"][1], "%s should be lower case words joined with -, like get-hashes" % name)
+            if name in seen:
+                add(keys["name"][1], "%s is used twice" % name)
+            seen.add(name)
+        for k in _LISTS:
+            if k in keys and not isinstance(keys[k][1], yaml.SequenceNode):
+                add(keys[k][0], "%s must be a list, each item starting with -" % k)
+        for k in _BOOLEANS:
+            if k in keys and text_of(keys[k][1]) not in ("true", "false"):
+                add(keys[k][1], "%s must be true or false" % k)
+        if "methods" in keys and isinstance(keys["methods"][1], yaml.SequenceNode):
+            if not keys["methods"][1].value:
+                add(keys["methods"][0], "has no methods, so it can never fire")
+            for m in keys["methods"][1].value + (keys["scopes"][1].value if isinstance(keys.get("scopes", (0, 0))[1], yaml.SequenceNode) else []):
+                value = (text_of(m) or "").strip()
+                if not _METHOD.match(value):
+                    add(m, "%r doesn't look like Class.method" % value)
+        elif "methods" not in keys:
+            add(node, "needs methods, the calls it watches")
+        if "matchers" in keys and isinstance(keys["matchers"][1], yaml.SequenceNode):
+            for m in keys["matchers"][1].value:
+                value = text_of(m) or ""
+                try:
+                    re.compile(value[1:] if value.startswith("!") else value)
+                except re.error as e:
+                    add(m, "isn't a valid pattern, %s" % e)
+        if "protect" in keys and "exception" not in keys:
+            add(keys["protect"][0], "protect only matters for a rule, which has an exception message")
+    return problems
+
+
 def _read_jot(path):
     try:
         with open(path) as fh:
@@ -447,7 +567,7 @@ def report_sql(rtype, rows, cols):
 
 # word:value narrows by a field, for example sensor:get-hashes or action:blocked
 SEARCH_FIELDS = {"sensor": "contains", "action": "equals", "origin": "equals", "app": "equals", "run": "equals",
-                 "host": "equals", "trace": "number", "pid": "number"}
+                 "host": "equals", "trace": "number", "pid": "number", "route": "route"}
 # a plain word is looked for in all of these
 SEARCH_COLUMNS = ("capture", "message", "sensor", "action", "method_name", "call_site", "app_frame", "stack")
 SEARCH_TEXT = " || ' ' || ".join("COALESCE(%s, '')" % c for c in SEARCH_COLUMNS)
@@ -485,6 +605,11 @@ def search_where(query):
     for negated, field, text in terms:
         if field is None:
             cond = "(%s) LIKE %s" % (SEARCH_TEXT, _like(text))
+        elif SEARCH_FIELDS[field] == "route":
+            # the request an event happened in came in at this route, as the get-routes sensor saw it
+            seen = "SELECT run, trace FROM events_raw WHERE sensor = 'get-routes'"
+            cond = ("(run, trace) NOT IN (%s)" % seen if text == NO_REQUEST
+                    else "(run, trace) IN (%s AND capture = %s)" % (seen, _lit(text)))
         elif SEARCH_FIELDS[field] == "number":
             if not text.isdigit():
                 raise ValueError("%s: needs a number" % field)
@@ -550,17 +675,22 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
     the two have in common. Lines that reach the same stop share its node, so drawn together they show where requests
     agree and where they part. Events in a row that are the same stop, like three get-role calls from one method,
     are one stop. A forward or a redirect also leads on to the route it names, which is an exit. Plumbing that only
-    describes the request, like who the user is, is left out unless details is set."""
+    describes the request, like who the user is, is left out unless details is set. Every node and edge says which
+    lines use it, so what goes through a node can be told from what can merely be reached from it. One request that did
+    A and then B and another that did B and then A make a loop between them, and following edges would join them."""
     nodes, edges = {}, {}
+    line = [0]                 # the line being walked, a request that did the same things in the same order as others
 
     def node(kind, key, label, full=None):
         n = nodes.setdefault((kind, key), {"id": "%s:%s" % (kind, key), "kind": kind, "label": label, "full": full or key,
-                                           "events": 0, "blocked": 0, "monitored": 0, "captures": {}})
+                                           "events": 0, "blocked": 0, "monitored": 0, "captures": {}, "lines": set()})
+        n["lines"].add(line[0])
         return n
 
     def link(a, b, count):
-        e = edges.setdefault((a["id"], b["id"]), {"from": a["id"], "to": b["id"], "events": 0})
+        e = edges.setdefault((a["id"], b["id"]), {"from": a["id"], "to": b["id"], "events": 0, "lines": set()})
         e["events"] += count
+        e["lines"].add(line[0])
         return e
 
     route_names = sorted(routes_seen)
@@ -571,6 +701,7 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
         # the page the route names is compiled to a class, and every method of it, like the tag helpers Jasper
         # generates, is that page. The route already stands for it, so it isn't drawn again
         page = _page_of(route)
+        start["events"] += count     # a route counts the requests that came in at it, the others count events
         here, held, last_edges = start, [], []   # where the line is, the methods it is inside, the edges into that stop
         for sensor, action, capture, stack in events:
             frames = json.loads(stack) if stack else []
@@ -591,7 +722,6 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
                         names.append(name)
                 if page:
                     names = [x for x in names if not x.startswith("org.apache.jsp.%s." % page)]
-            start["events"] += count
             effect = node("effect", sensor, sensor)
             shared = 0
             while shared < min(len(held), len(names)) and held[shared] == names[shared]:
@@ -607,6 +737,7 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
                 last_edges = [link(a, b, count) for a, b in zip(path, path[1:])]
             for name in names:
                 nodes[("code", name)]["events"] += count
+                nodes[("code", name)]["lines"].add(line[0])
             effect["events"] += count
             if action in ("blocked", "monitored"):
                 effect[action] += count
@@ -624,14 +755,35 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
     for group in _requests(rows):
         key = (group[0][0], tuple((r[3], r[4], r[5], r[6]) for r in group))
         same[key] = same.get(key, 0) + 1
-    for (route, events), count in same.items():
+    for number, ((route, events), count) in enumerate(same.items()):
+        line[0] = number
         walk(route, events, count)
 
     out_nodes = sorted(nodes.values(), key=lambda n: (-n["events"], n["label"]))
     for n in out_nodes:
         n["captures"] = sorted(n["captures"].items(), key=lambda kv: -kv[1])[:25]
+        n["lines"] = sorted(n["lines"])
+    for e in edges.values():
+        e["lines"] = sorted(e["lines"])
     return {"nodes": out_nodes, "edges": sorted(edges.values(), key=lambda e: -e["events"]),
             "routes": route_names, "truncated": truncated}
+
+
+def build_graphs(rows, routes_seen, app_prefixes=(), details=False, truncated=False):
+    """One graph for each route, in alphabetical order, so each can be read and laid out on its own. A route is
+    where a request came in, and its graph holds only what requests that came in there did."""
+    by_route = {}
+    for row in rows:
+        by_route.setdefault(row[0] or NO_REQUEST, []).append(row)
+    graphs = []
+    for route, route_rows in by_route.items():
+        g = build_graph(route_rows, routes_seen, app_prefixes, details, truncated)
+        if not g["edges"]:
+            continue   # nothing happened in it that the graph shows, like a stylesheet
+        graphs.append({"route": route, "requests": sum(1 for _ in _requests(route_rows)),
+                       "events": len(route_rows), "nodes": g["nodes"], "edges": g["edges"]})
+    graphs.sort(key=lambda g: (g["route"] == NO_REQUEST, g["route"].lower()))
+    return {"graphs": graphs, "routes": sorted(routes_seen), "truncated": truncated}
 
 
 # ---------------------------------------------------------------------------- queries

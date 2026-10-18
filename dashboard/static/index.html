@@ -166,10 +166,19 @@
   #eventDrawer .top, #jotDetail .top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   #eventDrawer .top .spacer, #jotDetail .top .spacer { flex: 1; }
   #eventDrawer h2, #jotDetail h2 { margin: 0; font-size: 18px; overflow-wrap: anywhere; }
+  #eventDrawer h2 a { color: inherit; text-decoration: none; }
+  #eventDrawer h2 a:hover, #eventDrawer dd a:hover { text-decoration: underline; }
+  #eventDrawer dd a { color: var(--accent); text-decoration: none; }
   #eventDrawer h4, #jotDetail h4 { margin: 18px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
   #eventDrawer .when, #jotDetail .when { color: var(--muted); font-size: 13px; margin-top: 4px; }
   #eventDrawer pre.value, #jotDetail pre.value { margin: 0; padding: 10px 12px; background: var(--code); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere;
     font-size: 13px; max-height: 260px; overflow: auto; }
+  #jotDetail .editor .cm-editor { max-height: 60vh; }
+  #jotDetail .editor .cm-scroller { overflow: auto; }
+  #jotDetail .codebox:has(.editor) .copy { z-index: 5; }
+  .editstatus { margin-top: 6px; font-size: 13px; color: var(--muted); min-height: 18px; }
+  .editstatus.ok { color: var(--observed); }
+  .editstatus.bad { color: var(--blocked); }
   #jotDetail .codebox { position: relative; }
   #jotDetail .codebox pre.value { padding-right: 44px; }
   #jotDetail .codebox .copy { position: absolute; top: 6px; right: 6px; display: flex; align-items: center; gap: 6px; padding: 4px 6px;
@@ -196,6 +205,10 @@
   #eventDrawer table.rel tr { cursor: pointer; }
   #eventDrawer table.rel tr:hover td { background: var(--code); }
   #eventDrawer table.rel tr.here td { background: var(--observed-bg); font-weight: 600; }
+  #reportResult .top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  #reportResult .top .spacer { flex: 1; }
+  #reportResult h2 { margin: 0; }
+  #reportResult .explain { margin: 10px 0 12px; }
   .pager { display: inline-flex; align-items: center; gap: 4px; }
   .pager .pos { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 52px; text-align: center; }
   .updated { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -216,6 +229,15 @@
   #graphDetail li.go { cursor: pointer; } #graphDetail li.go:hover { color: var(--accent); }
   #graphDetail .n { color: var(--muted); }
   svg.graph text { font: 12px ui-sans-serif, system-ui, sans-serif; fill: var(--text); pointer-events: none; }
+  .routegraph { margin: 0 0 18px; }
+  #graphTip { position: fixed; z-index: 30; max-width: 460px; padding: 8px 10px; background: var(--panel); color: var(--text);
+              border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.25); pointer-events: none; font-size: 12.5px; }
+  #graphTip .tt { display: flex; justify-content: space-between; gap: 14px; }
+  #graphTip .n { color: var(--muted); }
+  #graphTip h4 { margin: 8px 0 3px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  #graphTip .cap { display: flex; justify-content: space-between; gap: 14px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  #graphTip .cap span:first-child { overflow-wrap: anywhere; }
+  .routegraph h3 { margin: 0 0 4px; font-size: 14px; }
   svg.graph .coltitle { fill: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
   svg.graph .edge { fill: none; stroke: var(--muted); opacity: .28; }
   svg.graph .edge.on { stroke: var(--accent); opacity: .9; }
@@ -294,7 +316,7 @@
       <button type="submit" id="searchBtn">Search</button>
     </form>
     <div class="row picker">
-      <select id="reportSelect" aria-label="Views and reports"><option value="">Views and reports&hellip;</option></select>
+      <select id="reportSelect" aria-label="Views"><option value="">Views&hellip;</option></select>
     </div>
     <div id="notice"></div>
   </div>
@@ -325,6 +347,7 @@
     <div class="graphscroll" id="graphScroll"></div>
     <aside class="card" id="graphDetail" hidden></aside>
   </div>
+  <div id="graphTip" role="tooltip" hidden></div>
 </main>
 
 <main id="jotsPage" hidden>
@@ -367,6 +390,7 @@
       <div class="hint" id="reportSummary"></div>
       <div class="tablewrap" id="reportList" style="margin-top:12px"></div>
     </div>
+    <div class="card wide result" id="reportResult" hidden></div>
   </div>
 </main>
 
@@ -379,6 +403,7 @@
 <script src="/recent.js"></script>
 <script src="/graph.js"></script>
 <script src="/cells.js"></script>
+<script src="/codemirror.js"></script>
 <script>
 "use strict";
 
@@ -395,7 +420,7 @@ const PRESETS = [
     sql: "SELECT call_site_name AS call_site, COUNT(*) AS events\nFROM events WHERE call_site_name IS NOT NULL GROUP BY call_site_name ORDER BY events DESC LIMIT 15" },
   { label: "Events per minute", chart: "line", title: "Events per minute",
     sql: "SELECT strftime('%H:%M', ts/1000, 'unixepoch', 'localtime') AS minute, COUNT(*) AS events\nFROM events GROUP BY minute ORDER BY MIN(ts)" },  { label: "CVE exposure and attacks", chart: "table", title: "CVE exposure and attacks, times the vulnerable code was entered, and requests a rule blocked or only reported",
-    sql: "SELECT REPLACE(sensor, '-entered', '') AS cve, SUM(sensor LIKE '%-entered') AS entered,\n       COUNT(DISTINCT CASE WHEN action = 'blocked' THEN run || ':' || trace END) AS blocked,\n       COUNT(DISTINCT CASE WHEN action = 'monitored' THEN run || ':' || trace END) AS monitored\nFROM events WHERE sensor LIKE 'cve-%' GROUP BY cve ORDER BY entered DESC, blocked DESC" },
+    sql: "SELECT REPLACE(REPLACE(REPLACE(sensor, '-entered', ''), '-blocked', ''), '-monitored', '') AS cve, SUM(sensor LIKE '%-entered') AS entered,\n       COUNT(DISTINCT CASE WHEN action = 'blocked' THEN run || ':' || trace END) AS blocked,\n       COUNT(DISTINCT CASE WHEN action = 'monitored' THEN run || ':' || trace END) AS monitored\nFROM events WHERE sensor LIKE 'cve-%' GROUP BY cve ORDER BY entered DESC, blocked DESC" },
   { label: "CVE frequency", chart: "bar", title: "CVE frequency, events by CVE sensor. A rule counts every sink call, so a monitored entry can count more than once",
     sql: "SELECT sensor || ' (' || action || ')' AS cve, COUNT(*) AS events\nFROM events WHERE sensor LIKE 'cve-%' GROUP BY sensor, action ORDER BY events DESC" },
   { label: "CVEs by route", chart: "table", title: "CVEs by route, which requests reach vulnerable code or trigger a rule",
@@ -805,10 +830,10 @@ $("recentBtn").addEventListener("click", (ev) => {
 document.addEventListener("click", (ev) => { if (!$("recentMenu").contains(ev.target)) closeRecent(); });
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeRecent(); });
 
-// One pulldown for the built in views and for the reports defined in the .jot files
+// One pulldown for the built in views. The reports defined in the .jot files are on the Reports tab.
 let reportItems = [];     // what each option runs, in the order of the options
 
-function drawPicker(reports) {
+function drawPicker() {
   const select = $("reportSelect");
   const chosen = select.value;
   reportItems = [];
@@ -820,13 +845,8 @@ function drawPicker(reports) {
     }
     return g;
   };
-  select.replaceChildren(el("option", { value: "", text: "Views and reports…" }), group("Views", PRESETS));
-  if (reports.length) select.append(group("Reports from your .jot files", reports));
+  select.replaceChildren(el("option", { value: "", text: "Views…" }), group("Views", PRESETS));
   select.value = chosen && reportItems[Number(chosen)] ? chosen : "";
-}
-
-async function drawReports() {
-  try { drawPicker(await api("/api/reports")); } catch (e) { /* reports are optional */ }
 }
 
 // ---- sensors, rules and reports, read only. How each is defined and whether it fires.
@@ -866,7 +886,12 @@ function closeDetail() {
   try { history.replaceState(null, "", "#" + currentPage); } catch (e) { /* ignore */ }
   drawJots();
 }
-document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && jotSelected) closeDetail(); });
+document.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Escape" || !jotSelected) return;
+  // in the editor, Escape only leaves it, so an edit isn't lost by closing the drawer
+  if (ev.target.closest && ev.target.closest(".cm-editor")) { ev.target.blur(); return; }
+  closeDetail();
+});
 $("jotBackdrop").addEventListener("click", closeDetail);
 
 async function loadJots() {
@@ -893,7 +918,6 @@ function dotted(text) {
 }
 
 function kindBadge(item) {
-  if (item.kind === "report") return el("span", { class: "badge report", text: "report" });
   if (item.kind === "sensor") return el("span", { class: "badge sensor", text: "observe" });
   return el("span", { class: "badge " + (item.mode === "block" ? "blocked" : "monitored"), text: item.mode === "block" ? "rule, blocks" : "rule, reports" });
 }
@@ -901,13 +925,16 @@ function kindBadge(item) {
 function drawJots() {
   if (!jots) return;
   const all = jotItems();
+  let runAfter = false;
   if (pendingSelect) {
     const wanted = all.find((i) => i.name === pendingSelect && (i.kind === "report") === (currentPage === "reports"));
     pendingSelect = null;
-    if (wanted) { jotSelected = wanted.key; showJotDetail(); }
+    if (wanted && wanted.kind === "report") { reportSelected = wanted.name; runAfter = true; }
+    else if (wanted) { jotSelected = wanted.key; showJotDetail(); }
   }
   drawSensors(all);
   drawReportList(all);
+  if (runAfter) runReport();
   const open = all.find((i) => i.key === jotSelected);
   if (open) drawJotDetail(open);
 }
@@ -989,9 +1016,55 @@ function modeSwitch(r) {
   return el("span", { class: "modeswitch" }, el("span", { class: shown ? "" : "on", text: "Monitor" }), sw, el("span", { class: shown ? "on" : "", text: "Protect" }));
 }
 
-function openReport(r) {
-  location.hash = "#events";
-  runSql(r.sql, { title: r.name, chart: "grid", sql: r.sql });
+// ---- reports. A report runs on its own tab, and its result sits under the list.
+let reportSelected = null;    // the name of the report shown
+let reportRun = 0;            // so a slow run can't replace a newer one
+
+function reportExplain(r) {
+  return r.type === "list"
+    ? "One row per call site, with what " + r.cols + " captured there."
+    : "Rows are the captures of " + r.rows + ". " + (r.type === "compare"
+      ? "Columns come from the captures of " + r.cols + ", with an X where it was seen in the same request."
+      : "One column for each of " + r.cols + ", showing what it captured in the same request.");
+}
+
+function stepReport(step) {
+  const next = jotOrder.reports[jotOrder.reports.findIndex((i) => i.name === reportSelected) + step];
+  if (next) selectReport(next.name);
+}
+
+function selectReport(name) {
+  reportSelected = name;
+  try { history.replaceState(null, "", "#reports/" + encodeURIComponent(name)); } catch (e) { /* ignore */ }
+  drawJots();                 // marks the row
+  return runReport({ scroll: true });
+}
+
+// quiet runs again without clearing what is shown, for the refresh. scroll brings the result into view.
+async function runReport({ quiet = false, scroll = false } = {}) {
+  const box = $("reportResult");
+  const report = jots && jots.reports.find((r) => r.name === reportSelected);
+  if (!report) { box.hidden = true; return; }
+  box.hidden = false;
+  const list = jotOrder.reports;
+  const head = el("div", { class: "top" }, el("h2", { text: report.name }), el("span", { class: "spacer" }),
+    pager(list.findIndex((i) => i.name === report.name), list.length, stepReport));
+  if (!report.sql) { box.replaceChildren(head, el("div", { class: "error", text: "This report can't be run, it has no query." })); return; }
+  const mine = ++reportRun;
+  if (!quiet) box.replaceChildren(head, el("div", { class: "hint", text: "Running…" }));
+  if (scroll) box.scrollIntoView({ block: "nearest" });
+  try {
+    const r = await api("/api/sql", { sql: report.sql, limit: 5000 });
+    if (mine !== reportRun) return;
+    box.replaceChildren(head,
+      el("p", { class: "explain", text: reportExplain(report) }),
+      r.columns.length < 2 ? tableView(r, r.hint) : gridView(r),
+      el("div", { class: "meta" },
+        el("span", { text: r.rows.length.toLocaleString() + " rows" + (r.truncated ? " (limited, there are more)" : "") + " in " + r.ms + " ms" })),
+      el("details", {}, el("summary", { text: "SQL" }), el("pre", { class: "value", text: report.sql })));
+  } catch (e) {
+    if (mine === reportRun) box.replaceChildren(head, el("div", { class: "error", text: e.message }));
+  }
 }
 
 function drawReportList(all) {
@@ -999,12 +1072,10 @@ function drawReportList(all) {
   const mine = all.filter((i) => i.kind === "report");
   const shown = mine.filter((i) => !filter || i.search.includes(filter));
   $("reportSummary").textContent = mine.length + " reports" + (shown.length !== mine.length ? ". Showing " + shown.length : "");
-  const head = el("tr", {}, ...["Name", "Type", "Rows", "Columns", "File", ""].map((t) => el("th", { text: t })));
-  const body = shown.map((i) => el("tr", { class: i.key === jotSelected ? "selected" : "", onclick: () => selectJot(i.key, i.name) },
+  const head = el("tr", {}, ...["Name", "Type", "Rows", "Columns", "File"].map((t) => el("th", { text: t })));
+  const body = shown.map((i) => el("tr", { class: i.name === reportSelected ? "selected" : "", onclick: () => selectReport(i.name) },
     el("td", { text: i.name }), el("td", { text: i.type || "" }), el("td", {}, ...dotted(i.rows || "")), el("td", {}, ...dotted(i.cols || "")),
-    el("td", { text: i.file || "" }),
-    el("td", {}, i.sql ? el("button", { type: "button", class: "small", text: "Open", title: "Run this report on the Events page",
-      onclick: (ev) => { ev.stopPropagation(); openReport(i); } }) : null)));
+    el("td", { text: i.file || "" })));
   jotOrder.reports = shown;
   $("reportList").replaceChildren(mine.length
     ? (shown.length ? el("table", { class: "list" }, el("thead", {}, head), el("tbody", {}, ...body)) : el("div", { class: "empty", text: "Nothing matches" }))
@@ -1015,17 +1086,15 @@ function issueRow(i) {
   return el("div", { class: "issue " + i.level, text: (i.file ? i.file + ": " : "") + i.text });
 }
 
-function listSection(title, values) {
-  if (!values || !values.length) return null;
-  return el("div", {}, el("h4", { text: title }), el("ul", {}, ...values.map((v) => el("li", { text: v }))));
-}
-
 function fact(value, label) {
   return el("div", { class: "fact" }, el("b", { text: String(value) }), el("span", { text: label }));
 }
 
 // Previous and next buttons with where this is in the list, for a drawer that goes through a list. at is the position
 // of what is shown, or -1 when it isn't in the list, which is when there is nothing to step through.
+// A rule names its events cve-x-entered, cve-x-blocked or cve-x-monitored. This is the JOT they belong to.
+function ruleName(sensor) { return String(sensor).replace(/-(entered|blocked|monitored)$/, ""); }
+
 function pager(at, total, go) {
   if (at < 0 || total < 2) return null;
   return el("span", { class: "pager" },
@@ -1052,7 +1121,7 @@ function icon(...paths) {
 const COPY_ICON = ["M9 9h11a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H11a2 2 0 0 1-2-2z", "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"];
 const CHECK_ICON = ["M20 6 9 17l-5-5"];
 
-// a block of text with a button that copies it
+// a block of text with a button that copies it. The text can be a function, for text that changes
 function copyBlock(text, what) {
   const button = el("button", { type: "button", class: "copy", title: "Copy", "aria-label": "Copy " + what });
   let timer = null;
@@ -1062,7 +1131,7 @@ function copyBlock(text, what) {
   show(COPY_ICON);
   button.addEventListener("click", async () => {
     let note = "Copied";
-    try { await navigator.clipboard.writeText(text); } catch (e) { note = "Copy failed"; }
+    try { await navigator.clipboard.writeText(typeof text === "function" ? text() : text); } catch (e) { note = "Copy failed"; }
     show(note === "Copied" ? CHECK_ICON : COPY_ICON, note);
     clearTimeout(timer);
     timer = setTimeout(() => show(COPY_ICON), 1500);
@@ -1074,24 +1143,8 @@ function drawJotDetail(i) {
   const d = $("jotDetail");
   const spacer = el("span", { class: "spacer" });
   const close = el("button", { class: "small", text: "Close", title: "Escape", onclick: closeDetail });
-  const list = jotOrder[i.kind === "report" ? "reports" : "jots"];
-  const steps = pager(list.findIndex((x) => x.key === i.key), list.length, stepJot);
+  const steps = pager(jotOrder.jots.findIndex((x) => x.key === i.key), jotOrder.jots.length, stepJot);
   // replaceChildren turns a null into the text "null", so empty sections are dropped first
-  if (i.kind === "report") {
-    d.replaceChildren(...[
-      el("div", { class: "top" }, kindBadge(i), el("h2", { text: i.name }), spacer, steps,
-        i.sql ? el("button", { class: "small primary", text: "Open this report", onclick: () => openReport(i) }) : null, close),
-      el("div", { class: "when", text: i.file }),
-      el("p", { class: "explain", text: i.type === "list"
-        ? "One row per call site, with what " + i.cols + " captured there."
-        : "Rows are the captures of " + i.rows + ". " + (i.type === "compare"
-          ? "Columns come from the captures of " + i.cols + ", with an X where it was seen in the same request."
-          : "One column for each of " + i.cols + ", showing what it captured in the same request.") }),
-      listSection("Rows", i.rows ? [i.rows] : null),
-      listSection(i.type === "table" ? "Columns" : "Column source", (i.cols || "").split(",").map((c) => c.trim()).filter(Boolean)),
-    ].filter(Boolean));
-    return;
-  }
   const never = !i.events;
   const showEvents = () => {
     closeDetail();
@@ -1108,9 +1161,42 @@ function drawJotDetail(i) {
       ...(i.kind === "rule" ? [fact(i.blocked, "blocked"), fact(i.monitored, "reported only")] : [])),
     never ? el("div", { class: "hint", text: "No events in the log yet. A sensor only records when the code it watches runs, so check the method names if you expected it." }) : null,
     i.kind === "rule" ? el("div", { class: "notice", text: (i.mode === "block" ? "Blocks the call. " : "Only reports, nothing is stopped. ") + "Message: " + i.exception }) : null,
-    el("h4", { text: "YAML" }),
-    copyBlock(i.definition || "", "YAML"),
+    jotEditor(i.definition || ""),
   ].filter(Boolean));
+}
+
+// The sensor or rule as YAML, which can be edited. What is typed is checked as it is typed, with the problems marked on
+// the lines they are on. Nothing is saved anywhere yet, Revert goes back to what the file says.
+function jotEditor(original) {
+  const host = el("div", { class: "editor" });
+  const status = el("div", { class: "editstatus", text: "" });
+  const revert = el("button", { type: "button", class: "small", text: "Revert", hidden: "", title: "Back to what the file says" });
+  const label = el("h4", { text: "YAML" });
+  const editor = JotEditor.create(host, { doc: original, onChange: changed });
+  let timer = null, serial = 0;
+  async function check() {
+    const mine = ++serial;
+    try {
+      const { problems } = await api("/api/jots/check", { text: editor.get() });
+      if (mine !== serial) return;
+      editor.problems(problems);
+      status.className = "editstatus" + (problems.length ? " bad" : " ok");
+      status.textContent = problems.length ? problems.length + (problems.length === 1 ? " problem" : " problems") + ", " + problems[0].message
+        + " (line " + problems[0].line + ")" : "No problems found";
+    } catch (e) { status.className = "editstatus"; status.textContent = ""; }
+  }
+  function changed(text) {
+    revert.hidden = text === original;
+    status.className = "editstatus";
+    status.textContent = text === original ? "" : "Checking";
+    clearTimeout(timer);
+    timer = setTimeout(text === original ? () => { serial++; editor.problems([]); status.textContent = ""; } : check, 300);
+  }
+  revert.addEventListener("click", () => { editor.set(original); editor.focus(); });
+  const box = copyBlock(() => editor.get(), "YAML");
+  box.querySelector("pre").replaceWith(host);
+  return el("div", {}, el("div", { class: "row" }, label, el("span", { class: "spacer" }), revert), box,
+    status, el("div", { class: "hint", text: "Edits are checked but not saved, the file isn't changed." }));
 }
 
 $("jotFilter").addEventListener("input", drawJots);
@@ -1119,113 +1205,168 @@ $("reportFilter").addEventListener("input", drawJots);
 
 // ---- the path graph. Every event is a path from the route of its request, through the application methods that were
 // running, to what the sensor saw. Drawn together they show where the application does what.
-let graphData = null;
-let graphPicked = null;
+let graphData = null;     // { graphs: [{ route, requests, events, nodes, edges }], routes, truncated }, one graph for each route
+let graphPicked = null;   // the id of the picked node, which is lit in every route that has it
+let graphPanel = null;    // the route whose graph the picked node was picked in, which the detail describes
 let graphAt = null;       // the newest event when the graph was drawn, so it only redraws when something is new
 
 async function loadGraph() {
   const route = $("graphRoute").value;
   try {
-    const query = "?route=" + encodeURIComponent(route) + "&details=" + ($("graphDetails").checked ? "1" : "0");
+    const query = "?split=1&route=" + encodeURIComponent(route) + "&details=" + ($("graphDetails").checked ? "1" : "0");
     graphData = await api("/api/graph" + query);
     graphAt = lastStatus ? lastStatus.last_pk : null;
     if ($("graphCollapse").checked) {
-      const folded = JotGraph.collapse(graphData.nodes, graphData.edges);
-      graphData = Object.assign({}, graphData, { nodes: folded.nodes, edges: folded.edges });
-      if (folded.head.has(graphPicked)) graphPicked = folded.head.get(graphPicked);
+      graphData = Object.assign({}, graphData, { graphs: graphData.graphs.map((g) => {
+        const folded = JotGraph.collapse(g.nodes, g.edges);
+        if (g.route === graphPanel && folded.head.has(graphPicked)) graphPicked = folded.head.get(graphPicked);
+        return Object.assign({}, g, { nodes: folded.nodes, edges: folded.edges });
+      }) });
     }
     const select = $("graphRoute");
     select.replaceChildren(el("option", { value: "", text: "All routes" }),
       ...graphData.routes.map((r) => el("option", { value: r, text: r, selected: r === route ? "" : null })));
     select.value = route;
-    if (!graphData.nodes.some((n) => n.id === graphPicked)) graphPicked = null;
+    if (!pickedGraph()) graphPicked = graphPanel = null;
     drawGraph();
   } catch (e) {
     $("graphScroll").replaceChildren(el("div", { class: "error", text: e.message }));
   }
 }
 
+// the graph the picked node was picked in, or the first one that has it, for a node picked from the address
+function pickedGraph() {
+  const has = (g) => g.nodes.some((n) => n.id === graphPicked);
+  const g = graphData.graphs.find((x) => x.route === graphPanel && has(x)) || graphData.graphs.find(has);
+  if (g) graphPanel = g.route;
+  return g || null;
+}
+
 // pick or drop a node. The address follows, so a picked node can be linked to, without reloading anything
-function pickNode(id) {
+function pickNode(id, route) {
   graphPicked = id;
+  graphPanel = id ? route || graphPanel : null;
   try { history.replaceState(null, "", "#graph" + (id ? "/" + encodeURIComponent(id) : "")); } catch (e) { /* not important */ }
   drawGraph();
 }
 
 function graphLabel(text, max) { return text.length > max ? text.slice(0, max - 1) + "…" : text; }
 
+// The box that follows the pointer over a node, saying what it is and what it captured
+function showTip(n, ev, anchor) {
+  const tip = $("graphTip");
+  const caught = n.captures.slice(0, 8);
+  tip.replaceChildren(...[
+    el("div", { class: "tt" }, el("b", { text: n.label }), el("span", { class: "n", text: n.events.toLocaleString() + (n.kind === "route" ? (n.events === 1 ? " request" : " requests") : " events") })),
+    n.full !== n.label ? el("div", { class: "hint", text: n.full }) : null,
+    n.firstUse ? el("div", { class: "hint", text: n.firstUse.toLocaleString() + " were the first use of the class" }) : null,
+    caught.length ? el("h4", { text: "What it captured" }) : null,
+    ...caught.map(([c, count]) => el("div", { class: "cap" }, el("span", { text: graphLabel(c === "" ? "(nothing)" : c, 90) }),
+      el("span", { class: "n", text: count.toLocaleString() }))),
+    n.captures.length > caught.length ? el("div", { class: "hint", text: "and " + (n.captures.length - caught.length) + " more" }) : null,
+  ].filter(Boolean));
+  tip.hidden = false;
+  if (ev) moveTip(ev);
+  else if (anchor) { const r = anchor.getBoundingClientRect(); placeTip(r.right + 8, r.top); }
+}
+
+function placeTip(x, y) {
+  const tip = $("graphTip");
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.max(8, Math.min(x, window.innerWidth - w - 8)) + "px";
+  tip.style.top = Math.max(8, Math.min(y, window.innerHeight - h - 8)) + "px";
+}
+function moveTip(ev) { placeTip(ev.clientX + 14, ev.clientY + 14); }
+function hideTip() { $("graphTip").hidden = true; }
+
+// Each route is drawn on its own, so a route's paths can be read without those of the others running through them
 function drawGraph() {
-  const { nodes, edges } = graphData;
-  if (!nodes.length) {
+  const graphs = graphData.graphs.filter((g) => g.nodes.length);
+  if (!graphs.length) {
     $("graphScroll").replaceChildren(el("div", { class: "empty", text: "No paths yet. Use the application and they appear here." }));
     $("graphSummary").textContent = "";
     $("graphDetail").hidden = true;
     $("graphLayout").classList.remove("has-detail");
     return;
   }
+  const scroll = $("graphScroll");
+  const keep = [scroll.scrollLeft, scroll.scrollTop];
+  hideTip();
+  scroll.replaceChildren(...graphs.map(drawRoute));
+  scroll.scrollLeft = keep[0]; scroll.scrollTop = keep[1];
+  const all = graphs.flatMap((g) => g.nodes);
+  const count = (k) => new Set(all.filter((n) => n.kind === k).map((n) => n.id)).size;
+  $("graphSummary").textContent = graphs.length + " routes, " + count("code") + " methods, " + count("effect") + " kinds of effect"
+    + (graphData.truncated ? " (only the first part of the events were used)" : "");
+  drawGraphDetail();
+}
+
+function drawRoute(graph) {
+  const { nodes, edges } = graph;
   const L = JotGraph.layout(nodes, edges);
-  const lit = graphPicked ? JotGraph.through(graphPicked, edges) : null;
-  const litEdges = graphPicked ? JotGraph.pathEdges(graphPicked, edges) : null;
+  const mine = graph.route === graphPanel;
+  const lit = graphPicked && mine && nodes.some((n) => n.id === graphPicked) ? JotGraph.through(graphPicked, nodes, edges) : null;
+  const litEdges = lit && lit.edges;
   // fitted to the width of the page when it can be, but never shrunk below a size that can be read, it scrolls instead
   const svg = svgEl("svg", { class: "graph", width: L.width, height: L.height, viewBox: "0 0 " + L.width + " " + L.height, role: "img",
-    style: "width:100%;height:auto;min-width:" + Math.round(L.width * 0.85) + "px;display:block",
-    "aria-label": "Paths from routes through the application to what the sensors saw" });
-  L.titles.forEach((t, c) => { if (t) svg.append(svgEl("text", { class: "coltitle", x: L.colX[c], y: 22 }, t)); });
+    style: "display:block;max-width:none",
+    "aria-label": "Paths from the route " + graph.route + " through the application to what the sensors saw" });
+  const label = new Map(nodes.map((n) => [n.id, n.label]));
   const mid = (id) => { const p = L.pos.get(id); return { x: p.x, y: p.y + L.nodeH / 2 }; };
   for (const e of edges) {
-    if (!L.pos.has(e.from) || !L.pos.has(e.to)) continue;
+    if (!L.pos.has(e.from) || !L.pos.has(e.to) || L.closing.has(e)) continue;
     const path = svgEl("path", { d: JotGraph.curve(mid(e.from), mid(e.to), L.nodeW),
       "stroke-width": String(Math.min(6, 1 + Math.log2(e.events) / 1.6)),
       class: "edge" + (litEdges ? (litEdges.has(e) ? " on" : " off") : "") });
-    path.append(svgEl("title", {}, nodes.find((n) => n.id === e.from).label + " → " + nodes.find((n) => n.id === e.to).label + ", " + e.events + " events"));
+    path.append(svgEl("title", {}, label.get(e.from) + " → " + label.get(e.to) + ", " + e.events + " events"));
     svg.append(path);
   }
   for (const n of nodes) {
     const p = L.pos.get(n.id);
     const cls = "node " + n.kind + (n.kind === "effect" && n.blocked ? " blocked" : n.kind === "effect" && n.monitored ? " monitored" : "")
-      + (lit && !lit.has(n.id) ? " off" : "") + (n.id === graphPicked ? " picked" : "");
+      + (lit && !lit.nodes.has(n.id) ? " off" : "") + (n.id === graphPicked && mine ? " picked" : "");
     const g = svgEl("g", { class: cls, transform: "translate(" + p.x + "," + p.y + ")", tabindex: "0", role: "button" });
-    g.append(svgEl("title", {}, n.full + " (" + n.events + " events" + (n.firstUse ? ", " + n.firstUse + " of them the first use of the class" : "") + ")"));
+    g.addEventListener("mouseenter", (ev) => showTip(n, ev));
+    g.addEventListener("mousemove", moveTip);
+    g.addEventListener("mouseleave", hideTip);
+    g.addEventListener("focus", () => showTip(n, null, g));
+    g.addEventListener("blur", hideTip);
     g.append(svgEl("rect", { width: L.nodeW, height: L.nodeH, rx: 6 }));
     g.append(svgEl("text", { x: 8, y: 17 }, graphLabel(n.label, 28)));
     g.append(svgEl("text", { class: "count", x: L.nodeW - 8, y: 17 }, String(n.events)));
-    const pick = (ev) => { ev.stopPropagation(); pickNode(graphPicked === n.id ? null : n.id); };
+    const pick = (ev) => { ev.stopPropagation(); if (graphPicked === n.id && mine) pickNode(null); else pickNode(n.id, graph.route); };
     g.addEventListener("click", pick);
     g.addEventListener("keydown", (ev) => { if (ev.key === "Enter") pick(ev); });
     svg.append(g);
   }
   svg.addEventListener("click", () => { if (graphPicked) pickNode(null); });
-  const scroll = $("graphScroll");
-  const keep = [scroll.scrollLeft, scroll.scrollTop];
-  scroll.replaceChildren(svg);
-  scroll.scrollLeft = keep[0]; scroll.scrollTop = keep[1];
-  const kinds = (k) => nodes.filter((n) => n.kind === k).length;
-  $("graphSummary").textContent = kinds("route") + " routes, " + kinds("code") + " methods, " + kinds("effect") + " kinds of effect, " + edges.length + " paths"
-    + (graphData.truncated ? " (only the first part of the events were used)" : "");
-  drawGraphDetail();
+  return el("section", { class: "routegraph" }, svg);
 }
 
 function drawGraphDetail() {
   const box = $("graphDetail");
-  const n = graphData.nodes.find((x) => x.id === graphPicked);
+  const graph = graphPicked ? pickedGraph() : null;
+  const n = graph && graph.nodes.find((x) => x.id === graphPicked);
   $("graphLayout").classList.toggle("has-detail", !!n);
   box.hidden = !n;
   if (!n) return;
-  const byId = new Map(graphData.nodes.map((x) => [x.id, x]));
-  const neighbours = (side, other) => graphData.edges.filter((e) => e[side] === n.id)
+  const byId = new Map(graph.nodes.map((x) => [x.id, x]));
+  const neighbours = (side, other) => graph.edges.filter((e) => e[side] === n.id)
     .map((e) => ({ node: byId.get(e[other]), events: e.events })).filter((x) => x.node).slice(0, 12);
-  const list = (items) => el("ul", {}, ...items.map((x) => el("li", { class: "go", title: "Follow this one", onclick: () => pickNode(x.node.id) },
+  const list = (items) => el("ul", {}, ...items.map((x) => el("li", { class: "go", title: "Follow this one", onclick: () => pickNode(x.node.id, graph.route) },
     el("span", { text: x.node.label }), el("span", { class: "n", text: "  " + x.events }))));
   const from = neighbours("to", "from"), to = neighbours("from", "to");
-  const query = n.kind === "effect" ? "sensor:" + n.label : '"' + n.full.replace(/"/g, "") + '"';
+  // only the events of this node, in the route it was picked in
+  const inRoute = ' route:"' + graph.route.replace(/"/g, "") + '"';
+  const query = n.kind === "route" ? inRoute.trim() : (n.kind === "effect" ? "sensor:" + n.label : '"' + n.full.replace(/"/g, "") + '"') + inRoute;
   const kind = { route: "A route, where a request comes in", code: "Application code", effect: "What a sensor saw", exit: "A route a forward or redirect leads to" }[n.kind];
   box.replaceChildren(...[
     el("button", { class: "close", type: "button", title: "Close", "aria-label": "Close", onclick: () => pickNode(null), text: "×" }),
     el("h2", { text: n.label }),
-    el("div", { class: "hint", text: kind }),
+    el("div", { class: "hint", text: kind + (n.kind === "route" ? "" : ", in " + graph.route) }),
     n.full !== n.label ? el("div", { class: "hint", text: n.full }) : null,
     n.firstUse ? el("div", { class: "hint", text: n.firstUse.toLocaleString() + " events were the first use of the class, which ran its static initializer" }) : null,
-    el("div", { class: "hint", text: n.events.toLocaleString() + " events" + (n.blocked ? ", " + n.blocked + " blocked" : "") + (n.monitored ? ", " + n.monitored + " reported only" : "") }),
+    el("div", { class: "hint", text: n.events.toLocaleString() + (n.kind === "route" ? " requests" : " events") + (n.blocked ? ", " + n.blocked + " blocked" : "") + (n.monitored ? ", " + n.monitored + " reported only" : "") }),
     n.captures.length ? el("h4", { text: "What it captured" }) : null,
     n.captures.length ? el("ul", {}, ...n.captures.map(([c, count]) => el("li", {}, el("span", { text: c === "" ? "(nothing)" : c }), el("span", { class: "n", text: "  " + count })))) : null,
     from.length ? el("h4", { text: "Comes from" }) : null,
@@ -1243,7 +1384,7 @@ function openSearch(query) {
   search(query);
 }
 
-$("graphRoute").addEventListener("change", () => { graphPicked = null; history.replaceState(null, "", "#graph"); loadGraph(); });
+$("graphRoute").addEventListener("change", () => { graphPicked = graphPanel = null; history.replaceState(null, "", "#graph"); loadGraph(); });
 $("graphDetails").addEventListener("change", loadGraph);
 $("graphCollapse").addEventListener("change", loadGraph);
 $("graphRefresh").addEventListener("click", loadGraph);
@@ -1264,7 +1405,10 @@ async function refreshNow() {
   button.disabled = true;
   try {
     await Promise.all([refreshStatus(), refreshControl()]);
-    if (currentPage === "jots" || currentPage === "reports") await loadJots();
+    if (currentPage === "jots" || currentPage === "reports") {
+      await loadJots();
+      if (currentPage === "reports") await runReport({ quiet: true });
+    }
     else if (currentPage === "graph") await loadGraph();
     else if (current && !busy) {
       const r = await api("/api/sql", { sql: current.sql, limit: current.chart === "grid" ? 5000 : undefined });
@@ -1279,7 +1423,11 @@ async function tick() {
   try {
     await Promise.all([refreshStatus(), refreshControl()]);
     stamp();
-    if (currentPage === "jots" || currentPage === "reports") { await loadJots(); return; }
+    if (currentPage === "jots" || currentPage === "reports") {
+      await loadJots();
+      if (currentPage === "reports" && $("live").checked) await runReport({ quiet: true });
+      return;
+    }
     if (currentPage === "graph") { if (lastStatus && lastStatus.last_pk !== graphAt) await loadGraph(); return; }
     // refresh the current view, unless someone is editing its SQL
     if ($("live").checked && current && !busy && !$("results").querySelector("details[open]")) {
@@ -1312,7 +1460,7 @@ $("reportSelect").addEventListener("change", (ev) => {
 
 try { asked = JSON.parse(localStorage.getItem("jot-history") || "[]"); } catch (e) { asked = []; }
 try { $("live").checked = localStorage.getItem("jot-live") !== "0"; } catch (e) { $("live").checked = true; }
-drawPicker([]); drawReports(); drawRecent();
+drawPicker(); drawRecent();
 // ---- the event viewer. #event/<pk> opens it, so an event can be linked to.
 let shownEvent = null;
 let hideRuntime = false;
@@ -1344,8 +1492,12 @@ async function openEvent(pk) {
 function drawEvent() {
   const e = shownEvent;
   const fact = (k, v) => v === null || v === undefined || v === "" ? null : [el("dt", { text: k }), el("dd", { text: String(v) })];
+  // the name of the JOT that recorded this, linked to its definition. The agent's own events aren't from a JOT.
+  const jotLink = e.sensor && !e.sensor.startsWith("jot-")
+    ? el("a", { href: "#jots/" + encodeURIComponent(ruleName(e.sensor)), title: "Open the definition of this JOT", text: e.sensor }) : null;
   const facts = [
-    fact("sensor", e.sensor), fact("action", e.action), fact("origin", e.origin), fact("application", e.app),
+    jotLink ? [el("dt", { text: "sensor" }), el("dd", {}, el("a", { href: "#jots/" + encodeURIComponent(ruleName(e.sensor)),
+      title: "Open the definition of this JOT", text: e.sensor }))] : fact("sensor", e.sensor), fact("action", e.action), fact("origin", e.origin), fact("application", e.app),
     fact("host", e.host), fact("process", e.pid), fact("run", e.run), fact("event", e.id), fact("trace", e.trace),
     fact("thread", e.thread_id != null ? e.thread + " (" + e.thread_id + ")" : e.thread), fact("method", e.method),
     fact("call site", e.call_site), fact("app frame", e.app_frame), fact("time (UTC)", e.time),
@@ -1362,7 +1514,7 @@ function drawEvent() {
   $("eventDrawer").replaceChildren(...[
     el("div", { class: "top" },
       e.action ? el("span", { class: "badge " + e.action, text: e.action }) : null,
-      el("h2", { text: e.sensor || "event" }),
+      el("h2", {}, jotLink || e.sensor || "event"),
       el("span", { class: "spacer" }),
       pager(eventOrder.indexOf(e.pk), eventOrder.length, stepEvent),
       copy,
@@ -1413,6 +1565,7 @@ document.addEventListener("keydown", (ev) => {
   const step = ev.key === "ArrowLeft" ? -1 : 1;
   if (shownEvent && !shownEvent.error && !$("eventDrawer").hidden) { stepEvent(step); ev.preventDefault(); }
   else if (jotSelected && !$("jotDetail").hidden) { stepJot(step); ev.preventDefault(); }
+  else if (currentPage === "reports" && reportSelected) { stepReport(step); ev.preventDefault(); }
 });
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && shownEvent) location.hash = "#events"; });
 

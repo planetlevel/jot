@@ -28,7 +28,7 @@ Without a key the dashboard still works. The preset views and the SQL box don't 
 | `--db` | SQLite file that holds the events. Default `jot-dashboard.db`. Delete it to start fresh |
 | `--app` | A package of your application, like `com.acme`. May be given more than once, and adds to the `app:` list in the jots file. See App events only below |
 | `--since` | Show only events from this time on. `now`, or a date and time like `2026-10-16T09:30`. Nothing is deleted |
-| `--port`, `--host` | Where to listen. Default `127.0.0.1:8765`. See the note on access below |
+| `--port`, `--host` | Where to listen. Default `127.0.0.1:8765`. `--allow-remote` is needed for any other host, see the note on access below |
 
 Environment variables are `ANTHROPIC_API_KEY`, `JOT_DASHBOARD_MODEL` (default `claude-sonnet-5-5`) and
 `JOT_DASHBOARD_API_URL` if requests have to go through a gateway. If your network inspects TLS and the
@@ -73,7 +73,7 @@ The search box under the question box finds individual events, newest first, and
 Every word has to match somewhere in the event, in its capture, message, sensor, call site or stack, so `rsa`
 finds anything with RSA in it and `hash jar` needs both. Put quotes around a phrase, and a leading `-` leaves out
 what follows, like `-jasper`. A `field:value` narrows to one field. The fields are `sensor` (contains), `action`,
-`origin`, `app`, `run` and `host` (exact), and `trace` and `pid` (a number). For example `sensor:get-hashes action:observed -jasper`.
+`origin`, `app`, `run` and `host` (exact), `route` (the route the request came in at, exact), and `trace` and `pid` (a number). For example `sensor:get-hashes action:observed -jasper`.
 The search honors Clear, App events only, Blocked and Monitored, and says how many more matches the filter left out.
 
 **Refresh** fetches the latest events now, and the time beside it says when the page last fetched. With
@@ -155,10 +155,11 @@ say which JOTs the agent loaded, and a rule the agent didn't load is marked as s
 
 ## Access
 
-The server has no login. It listens on localhost and rejects requests whose Host header is something else,
-and it rejects posts that didn't come from its own page, which protects against other websites in your
-browser reaching it. If you listen on another address, anyone who can reach the port can read every event,
-so only do that on a network you trust.
+The server has no login, so it only answers this machine. It listens on localhost, refuses any connection that
+doesn't come from the loopback address, rejects requests whose Host header is something else, and rejects posts
+that didn't come from its own page, which protects against other websites in your browser reaching it. A
+`--host` that isn't localhost is refused unless `--allow-remote` is also given. With it, anyone who can reach
+the port can read every event and switch rules, so only do that on a network you trust.
 
 ## Data model
 

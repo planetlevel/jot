@@ -6,14 +6,31 @@
 // shared node, the way two subway lines share a station. Finally the routes a forward or redirect leads to. Within a
 // column the order is chosen so edges cross as little as possible.
 (function (root) {
-  const NODE_W = 200, NODE_H = 26, GAP_Y = 10, COL_GAP = 80, PAD = 16, HEADER = 28;
+  const NODE_W = 200, NODE_H = 26, GAP_Y = 10, COL_GAP = 80, PAD = 16, HEADER = 0;
 
   function layout(nodes, edges) {
     const byId = new Map(nodes.map((n) => [n.id, n]));
+    const all = new Map(nodes.map((n) => [n.id, []]));
+    for (const e of edges) if (byId.has(e.from) && byId.has(e.to)) all.get(e.from).push(e);
+    // Requests that did the same things in a different order make loops. An edge that closes a loop is left out of the
+    // layout, found by walking from the routes with the busiest edges first, so the order most requests used is the one
+    // drawn and nothing runs backwards across the page. It is still counted as a path, only not drawn.
+    const closing = new Set(), state = new Map();
+    const walk = (id) => {
+      state.set(id, 1);
+      for (const e of all.get(id).slice().sort((a, b) => b.events - a.events)) {
+        const s = state.get(e.to);
+        if (s === 1) closing.add(e);
+        else if (!s) walk(e.to);
+      }
+      state.set(id, 2);
+    };
+    for (const n of nodes) if (n.kind === "route" && !state.get(n.id)) walk(n.id);
+    for (const n of nodes) if (!state.get(n.id)) walk(n.id);
     const out = new Map(nodes.map((n) => [n.id, []]));
     const inn = new Map(nodes.map((n) => [n.id, []]));
     for (const e of edges) {
-      if (!byId.has(e.from) || !byId.has(e.to)) continue;
+      if (!byId.has(e.from) || !byId.has(e.to) || closing.has(e)) continue;
       out.get(e.from).push(e.to);
       inn.get(e.to).push(e.from);
     }
@@ -91,40 +108,25 @@
       pos.set(n.id, { x: PAD + c * (NODE_W + COL_GAP), y: PAD + HEADER + (i + 0.5) * share - NODE_H / 2, column: c });
     }));
     return {
-      pos, titles, columns: columns.length, colX: columns.map((_, c) => PAD + c * (NODE_W + COL_GAP)),
+      pos, closing, titles, columns: columns.length, colX: columns.map((_, c) => PAD + c * (NODE_W + COL_GAP)),
       width: PAD * 2 + Math.max(1, columns.length) * NODE_W + Math.max(0, columns.length - 1) * COL_GAP,
       height: PAD * 2 + HEADER + tallest * (NODE_H + GAP_Y),
       nodeW: NODE_W, nodeH: NODE_H,
     };
   }
 
-  // the nodes reached from this one by following the edges one way, not counting the node itself unless a cycle returns to it
-  function reached(id, edges, a, b) {
-    const seen = new Set();
-    const stack = [id];
-    while (stack.length) {
-      const here = stack.pop();
-      for (const e of edges) {
-        if (e[a] === here && !seen.has(e[b])) { seen.add(e[b]); stack.push(e[b]); }
-      }
-    }
-    return seen;
+  // What goes through a node. A line is one kind of request, from its route through its stops, and the server says which
+  // lines use each node and edge. What lights up with a node is what those lines use, a path through it. Following edges
+  // out from the node instead would join requests that never met, because one that did A and then B and another that did
+  // B and then A make a loop between the two, and everything on the loop is then reachable from everything else.
+  function through(id, nodes, edges) {
+    const node = nodes.find((x) => x.id === id);
+    const mine = new Set(node && node.lines ? node.lines : []);
+    const uses = (x) => (x.lines || []).some((l) => mine.has(l));
+    return { nodes: new Set([id, ...nodes.filter(uses).map((x) => x.id)]), edges: new Set(edges.filter(uses)) };
   }
 
-  // every node on a path through this one, in both directions
-  function through(id, edges) {
-    return new Set([id, ...reached(id, edges, "to", "from"), ...reached(id, edges, "from", "to")]);
-  }
-
-  // the edges on a path through this node, which is a smaller set than the edges between nodes that are on one. A call
-  // that skips this node, like init calling a method that this node also calls, is not on a path through it.
-  function pathEdges(id, edges) {
-    const before = reached(id, edges, "to", "from");
-    const after = reached(id, edges, "from", "to");
-    const into = new Set([id, ...before]);
-    const out = new Set([id, ...after]);
-    return new Set(edges.filter((e) => (before.has(e.from) && into.has(e.to)) || (out.has(e.from) && after.has(e.to))));
-  }
+  const union = (a, b) => [...new Set([...(a || []), ...(b || [])])].sort((x, y) => x - y);
 
   function curve(a, b, w) {
     const x1 = a.x + w, y1 = a.y, x2 = b.x, y2 = b.y;
@@ -168,6 +170,7 @@
         label: cls.slice(cls.lastIndexOf(".") + 1) + " (" + run.map(method).join(", ") + ")",
         full: run.map((m) => m.full).join("\n"),
         members: run.map((m) => m.id),
+        lines: run.reduce((all, m) => union(all, m.lines), []),
         firstUse: run.reduce((sum, m) => sum + (m.firstUse || 0), 0) || undefined,
       }));
     }
@@ -201,8 +204,11 @@
       const from = e.from, to = head.get(e.to) || e.to;
       if (from === to) continue;
       const key = from + "\n" + to;
-      if (merged.has(key)) merged.get(key).events += e.events;
-      else merged.set(key, to === e.to ? e : Object.assign({}, e, { to }));
+      if (merged.has(key)) {
+        const into = merged.get(key);
+        into.events += e.events;
+        into.lines = union(into.lines, e.lines);
+      } else merged.set(key, to === e.to ? e : Object.assign({}, e, { to }));
     }
     return {
       nodes: nodes.filter((n) => !head.has(n.id)).map((n) => firstUse.has(n.id) ? Object.assign({}, n, { firstUse: (n.firstUse || 0) + firstUse.get(n.id) }) : n),
@@ -220,7 +226,7 @@
     return { nodes: second.nodes, edges: second.edges, head };
   }
 
-  const api = { layout, through, pathEdges, curve, collapse };
+  const api = { layout, through, curve, collapse };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.JotGraph = api;
 })(typeof window !== "undefined" ? window : globalThis);

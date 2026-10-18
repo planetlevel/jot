@@ -688,6 +688,10 @@ class JotsViewTests(unittest.TestCase):
         self.assertNotIn("null", text.lower(), "an empty section was passed to the DOM as null, which prints the word null")
         self.assertIn("YAML", text)
         self.assertIn('aria-label="Copy YAML"', detail.group(2), "the definition has a copy button")
+        self.assertIn("cm-editor", detail.group(2), "the definition is in the editor")
+        self.assertIn("a.b.C.method", detail.group(2), "and the YAML is in it")
+        self.assertIn("cm-line", detail.group(2))
+        self.assertIn("cm-gutters", detail.group(2), "with line numbers")
         self.assertNotIn("Select a sensor", page, "the empty placeholder panel is gone")
         backdrop = re.search(r'<div id="jotBackdrop"([^>]*)>', page)
         self.assertNotIn("hidden", backdrop.group(1), "the page behind the panel is dimmed")
@@ -732,17 +736,38 @@ class JotsViewTests(unittest.TestCase):
         for name in report_names:
             self.assertIn(name, reports, "the report is listed on the Reports tab")
             self.assertNotIn(">%s<" % name, jots, "and not among the JOTs")
-        self.assertIn("Open</button>", reports)
+        self.assertNotIn("Open</button>", reports, "a report runs where it is, it isn't sent to the Events page")
         self.assertNotIn('value="report"', page, "there is no longer a report choice in the kind list")
         self.assertRegex(re.sub(r"<[^>]+>", "", reports), r"\d+ reports")
         self.assertRegex(re.sub(r"<[^>]+>", "", jots), r"\d+ sensors and \d+ rules")
 
     @unittest.skipUnless(CHROME, "Chrome is not installed")
-    def test_a_report_selected_on_the_reports_tab_opens_its_panel_there(self):
+    def test_a_report_selected_on_the_reports_tab_runs_there_under_the_list(self):
         page = self.render("#reports/Routes%20by%20users")
-        detail = re.search(r'<aside id="jotDetail"([^>]*)>(.*?)</aside>', page, re.S)
-        self.assertNotIn("hidden", detail.group(1))
-        self.assertIn("Routes by users", re.sub(r"<[^>]+>", " ", detail.group(2)))
+        result = re.search(r'<div class="card wide result" id="reportResult"([^>]*)>(.*?)</div>\s*</div>\s*</main>', page, re.S)
+        self.assertIsNotNone(result, "the result sits on the Reports tab")
+        self.assertNotIn("hidden", result.group(1), "and it is showing")
+        text = re.sub(r"<[^>]+>", " ", result.group(2))
+        self.assertIn("Routes by users", text)
+        self.assertRegex(text, r"\d+ rows in \d+ ms", "it ran and says how long it took")
+        self.assertNotIn('aria-label="Next"', result.group(2), "with one report there is nothing to step to")
+        self.assertIn("hidden", re.search(r'<aside id="jotDetail"([^>]*)>', page).group(1), "no panel opens for a report")
+        self.assertIn('<tr class="selected"', self.page_section(page, "reportsPage"), "the report's row is marked")
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_the_views_picker_on_the_events_page_no_longer_lists_reports(self):
+        page = self.render("")
+        picker = re.search(r'<select id="reportSelect".*?</select>', page, re.S).group(0)
+        self.assertNotIn("Reports from your .jot files", picker)
+        self.assertNotIn("Routes by users", picker)
+        self.assertIn("Latest events", picker)
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_the_event_panel_links_its_sensor_to_the_jot_definition(self):
+        pk = store.run_query(self.env.db, "SELECT pk FROM events WHERE sensor = 'get-routes' LIMIT 1")["rows"][0][0]
+        page = self.render("#event/%d" % pk)
+        drawer = re.search(r'<aside id="eventDrawer"[^>]*>(.*?)</aside>', page, re.S).group(1)
+        self.assertGreaterEqual(drawer.count('href="#jots/get-routes"'), 2, "linked in the heading and in the details")
 
     @unittest.skipUnless(CHROME, "Chrome is not installed")
     def test_the_panel_has_previous_and_next_buttons_with_the_position_in_the_list(self):
@@ -1287,9 +1312,58 @@ VIA_LIBRARY = ["java.base/java.security.MessageDigest.getInstance(MessageDigest.
 LIBRARY_ONLY = ["java.base/java.security.MessageDigest.getInstance(MessageDigest.java:182)",
                 "org.hsqldb.rights.GranteeManager.getDigester(Unknown Source)",
                 "java.base/java.lang.Thread.run(Thread.java:833)"]
+# a hash made by the JVM checking a jar's signature while it loads a class for a page Jasper is compiling, in the middle of a request
+CLASSLOAD = ["java.base/java.security.MessageDigest.getInstance(MessageDigest.java:297)",
+             "java.base/java.util.jar.JarVerifier.beginEntry(JarVerifier.java:190)",
+             "java.base/java.net.URLClassLoader.defineClass(URLClassLoader.java:511)",
+             "java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:587)",
+             "org.eclipse.jdt.internal.compiler.parser.Parser.parse(Parser.java:11936)",
+             "org.apache.jasper.compiler.Compiler.compile(Compiler.java:409)",
+             "org.apache.jasper.servlet.JspServlet.service(JspServlet.java:290)",
+             "jakarta.servlet.http.HttpServlet.service(HttpServlet.java:710)",
+             "com.acme.ticketbook.ProfileController.doPost(ProfileController.java:28)"]
+# a hash made inside the JDK's TLS key derivation, because a page asked to fetch an https address
+TLS = ["java.base/java.security.MessageDigest.getInstance(MessageDigest.java:182)",
+       "java.base/com.sun.crypto.provider.HmacCore.<init>(HmacCore.java:68)",
+       "java.base/javax.crypto.Mac.getMacLength(Mac.java:413)",
+       "java.base/sun.security.ssl.HKDF.<init>(HKDF.java:65)",
+       "java.base/sun.security.ssl.SSLSecretDerivation.deriveKey(SSLSecretDerivation.java:104)",
+       "java.base/sun.net.www.protocol.https.HttpsURLConnectionImpl.connect(HttpsURLConnectionImpl.java:142)",
+       "org.apache.jsp.ssrf_jsp._jspService(ssrf_jsp.java:156)"]
+# the application asking for a hash itself, and a page opening a jar from a url, which is what an exploit does
+DIRECT_HASH = ["java.base/java.security.MessageDigest.getInstance(MessageDigest.java:182)",
+               "org.apache.jsp.hash_jsp._jspService(hash_jsp.java:80)"]
+JAR_FROM_URL = ["java.base/java.io.File.<init>(File.java:288)",
+                "java.base/sun.net.www.protocol.jar.URLJarFile.<init>(URLJarFile.java:68)",
+                "java.base/java.util.jar.JarFile.<init>(JarFile.java:339)",
+                "org.yaml.snakeyaml.constructor.Constructor$ConstructMapping.construct(Constructor.java:100)",
+                "org.apache.jsp.snakeyaml_jsp._jspService(snakeyaml_jsp.java:60)"]
+# the same TLS work, but started by the JDK loading a class from a url, which nothing in the application asked for
+TLS_FOR_CLASSLOADING = TLS[:5] + ["java.base/sun.net.www.protocol.https.HttpsURLConnectionImpl.connect(HttpsURLConnectionImpl.java:142)",
+                                  "java.base/java.net.URLClassLoader.findClass(URLClassLoader.java:420)",
+                                  "java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:587)",
+                                  "org.apache.jsp.ssrf_jsp._jspService(ssrf_jsp.java:156)"]
+# the same loader, but the application's or a library's own code ran first, like a class initializer
+CLASSLOAD_AFTER_LIBRARY = ["java.base/java.security.MessageDigest.getInstance(MessageDigest.java:297)",
+                           "org.hsqldb.rights.GranteeManager.getDigester(Unknown Source)",
+                           "java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:587)",
+                           "com.acme.ticketbook.Ticket.save(Ticket.java:40)"]
+CLASSLOAD_AFTER_APP = ["java.base/java.security.MessageDigest.getInstance(MessageDigest.java:297)",
+                       "com.acme.ticketbook.Ticket.<clinit>(Ticket.java:12)",
+                       "java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:587)",
+                       "com.acme.ticketbook.ProfileController.doPost(ProfileController.java:28)"]
 JSP = ["java.base/javax.crypto.Cipher.getInstance(Cipher.java:534)",
        "org.apache.jsp.accessE_jsp._jspService(accessE_jsp.java:249)",
        "org.apache.jasper.runtime.HttpJspBase.service(HttpJspBase.java:67)"]
+
+
+class LocalOnlyTests(unittest.TestCase):
+    def test_a_host_other_than_localhost_is_refused_without_allow_remote(self):
+        for host in ("0.0.0.0", "192.168.1.5", "::"):
+            with self.assertRaises(SystemExit) as raised, contextlib.redirect_stderr(io.StringIO()) as err:
+                server.main(["--host", host, "--db", ":memory:"])
+            self.assertEqual(2, raised.exception.code)
+            self.assertIn("--allow-remote", err.getvalue())
 
 
 class OriginTests(unittest.TestCase):
@@ -1325,15 +1399,35 @@ class OriginTests(unittest.TestCase):
                    "org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:132)"]
         self.assertEqual(c(request)[0], "app", "a request handed to a servlet is the application's")
 
+    def test_class_loading_and_page_compiling_by_the_platform_are_not_the_application(self):
+        c = lambda stack: store.classify(stack, self.PREFIXES)
+        self.assertEqual(("platform", None), c(CLASSLOAD), "the application is further out, but it did nothing")
+        self.assertEqual(c(CLASSLOAD_AFTER_LIBRARY)[0], "app", "a library's own code ran first, so it is not just the platform")
+        self.assertEqual(c(CLASSLOAD_AFTER_APP)[0], "app", "the application's class initializer ran first")
+        self.assertEqual(c(CLASSLOAD_AFTER_APP)[1], "com.acme.ticketbook.Ticket.<clinit>(Ticket.java:12)")
+
+    def test_tls_the_application_started_stays_but_tls_for_class_loading_does_not(self):
+        c = lambda stack: store.classify(stack, self.PREFIXES)
+        self.assertEqual("app", c(TLS)[0], "a page fetched an https address, so the handshake is its doing")
+        self.assertEqual(c(TLS)[1], "org.apache.jsp.ssrf_jsp._jspService(ssrf_jsp.java:156)")
+        self.assertEqual(("platform", None), c(TLS_FOR_CLASSLOADING), "the same handshake, but the JDK was loading a class")
+        self.assertEqual("app", c(DIRECT_HASH)[0])
+        self.assertEqual("app", c(JAR_FROM_URL)[0], "a page opening a jar from a url is worth seeing")
+        direct = ["java.base/java.lang.ClassLoader.defineClass(ClassLoader.java:1)", "org.apache.jsp.a_jsp._jspService(a.java:1)"]
+        self.assertEqual("app", c(direct)[0], "the call the sensor watches is never the work, a page can ask for it directly")
+
     def test_without_packages_anything_but_the_platform_is_the_application(self):
         self.assertEqual(store.classify(LIBRARY_ONLY)[0], "app")
         self.assertEqual(store.classify(JDK_ONLY)[0], "platform")
 
     def test_events_are_tagged_when_stored(self):
         ing = self.ingestor()
-        self.write(event(1, stack=JDK_ONLY), event(2, stack=VIA_LIBRARY), event(3, stack=LIBRARY_ONLY), event(4, stack=JSP))
+        self.write(event(1, stack=JDK_ONLY), event(2, stack=VIA_LIBRARY), event(3, stack=LIBRARY_ONLY), event(4, stack=JSP),
+                   event(5, stack=CLASSLOAD), event(6, stack=TLS), event(7, stack=DIRECT_HASH),
+                   event(8, stack=TLS_FOR_CLASSLOADING))
         ing.poll()
-        self.assertEqual(self.origins(), {1: "platform", 2: "app", 3: "library", 4: "app"})
+        self.assertEqual(self.origins(), {1: "platform", 2: "app", 3: "library", 4: "app", 5: "platform", 6: "app", 7: "app",
+                                          8: "platform"})
 
     def test_app_only_is_on_by_default_and_hides_only_observed_events_without_an_app_frame(self):
         ing = self.ingestor()
@@ -1674,6 +1768,25 @@ class GraphTests(unittest.TestCase):
         g, nodes, edges = self.graph(route="/app/twice.jsp")
         self.assertEqual(2, edges[("effect:get-ciphers", "effect:get-hashes")])
 
+    def test_every_node_and_edge_says_which_lines_use_it(self):
+        # one request does a hash and a cipher, another only the hash, and they share the hash
+        for trace, base, route, ciphers in ((80, 80, "/app/one.jsp", True), (81, 90, "/app/two.jsp", False)):
+            self.env.write(event(base, sensor="get-routes", capture=route, trace=trace, stack=[self.SERVLET, self.FILTER]),
+                           event(base + 1, sensor="get-hashes", capture="MD5", trace=trace, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
+            if ciphers:
+                self.env.write(event(base + 2, sensor="get-ciphers", capture="AES", trace=trace,
+                                     stack=["java.base/a.B.c(B.java:1)", self.ENCRYPT, self.GET, self.FILTER]))
+        self.env.ingestor.poll()
+        g = self.app.graph()
+        lines = {n["id"]: set(n["lines"]) for n in g["nodes"]}
+        edge_lines = {(e["from"], e["to"]): set(e["lines"]) for e in g["edges"]}
+        one, two = lines["route:/app/one.jsp"], lines["route:/app/two.jsp"]
+        self.assertTrue(one and two and not one & two, "each route is its own kind of request")
+        self.assertTrue((one | two) <= lines["effect:get-hashes"], "both used the hash")
+        cipher_edge = edge_lines[("code:com.acme.Ticket.encrypt", "effect:get-ciphers")]
+        self.assertTrue(one & cipher_edge and not two & cipher_edge, "only the first request reached the cipher")
+        self.assertTrue(lines["effect:get-ciphers"] >= one and not (lines["effect:get-ciphers"] & two))
+
     def test_request_details_are_left_out_unless_asked_for(self):
         g, nodes, edges = self.graph()
         self.assertNotIn("effect:get-users", nodes)
@@ -1743,6 +1856,9 @@ class GraphTests(unittest.TestCase):
         self.assertIn("route out", page)
         self.assertNotIn(">null<", page)
         self.assertRegex(page, r'class="node effect blocked"')
+        self.assertRegex(page, r'<div id="graphTip"[^>]* hidden', "the hover box is there and hidden until a node is hovered")
+        self.assertNotRegex(page, r'<g class="node[^>]*><title>', "the hover box replaces the browser's own tooltip")
+        self.assertNotRegex(page, r'<svg class="graph"[^>]*><title>', "and a route's graph has no tooltip of its own")
 
     @unittest.skipUnless(CHROME, "Chrome is not installed")
     def test_a_picked_node_follows_its_paths_and_dims_the_rest(self):
@@ -1754,8 +1870,22 @@ class GraphTests(unittest.TestCase):
         for expected in ("get-ciphers", "AES", "DES", "Comes from", "Ticket.encrypt", "Show these events"):
             self.assertIn(expected, text)
         self.assertNotIn("null", text.lower())
-        self.assertRegex(page, r'class="node route off"', "a route that does not lead there is dimmed")
+        self.assertNotIn("routegraph off", page, "only the route the node is in is lit, others are left alone")
         self.assertRegex(page, r'class="edge on"')
+
+    def test_search_can_be_limited_to_one_route(self):
+        every = self.app.search("get-ciphers")["matches"]
+        here = self.app.search('get-ciphers route:"/app/list.jsp"')["matches"]
+        elsewhere = self.app.search('get-ciphers -route:"/app/list.jsp"')["matches"]
+        self.assertTrue(0 < here <= every)
+        self.assertEqual(every, here + elsewhere, "an event is in one route or not")
+        self.assertEqual(0, self.app.search("route:/nowhere")["matches"])
+        self.assertEqual(0, self.app.search("route:\"'; DROP TABLE events_raw;--\"")["matches"])
+
+    def test_rule_events_count_against_their_rule(self):
+        self.assertEqual("cve-x", store.rule_name("cve-x-blocked"))
+        self.assertEqual("cve-x", store.rule_name("cve-x-entered"))
+        self.assertEqual("get-ciphers", store.rule_name("get-ciphers"))
 
     def test_over_http(self):
         httpd = server.make_server(self.app, "127.0.0.1", 0)
@@ -1766,6 +1896,15 @@ class GraphTests(unittest.TestCase):
         get = lambda path: urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), headers={"Host": "127.0.0.1:%d" % port}))
         with get("/api/graph") as r:
             self.assertTrue(json.load(r)["nodes"])
+        with get("/api/graph?split=1") as r:
+            graphs = json.load(r)["graphs"]
+            routes = [g["route"] for g in graphs]
+            self.assertTrue(graphs and all(g["nodes"] for g in graphs))
+            self.assertEqual(sorted(routes, key=lambda x: (x == store.NO_REQUEST, x.lower())), routes)
+            for g in graphs:   # a route's graph has only its own route in it
+                self.assertEqual([g["route"]], [n["label"] for n in g["nodes"] if n["kind"] == "route"])
+                route = next(n for n in g["nodes"] if n["kind"] == "route")
+                self.assertEqual(g["requests"], route["events"], "a route counts requests, so it agrees with the route's own total")
         with get("/api/graph?route=%27%3B%20DROP%20TABLE%20events_raw%3B--") as r:
             self.assertEqual([], json.load(r)["nodes"])
         with get("/graph.js") as r:
