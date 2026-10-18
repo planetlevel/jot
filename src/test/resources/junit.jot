@@ -3,10 +3,10 @@
 
 sensors: 
 
-- name: "banned-methods"
-  description: "Fails any JUnit tests that cause banned methods to be invoked"
+- name: banned-methods
+  description: Fails any JUnit tests that cause banned methods to be invoked
   methods:
-  - "java.lang.ProcessBuilder.<init>"
+  - java.lang.ProcessBuilder.<init>
   scopes:
-  - "org.junit.platform.commons.util.ReflectionUtils.invokeMethod"
-  exception: "Banned methods are prohibited by Security Directive 27B/6" 
+  - org.junit.platform.commons.util.ReflectionUtils.invokeMethod
+  exception: Banned methods are prohibited by Security Directive 27B/6 

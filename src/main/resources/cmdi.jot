@@ -3,21 +3,21 @@
 
 sensors: 
 
-- name: "get-routes"
-  description: "Identifies the route for this HTTP request"
+- name: get-routes
+  description: Identifies the route for this HTTP request
   methods:
-  - "javax.servlet.Servlet.service"
-  - "jakarta.servlet.Servlet.service"
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#P0.getRequestURI()"
 
-- name: "block-native-process"
-  description: "Blocks attempts to start native processes"
+- name: block-native-process
+  description: Blocks attempts to start native processes
   methods:
-  - "java.lang.ProcessBuilder.<init>"
+  - java.lang.ProcessBuilder.<init>
   scopes:
-  - "javax.servlet.Servlet.service"
-  - "jakarta.servlet.Servlet.service"
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#ARGS"
-  exception: "Attempt to create ProcessBuilder from within Servlet.service() prevented 'block-native-process' JOT sensor"
+  exception: Attempt to create ProcessBuilder from within Servlet.service() prevented 'block-native-process' JOT sensor

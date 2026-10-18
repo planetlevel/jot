@@ -1,30 +1,30 @@
 sensors:
-- name: "file-created"
+- name: file-created
   methods:
-  - "java.io.File.<init>"
+  - java.io.File.<init>
   captures:
   - "#ARGS"
   matchers:
-  - "var/data"
-- name: "file-path"
+  - var/data
+- name: file-path
   methods:
-  - "java.io.File.<init>"
+  - java.io.File.<init>
   captures:
   - "#OBJ.getCanonicalPath()"
   matchers:
-  - "var/data"
-- name: "digest-requested"
+  - var/data
+- name: digest-requested
   methods:
-  - "java.security.MessageDigest.getInstance"
+  - java.security.MessageDigest.getInstance
   captures:
   - "#P0"
-- name: "process-created"
+- name: process-created
   methods:
-  - "java.lang.ProcessBuilder.<init>"
+  - java.lang.ProcessBuilder.<init>
   captures:
   - "#ARGS"
-- name: "cipher-requested"
+- name: cipher-requested
   methods:
-  - "javax.crypto.Cipher.getInstance"
+  - javax.crypto.Cipher.getInstance
   captures:
   - "#P0"

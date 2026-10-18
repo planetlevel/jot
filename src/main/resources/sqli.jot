@@ -3,22 +3,22 @@
 
 sensors: 
 
-- name: "get-routes"
-  description: "Identifies the route for this HTTP request"
+- name: get-routes
+  description: Identifies the route for this HTTP request
   methods:
-  - "javax.servlet.Servlet.service"
-  - "jakarta.servlet.Servlet.service"
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#P0.getRequestURI()"
 
-- name: "get-unsafe-queries"
-  description: "Identifies unparameterized database queries"
+- name: get-unsafe-queries
+  description: Identifies unparameterized database queries
   methods:
-  - "java.sql.Statement.execute"
-  - "java.sql.Statement.addBatch"
-  - "java.sql.Statement.executeQuery"
-  - "java.sql.Statement.executeUpdate"
+  - java.sql.Statement.execute
+  - java.sql.Statement.addBatch
+  - java.sql.Statement.executeQuery
+  - java.sql.Statement.executeUpdate
   excludes:
-  - "java.sql.PreparedStatement"   # not vulnerable subclass
+  - java.sql.PreparedStatement   # not vulnerable subclass
   captures:
   - "#ARGS"

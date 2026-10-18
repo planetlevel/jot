@@ -9,57 +9,57 @@
 sensors:
 
 # A web request must never start an operating system process.
-- name: "block-native-process"
-  description: "Blocks attempts to start native processes from a web request"
+- name: block-native-process
+  description: Blocks attempts to start native processes from a web request
   methods:
-  - "java.lang.ProcessBuilder.<init>"
+  - java.lang.ProcessBuilder.<init>
   scopes:
-  - "javax.servlet.Servlet.service"
-  - "jakarta.servlet.Servlet.service"
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#ARGS"
-  exception: "Attempt to create a process from within Servlet.service() prevented by JOT rule 'block-native-process'"
+  exception: Attempt to create a process from within Servlet.service() prevented by JOT rule 'block-native-process'
 
 # A web request must never deserialize objects.
-- name: "block-deserialization"
-  description: "Blocks attempts to deserialize objects from a web request"
+- name: block-deserialization
+  description: Blocks attempts to deserialize objects from a web request
   methods:
-  - "java.io.ObjectInputStream.readObject"
-  - "java.io.ObjectInputStream.readUnshared"
+  - java.io.ObjectInputStream.readObject
+  - java.io.ObjectInputStream.readUnshared
   scopes:
-  - "javax.servlet.Servlet.service"
-  - "jakarta.servlet.Servlet.service"
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#ARGS"
-  exception: "Attempt to deserialize an object from within Servlet.service() prevented by JOT rule 'block-deserialization'"
+  exception: Attempt to deserialize an object from within Servlet.service() prevented by JOT rule 'block-deserialization'
 
 # The microsandbox for expression injection. Evaluating an expression is allowed, but while one is being
 # evaluated it can't start a process or open a socket.
-- name: "sandbox-expressions"
-  description: "Stops expressions from starting processes or opening sockets while they are evaluated"
+- name: sandbox-expressions
+  description: Stops expressions from starting processes or opening sockets while they are evaluated
   methods:
-  - "java.lang.ProcessBuilder.<init>"
-  - "java.net.Socket.<init>"
+  - java.lang.ProcessBuilder.<init>
+  - java.net.Socket.<init>
   scopes:
-  - "javax.el.ValueExpression.getValue"
-  - "jakarta.el.ValueExpression.getValue"
+  - javax.el.ValueExpression.getValue
+  - jakarta.el.ValueExpression.getValue
   captures:
   - "#ARGS"
-  exception: "Expression language sandbox escape prevented by JOT rule 'sandbox-expressions'"
+  exception: Expression language sandbox escape prevented by JOT rule 'sandbox-expressions'
 
 # The pattern based alternative, which looks for attack text in the expression itself. It is easier to get
 # around than the sandbox above. Add "protect: false" to stage it as report only, and the dashboard can then
 # promote it to block.
-- name: "block-nasty-expressions"
-  description: "Blocks expressions that contain reflection or process APIs"
+- name: block-nasty-expressions
+  description: Blocks expressions that contain reflection or process APIs
   methods:
-  - "javax.el.ExpressionFactory.createValueExpression"
-  - "jakarta.el.ExpressionFactory.createValueExpression"
+  - javax.el.ExpressionFactory.createValueExpression
+  - jakarta.el.ExpressionFactory.createValueExpression
   captures:
   - "#P1"
   matchers:
-  - "\\.class"
-  - "getRuntime"
-  - "ProcessBuilder"
-  - "forName"
-  exception: "Suspicious expression detected by JOT rule 'block-nasty-expressions'"
+  - \.class
+  - getRuntime
+  - ProcessBuilder
+  - forName
+  exception: Suspicious expression detected by JOT rule 'block-nasty-expressions'

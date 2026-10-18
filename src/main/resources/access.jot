@@ -3,40 +3,40 @@
 
 sensors:
 
-- name: "get-routes"
-  description: "Identifies the route for this HTTP request"
+- name: get-routes
+  description: Identifies the route for this HTTP request
   methods:
-  - "javax.servlet.Servlet.service"
-  - "jakarta.servlet.Servlet.service"
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#P0.getRequestURI()"
 
-- name: "get-users"
-  description: "Identifies user names"
+- name: get-users
+  description: Identifies user names
   methods:
-  - "javax.servlet.Servlet.service"
-  - "jakarta.servlet.Servlet.service"
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#P0.getRemoteUser() ?: \"Guest\""
 
-- name: "get-role"
-  description: "Identifies roles"
+- name: get-role
+  description: Identifies roles
   methods:
-  - "javax.servlet.ServletRequest.isUserInRole"
-  - "jakarta.servlet.ServletRequest.isUserInRole"
+  - javax.servlet.ServletRequest.isUserInRole
+  - jakarta.servlet.ServletRequest.isUserInRole
   captures:
   - "#P0"
     
   
 reports:
 
- - name: "Test Coverage Matrix"
-   type: "compare"
-   rows: "get-routes"
-   cols: "get-users"
+ - name: Test Coverage Matrix
+   type: compare
+   rows: get-routes
+   cols: get-users
    
- - name: "Access Control Matrix"
-   type: "compare"
-   rows: "get-routes"
-   cols: "get-role"
+ - name: Access Control Matrix
+   type: compare
+   rows: get-routes
+   cols: get-role
    

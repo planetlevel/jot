@@ -7,109 +7,109 @@ sensors:
 
 ##### the application #####
 
-- name: "get-routes"
-  description: "Identifies the route for this HTTP request"
+- name: get-routes
+  description: Identifies the route for this HTTP request
   methods:
-  - "javax.servlet.Servlet.service"
-  - "jakarta.servlet.Servlet.service"
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#P0.getRequestURI()"
 
-- name: "get-users"
-  description: "Identifies user names"
+- name: get-users
+  description: Identifies user names
   methods:
-  - "javax.servlet.Servlet.service"
-  - "jakarta.servlet.Servlet.service"
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#P0.getRemoteUser()==null ? \"Guest\" : #P0.getRemoteUser()"
 
-- name: "get-role"
-  description: "Identifies roles"
+- name: get-role
+  description: Identifies roles
   methods:
-  - "javax.servlet.ServletRequest.isUserInRole"
-  - "jakarta.servlet.ServletRequest.isUserInRole"
+  - javax.servlet.ServletRequest.isUserInRole
+  - jakarta.servlet.ServletRequest.isUserInRole
   captures:
   - "#P0"
 
-- name: "get-role-membership"
-  description: "Figures out which users have which roles"
+- name: get-role-membership
+  description: Figures out which users have which roles
   methods:
-  - "javax.servlet.ServletRequest.isUserInRole"
-  - "jakarta.servlet.ServletRequest.isUserInRole"
+  - javax.servlet.ServletRequest.isUserInRole
+  - jakarta.servlet.ServletRequest.isUserInRole
   captures:
   - "#RET ? #P0 : \"null\""
   matchers:
   - "!null"
 
-- name: "get-received-param-names"
-  description: "Identifies parameter names used in HTTP requests"
+- name: get-received-param-names
+  description: Identifies parameter names used in HTTP requests
   methods:
-  - "javax.servlet.Servlet.service"
-  - "jakarta.servlet.Servlet.service"
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#P0.getParameterNames()"
   matchers:
   - "!null"
 
-- name: "get-accessed-param-names"
-  description: "Identifies parameter names referenced by the app"
+- name: get-accessed-param-names
+  description: Identifies parameter names referenced by the app
   methods:
-  - "javax.servlet.ServletRequest.getParameter"
-  - "jakarta.servlet.ServletRequest.getParameter"
-  - "javax.servlet.ServletRequest.getParameterValues"
-  - "jakarta.servlet.ServletRequest.getParameterValues"
+  - javax.servlet.ServletRequest.getParameter
+  - jakarta.servlet.ServletRequest.getParameter
+  - javax.servlet.ServletRequest.getParameterValues
+  - jakarta.servlet.ServletRequest.getParameterValues
   captures:
   - "#P0"
   matchers:
   - "!null"
 
-- name: "get-redirects"
-  description: "Extracts any response redirects in this app"
+- name: get-redirects
+  description: Extracts any response redirects in this app
   methods:
-  - "javax.servlet.ServletResponse.sendRedirect"
-  - "jakarta.servlet.ServletResponse.sendRedirect"
+  - javax.servlet.ServletResponse.sendRedirect
+  - jakarta.servlet.ServletResponse.sendRedirect
   captures:
   - "#P0"
   matchers:
   - "!null"
 
-- name: "get-forwards"
-  description: "Extracts any request forwards in this app"
+- name: get-forwards
+  description: Extracts any request forwards in this app
   methods:
-  - "javax.servlet.ServletRequest.getRequestDispatcher"
-  - "jakarta.servlet.ServletRequest.getRequestDispatcher"
-  - "javax.servlet.ServletContext.getRequestDispatcher"
-  - "jakarta.servlet.ServletContext.getRequestDispatcher"
+  - javax.servlet.ServletRequest.getRequestDispatcher
+  - jakarta.servlet.ServletRequest.getRequestDispatcher
+  - javax.servlet.ServletContext.getRequestDispatcher
+  - jakarta.servlet.ServletContext.getRequestDispatcher
   captures:
   - "#P0"
   matchers:
   - "!null"
 
-- name: "get-filters"
-  description: "Extracts the filters in this app"
+- name: get-filters
+  description: Extracts the filters in this app
   methods:
-  - "javax.servlet.ServletContext.addFilter"
-  - "jakarta.servlet.ServletContext.addFilter"
+  - javax.servlet.ServletContext.addFilter
+  - jakarta.servlet.ServletContext.addFilter
   captures:
   - "#RET.getUrlPatternMappings()"
   matchers:
   - "!null"
 
-- name: "get-servlets"
-  description: "Identifies the servlets in this app"
+- name: get-servlets
+  description: Identifies the servlets in this app
   methods:
-  - "javax.servlet.ServletContext.addServlet"
-  - "jakarta.servlet.ServletContext.addServlet"
+  - javax.servlet.ServletContext.addServlet
+  - jakarta.servlet.ServletContext.addServlet
   captures:
   - "#RET.getMappings()"
   matchers:
   - "!null"
 
-- name: "get-cache-header"
-  description: "Identifies whether cache header is set"
+- name: get-cache-header
+  description: Identifies whether cache header is set
   methods:
-  - "javax.servlet.ServletResponse.setHeader"
-  - "jakarta.servlet.ServletResponse.setHeader"
+  - javax.servlet.ServletResponse.setHeader
+  - jakarta.servlet.ServletResponse.setHeader
   captures:
   - "#P0.equalsIgnoreCase(\"Cache-Control\")?#P1:null"
   matchers:
@@ -117,57 +117,57 @@ sensors:
 
 ##### security relevant behavior #####
 
-- name: "get-ciphers"
-  description: "Identifies encryption ciphers"
+- name: get-ciphers
+  description: Identifies encryption ciphers
   methods:
-  - "javax.crypto.Cipher.getInstance"
+  - javax.crypto.Cipher.getInstance
   captures:
   - "#P0"
   matchers:
   - "!null"
 
-- name: "get-hashes"
-  description: "Identifies hash algorithm usage"
+- name: get-hashes
+  description: Identifies hash algorithm usage
   methods:
-  - "java.security.MessageDigest.getInstance"
+  - java.security.MessageDigest.getInstance
   captures:
   - "#P0"
 
-- name: "native-libraries"
-  description: "Identifies the use of native libraries"
+- name: native-libraries
+  description: Identifies the use of native libraries
   methods:
-  - "java.lang.System.load"
-  - "java.lang.System.loadLibrary"
-  - "java.lang.System.mapLibraryName"
+  - java.lang.System.load
+  - java.lang.System.loadLibrary
+  - java.lang.System.mapLibraryName
   captures:
   - "#P0"
   matchers:
   - "!null"
 
-- name: "get-unsafe-queries"
-  description: "Identifies unparameterized database queries"
+- name: get-unsafe-queries
+  description: Identifies unparameterized database queries
   methods:
-  - "java.sql.Statement.execute"
-  - "java.sql.Statement.addBatch"
-  - "java.sql.Statement.executeQuery"
-  - "java.sql.Statement.executeUpdate"
+  - java.sql.Statement.execute
+  - java.sql.Statement.addBatch
+  - java.sql.Statement.executeQuery
+  - java.sql.Statement.executeUpdate
   excludes:
-  - "java.sql.PreparedStatement"   # these calls are harmless in PreparedStatement
+  - java.sql.PreparedStatement   # these calls are harmless in PreparedStatement
   captures:
   - "#ARGS"
 
-- name: "get-safe-queries"
-  description: "Identifies parameterized database queries"
+- name: get-safe-queries
+  description: Identifies parameterized database queries
   methods:
-  - "java.sql.Connection.prepareCall"
-  - "java.sql.Connection.prepareStatement"
+  - java.sql.Connection.prepareCall
+  - java.sql.Connection.prepareStatement
   captures:
   - "#ARGS"
 
-- name: "get-files"
-  description: "Identifies the use of files outside the application and the server"
+- name: get-files
+  description: Identifies the use of files outside the application and the server
   methods:
-  - "java.io.File.<init>"
+  - java.io.File.<init>
   captures:
   - "#OBJ.getCanonicalPath()"
   matchers:
@@ -178,10 +178,10 @@ sensors:
   - "!/Cellar/"
   - "!/candidates/java/"
 
-- name: "get-sockets"
-  description: "Identifies the use of sockets"
+- name: get-sockets
+  description: Identifies the use of sockets
   methods:
-  - "java.net.Socket.<init>"
+  - java.net.Socket.<init>
   captures:
   - "\"\"+#P0+\":\"+#P1"     # ""+#P0 is a shorthand String conversion
   matchers:

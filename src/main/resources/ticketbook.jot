@@ -3,45 +3,45 @@
 
 sensors:
 
-- name: "get-ciphers"
-  description: "Identifies encryption ciphers"
+- name: get-ciphers
+  description: Identifies encryption ciphers
   methods:
-  - "javax.crypto.Cipher.getInstance"
+  - javax.crypto.Cipher.getInstance
   captures:
   - "#P0"
   matchers:
   - "!null"
 
 
-- name: "native-libraries"
-  description: "Identifies the use of native libraries"
+- name: native-libraries
+  description: Identifies the use of native libraries
   methods:
-  - "java.lang.System.load"
-  - "java.lang.System.loadLibrary"
-  - "java.lang.System.mapLibraryName"
+  - java.lang.System.load
+  - java.lang.System.loadLibrary
+  - java.lang.System.mapLibraryName
   captures:
   - "#P0"
   matchers:
   - "!null"
   
 
-- name: "get-unsafe-queries"
-  description: "Identifies unparameterized database queries"
+- name: get-unsafe-queries
+  description: Identifies unparameterized database queries
   methods:
-  - "java.sql.Statement.execute"
-  - "java.sql.Statement.addBatch"
-  - "java.sql.Statement.executeQuery"
-  - "java.sql.Statement.executeUpdate"
+  - java.sql.Statement.execute
+  - java.sql.Statement.addBatch
+  - java.sql.Statement.executeQuery
+  - java.sql.Statement.executeUpdate
   excludes:
-  - "java.sql.PreparedStatement"   #these calls are harmless in PreparedStatement
+  - java.sql.PreparedStatement   #these calls are harmless in PreparedStatement
   captures:
   - "#ARGS"
 
 
-- name: "get-files"
-  description: "Identifies the use of Files outside certain paths"
+- name: get-files
+  description: Identifies the use of Files outside certain paths
   methods:
-  - "java.io.File.<init>"
+  - java.io.File.<init>
   captures:
   - "#OBJ.getCanonicalPath()"
   matchers:
@@ -50,10 +50,10 @@ sensors:
   - "!eclipse\\-workspace"
 
 
-- name: "get-sockets"
-  description: "Identifies the use of sockets"
+- name: get-sockets
+  description: Identifies the use of sockets
   methods:
-  - "java.net.Socket.<init>"
+  - java.net.Socket.<init>
   captures:
   - "\"\"+#P0+\":\"+#P1"     # using ""+#P0 is a shorthand String conversion
   debug: "true"
@@ -62,148 +62,148 @@ sensors:
   - "!\\:8080"               # any port that's not 8080
 
 
-- name: "route"
-  description: "Identifies the route for this HTTP request"
+- name: route
+  description: Identifies the route for this HTTP request
   methods:
-  - "javax.servlet.Servlet.service"
-  - "jakarta.servlet.Servlet.service"
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#P0.getRequestURI()"
 
   
-- name: "check-role"
-  description: "Identifies roles"
+- name: check-role
+  description: Identifies roles
   methods:
-  - "javax.servlet.ServletRequest.isUserInRole"
-  - "jakarta.servlet.ServletRequest.isUserInRole"
+  - javax.servlet.ServletRequest.isUserInRole
+  - jakarta.servlet.ServletRequest.isUserInRole
   captures:
   - "#P0"
     
   
-- name: "get-parameter"
-  description: "Identifies parameter names referenced by the app"
+- name: get-parameter
+  description: Identifies parameter names referenced by the app
   methods:
-  - "javax.servlet.ServletRequest.getParameter"
-  - "jakarta.servlet.ServletRequest.getParameter"
-  - "javax.servlet.ServletRequest.getParameterValues"
-  - "jakarta.servlet.ServletRequest.getParameterValues"
-  - "javax.servlet.ServletRequest.getQueryString"
-  - "jakarta.servlet.ServletRequest.getQueryString"
+  - javax.servlet.ServletRequest.getParameter
+  - jakarta.servlet.ServletRequest.getParameter
+  - javax.servlet.ServletRequest.getParameterValues
+  - jakarta.servlet.ServletRequest.getParameterValues
+  - javax.servlet.ServletRequest.getQueryString
+  - jakarta.servlet.ServletRequest.getQueryString
   captures:
   - "#P0 + \":\" + #RET"
   matchers:
   - "!null"
  
-- name: "get-header"
-  description: "Identifies parameter names referenced by the app"
+- name: get-header
+  description: Identifies parameter names referenced by the app
   methods:
-  - "javax.servlet.ServletRequest.getHeader"
-  - "jakarta.servlet.ServletRequest.getHeader"
-  - "javax.servlet.ServletRequest.getHeaders"
-  - "jakarta.servlet.ServletRequest.getHeaders"
+  - javax.servlet.ServletRequest.getHeader
+  - jakarta.servlet.ServletRequest.getHeader
+  - javax.servlet.ServletRequest.getHeaders
+  - jakarta.servlet.ServletRequest.getHeaders
   captures:
   - "#P0 + \":\" + #RET"
   matchers:
   - "!null"
  
-- name: "get-header"
-  description: "Identifies parameter names referenced by the app"
+- name: get-header
+  description: Identifies parameter names referenced by the app
   methods:
-  - "javax.servlet.ServletRequest.getCookies"
-  - "jakarta.servlet.ServletRequest.getCookies"
+  - javax.servlet.ServletRequest.getCookies
+  - jakarta.servlet.ServletRequest.getCookies
   captures:
   - "#P0 + \":\" + #RET"
   matchers:
   - "!null"
  
-- name: "multipart"
-  description: "Identifies parameter names referenced by the app"
+- name: multipart
+  description: Identifies parameter names referenced by the app
   methods:
-  - "javax.servlet.ServletRequest.getPart"
-  - "jakarta.servlet.ServletRequest.getPart"
-  - "javax.servlet.ServletRequest.getParts"
-  - "jakarta.servlet.ServletRequest.getParts"
+  - javax.servlet.ServletRequest.getPart
+  - jakarta.servlet.ServletRequest.getPart
+  - javax.servlet.ServletRequest.getParts
+  - jakarta.servlet.ServletRequest.getParts
   captures:
   - "#P0"
   matchers:
   - "!null"
 
 
-- name: "send-redirect"
-  description: "Extracts any response redirects in this app"
+- name: send-redirect
+  description: Extracts any response redirects in this app
   methods:
-  - "javax.servlet.ServletResponse.sendRedirect"
-  - "jakarta.servlet.ServletResponse.sendRedirect"
+  - javax.servlet.ServletResponse.sendRedirect
+  - jakarta.servlet.ServletResponse.sendRedirect
   captures:
   - "#P0"
   matchers:
   - "!null"
 
 
-- name: "request-forward"
-  description: "Extracts any request forwards in this app"
+- name: request-forward
+  description: Extracts any request forwards in this app
   methods:
-  - "javax.servlet.ServletRequest.getRequestDispatcher"
-  - "jakarta.servlet.ServletRequest.getRequestDispatcher"
-  - "javax.servlet.ServletContext.getRequestDispatcher"
-  - "jakarta.servlet.ServletContext.getRequestDispatcher"
+  - javax.servlet.ServletRequest.getRequestDispatcher
+  - jakarta.servlet.ServletRequest.getRequestDispatcher
+  - javax.servlet.ServletContext.getRequestDispatcher
+  - jakarta.servlet.ServletContext.getRequestDispatcher
   captures:
   - "#P0"
   matchers:
   - "!null"
 
 
-- name: "set-header"
-  description: "Identifies whether headers are being set"
+- name: set-header
+  description: Identifies whether headers are being set
   methods:
-  - "javax.servlet.ServletResponse.setHeader"
-  - "jakarta.servlet.ServletResponse.setHeader"
+  - javax.servlet.ServletResponse.setHeader
+  - jakarta.servlet.ServletResponse.setHeader
   captures:
   - "#P0 + \":\" + #P1"
   matchers:
   - "!null"
 
 
-- name: "credit-card"
-  description: "Identifies PII creation"
+- name: credit-card
+  description: Identifies PII creation
   methods:
-  - "javax.servlet.ServletRequest.getParameter"
-  - "jakarta.servlet.ServletRequest.getParameter"
-  - "javax.servlet.ServletRequest.getParameterValues"
-  - "jakarta.servlet.ServletRequest.getParameterValues"
+  - javax.servlet.ServletRequest.getParameter
+  - jakarta.servlet.ServletRequest.getParameter
+  - javax.servlet.ServletRequest.getParameterValues
+  - jakarta.servlet.ServletRequest.getParameterValues
   scopes:
-  - "javax.servlet.Servlet.service"
-  - "jakarta.servlet.Servlet.service"
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#P0"
   matchers:
-  - "(?!000|666)[0-8][0-9]{2}-(?!00)[0-9]{2}-(?!0000)[0-9]{4}"
-  - "(?<visa>4[0-9]{12}(?:[0-9]{3})?)"
-  - "(?<mastercard>5[1-5][0-9]{14})"
-  - "(?<discover>6(?:011|5[0-9]{2})[0-9]{12})"
-  - "(?<amex>3[47][0-9]{13})"
-  - "(?<diners>3(?:0[0-5]|[68][0-9])?[0-9]{11})"
-  - "(?<jcb>(?:2131|1800|35[0-9]{3})[0-9]{11})"
+  - (?!000|666)[0-8][0-9]{2}-(?!00)[0-9]{2}-(?!0000)[0-9]{4}
+  - (?<visa>4[0-9]{12}(?:[0-9]{3})?)
+  - (?<mastercard>5[1-5][0-9]{14})
+  - (?<discover>6(?:011|5[0-9]{2})[0-9]{12})
+  - (?<amex>3[47][0-9]{13})
+  - (?<diners>3(?:0[0-5]|[68][0-9])?[0-9]{11})
+  - (?<jcb>(?:2131|1800|35[0-9]{3})[0-9]{11})
 
-- name: "native-process"
-  description: "Detects attempts to start native processes"
+- name: native-process
+  description: Detects attempts to start native processes
   methods:
-  - "java.lang.ProcessBuilder.<init>"
+  - java.lang.ProcessBuilder.<init>
   scopes:
-  - "javax.servlet.Servlet.service"
-  - "jakarta.servlet.Servlet.service"
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#ARGS"
 
 
-- name: "expression-language"
-  description: "Detects harmful methods from being used during expresssion evaluation"
+- name: expression-language
+  description: Detects harmful methods from being used during expresssion evaluation
   methods:
-  - "javax.el.ValueExpression.getValue"
-  - "jakarta.el.ValueExpression.getValue"
+  - javax.el.ValueExpression.getValue
+  - jakarta.el.ValueExpression.getValue
   scopes:
-  - "javax.servlet.Servlet.service"
-  - "jakarta.servlet.Servlet.service"
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#OBJ.getExpressionString()"
 

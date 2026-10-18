@@ -4,63 +4,63 @@
   
 reports:
 
- - name: "Test Coverage Matrix"
-   type: "compare"
-   rows: "get-routes"
-   cols: "get-users"
+ - name: Test Coverage Matrix
+   type: compare
+   rows: get-routes
+   cols: get-users
    
- - name: "Access Control Matrix"
-   type: "compare"
-   rows: "get-routes"
-   cols: "get-role"
+ - name: Access Control Matrix
+   type: compare
+   rows: get-routes
+   cols: get-role
    
- - name: "Role Membership"
-   type: "compare"
-   rows: "get-users"
-   cols: "get-role-membership"   
+ - name: Role Membership
+   type: compare
+   rows: get-users
+   cols: get-role-membership   
    
- - name: "Cache Headers"
-   type: "table"
-   rows: "get-routes"
-   cols: "get-cache-header"
+ - name: Cache Headers
+   type: table
+   rows: get-routes
+   cols: get-cache-header
    
- - name: "Encryption Algorithms"
-   type: "compare"
-   rows: "get-routes"
-   cols: "get-ciphers"  
+ - name: Encryption Algorithms
+   type: compare
+   rows: get-routes
+   cols: get-ciphers  
    
- - name: "Unauthorized Files"
-   type: "table"
-   rows: "get-routes"
-   cols: "get-files"
+ - name: Unauthorized Files
+   type: table
+   rows: get-routes
+   cols: get-files
    
- - name: "Database Queries"
-   type: "table"
-   rows: "get-routes"
-   cols: "get-unsafe-queries"
+ - name: Database Queries
+   type: table
+   rows: get-routes
+   cols: get-unsafe-queries
    
- - name: "Encryption Users"
-   type: "compare"
-   rows: "get-users"
-   cols: "get-ciphers"
+ - name: Encryption Users
+   type: compare
+   rows: get-users
+   cols: get-ciphers
       
- - name: "HTTP Parameters"
-   type: "table"
-   rows: "get-routes"
-   cols: "get-accessed-param-names, get-received-param-names"
+ - name: HTTP Parameters
+   type: table
+   rows: get-routes
+   cols: get-accessed-param-names, get-received-param-names
    
- - name: "Request Forwards"
-   type: "table"
-   rows: "get-routes"
-   cols: "get-forwards"
+ - name: Request Forwards
+   type: table
+   rows: get-routes
+   cols: get-forwards
    
     
    
 
- - name: "Encryption Usage"
-   type: "list"
-   cols: "get-ciphers"
+ - name: Encryption Usage
+   type: list
+   cols: get-ciphers
 
- - name: "Hash Usage"
-   type: "list"
-   cols: "get-hashes"
+ - name: Hash Usage
+   type: list
+   cols: get-hashes

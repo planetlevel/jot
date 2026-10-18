@@ -31,6 +31,8 @@ import os
 import re
 import sys
 
+from unquote_jot import needs_quotes
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_VULNPOINT = os.path.join(HERE, "..", "..", "vulnpoint")
 
@@ -40,8 +42,9 @@ SKIP = ("java.lang.ProcessImpl.forkAndExec", "java.lang.ProcessImpl.start")
 
 
 def q(text):
-    """A YAML double quoted string. JSON strings are valid YAML."""
-    return json.dumps(text, ensure_ascii=False)
+    """A YAML value, plain when it reads back as the same text and a double quoted string when it needs to be. JSON
+    strings are valid YAML."""
+    return text if not needs_quotes(text) else json.dumps(text, ensure_ascii=False)
 
 
 # where the Java sink mappings are. Newer vulnpoint keeps them with the call graph code, and resources/capabilities.json
