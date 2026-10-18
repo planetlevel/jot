@@ -1,4 +1,5 @@
 import contextlib
+import glob
 import http.server
 import io
 import json
@@ -608,7 +609,7 @@ class JotsViewTests(unittest.TestCase):
         self.assertEqual(["javax.servlet.Servlet.service"], routes["methods"])
         self.assertEqual(["#P0.getRequestURI()"], routes["captures"])
         self.assertEqual(["!null"], routes["matchers"])
-        self.assertIn("name: get-routes", routes["definition"])
+        self.assertIn("name: 'get-routes'", routes["definition"], "the sensor as written in its file")
         self.assertEqual(["Routes by users"], [r["name"] for r in self.view["reports"]])
 
     def test_the_first_definition_wins_like_the_agent_and_the_duplicate_is_reported(self):
@@ -1355,6 +1356,158 @@ CLASSLOAD_AFTER_APP = ["java.base/java.security.MessageDigest.getInstance(Messag
 JSP = ["java.base/javax.crypto.Cipher.getInstance(Cipher.java:534)",
        "org.apache.jsp.accessE_jsp._jspService(accessE_jsp.java:249)",
        "org.apache.jasper.runtime.HttpJspBase.service(HttpJspBase.java:67)"]
+
+
+BUNDLE = """---
+# a bundle, with a note
+sensors:
+
+# first
+- name: "one"   # trailing comment
+  description: "First"
+  methods:
+  - "a.b.C.m"
+  captures:
+  - "#P0"
+
+# second
+- name: two
+  methods:
+  - a.b.C.n
+  matchers:
+  - '!x'   # keep
+"""
+
+
+class SaveJotTests(unittest.TestCase):
+    def setUp(self):
+        self.env = Env()
+        self.path = os.path.join(self.env.dir, "bundle.jot")
+        with open(self.path, "w") as f:
+            f.write(BUNDLE)
+        self.paths = [self.env.dir]
+        store.load_sensors(self.env.ingestor.db, self.paths)
+        self.app = server.App(self.env.db, self.env.ingestor, jot_paths=self.paths, editable=True)
+
+    def shown(self, name):
+        return next(s for s in self.app.jots()["sensors"] if s["name"] == name)["definition"]
+
+    def read(self):
+        with open(self.path) as f:
+            return f.read()
+
+    def test_a_saved_sensor_changes_only_itself_and_the_page_shows_it(self):
+        one = self.shown("one")
+        self.assertIn("# trailing comment", one, "the sensor is shown as it is written, comments too")
+        self.assertEqual({"saved": "bundle.jot", "name": "one", "notes": []}, self.app.save_jot("one", one, one.replace("First", "Changed") + "\nenabled: false"))
+        saved = self.read()
+        self.assertEqual(BUNDLE.replace('"First"', '"Changed"').replace('  - "#P0"\n', '  - "#P0"\n  enabled: false\n'), saved)
+        self.assertIn("# keep", saved)
+        self.assertIn("Changed", self.shown("one"))
+        self.assertEqual("false", next(s for s in store.run_query(self.env.db, "SELECT name, enabled FROM sensors")["rows"] if s[0] == "one")[1])
+
+    def test_a_file_that_changed_since_the_editor_opened_is_not_overwritten(self):
+        original = self.shown("two")
+        with open(self.path, "w") as f:       # someone else edits the file by hand
+            f.write(BUNDLE.replace("a.b.C.n", "x.y.Z.o"))
+        with self.assertRaises(store.SaveError) as e:
+            self.app.save_jot("two", original, original.replace("a.b.C.n", "a.b.C.q"))
+        self.assertEqual(409, e.exception.status)
+        self.assertIn("x.y.Z.o", self.read())
+
+    def test_bad_saves_are_refused_and_change_nothing(self):
+        two = self.shown("two")
+        for text, status in (("name: one\nmethods:\n- a.b.C.n", 400), ("name: Two\nmethods:\n- a.b.C.n", 400),
+                             ("name: two\nmethods:\n- nope", 400), ("", 400)):
+            with self.assertRaises(store.SaveError) as e:
+                self.app.save_jot("two", two, text)
+            self.assertEqual(status, e.exception.status, text)
+        with self.assertRaises(store.SaveError) as e:
+            self.app.save_jot("nobody", "x", "name: nobody\nmethods:\n- a.b.C.n")
+        self.assertEqual(404, e.exception.status)
+        self.assertEqual(BUNDLE, self.read())
+
+    def test_a_sensor_can_be_renamed_and_what_still_uses_the_old_name_is_said(self):
+        with open(os.path.join(self.env.dir, "r.jot"), "w") as f:
+            f.write("reports:\n- name: Uses Two\n  type: list\n  rows: get-routes\n  cols: two, other\n")
+        store.load_sensors(self.env.ingestor.db, self.paths)
+        two = self.shown("two")
+        done = self.app.save_jot("two", two, two.replace("name: two", "name: three"))
+        self.assertEqual("three", done["name"])
+        self.assertEqual(["reports still using two are Uses Two"], done["notes"])
+        self.assertEqual(BUNDLE.replace("- name: two", "- name: three"), self.read(), "only the name changed, the rest of the bundle is as it was")
+        names = {s["name"] for s in self.app.jots()["sensors"]}
+        self.assertEqual({"one", "three"}, names)
+
+    def test_saving_is_off_when_the_dashboard_is_open_to_other_machines(self):
+        app = server.App(self.env.db, self.env.ingestor, jot_paths=self.paths, editable=False)
+        with self.assertRaises(store.SaveError) as e:
+            app.save_jot("two", self.shown("two"), self.shown("two"))
+        self.assertEqual(403, e.exception.status)
+        self.assertFalse(app.jots()["editable"])
+        self.assertTrue(self.app.jots()["editable"])
+        self.assertEqual(BUNDLE, self.read())
+
+    def test_over_http_and_a_stray_temp_file_is_not_left(self):
+        httpd = server.make_server(self.app, "127.0.0.1", 0)
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        def post(body, headers=None):
+            req = urllib.request.Request("http://127.0.0.1:%d/api/jots/save" % port, data=json.dumps(body).encode(), method="POST",
+                                         headers={"Host": "127.0.0.1:%d" % port, "Content-Type": "application/json", **({"X-JOT-Dashboard": "1"} if headers is None else headers)})
+            return urllib.request.urlopen(req)
+        two = self.shown("two")
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            post({"name": "two", "original": two, "text": two}, {})
+        self.assertEqual(403, e.exception.code, "a page on another site can't save")
+        with post({"name": "two", "original": two, "text": two.replace("a.b.C.n", "a.b.C.z")}) as r:
+            self.assertEqual("bundle.jot", json.load(r)["saved"])
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            post({"name": "two", "original": two, "text": two})
+        self.assertEqual(409, e.exception.code)
+        self.assertEqual(["bundle.jot"], [f for f in os.listdir(self.env.dir) if f.endswith(".jot") or f.endswith(".saving")])
+
+
+class CheckJotTests(unittest.TestCase):
+    ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
+
+    def test_a_sensor_on_its_own_and_a_whole_file_are_both_fine(self):
+        one = "name: get-route\nmethods:\n- javax.servlet.Servlet.service\ncaptures:\n- '#P0'\n"
+        self.assertEqual([], store.check_jot_text(one))
+        self.assertEqual([], store.check_jot_text("sensors:\n- " + one.replace("\n", "\n  ").rstrip(" ")))
+
+    def test_every_real_jot_passes_as_it_is_shown_and_as_a_file(self):
+        found = 0
+        for where in ("cves", "demo/ticketbook/jots", "demo/ticketbook/rules", "src/main/resources"):
+            for path in glob.glob(os.path.join(self.ROOT, where, "*.jot")):
+                with open(path) as fh:
+                    text = fh.read()
+                problems = store.check_jot_text(text)
+                if "src/main/resources" in path:   # get-header is defined twice in ticketbook.jot, the agent skips the second
+                    problems = [p for p in problems if "used twice" not in p["message"]]
+                self.assertEqual([], problems, path)
+                for sensor in (yaml.safe_load(text) or {}).get("sensors") or []:
+                    if sensor.get("name") != "example":
+                        self.assertEqual([], store.check_jot_text(yaml.safe_dump(sensor, sort_keys=False)), sensor["name"])
+                        found += 1
+        self.assertGreater(found, 20)
+
+    def test_a_missing_quote_that_changes_the_meaning_is_found(self):
+        text = ("name: ok\nmethods:\n- a.b.C.m\ncaptures:\n- #P0\n- !null\n- 123\n- yes\nmatchers:\n- null\n"
+                "- '!null'\n- \"#P0\"\ndescription: 5\nexception: true\n")
+        problems = store.check_jot_text(text)
+        self.assertEqual({5, 6, 7, 8, 10, 13, 14}, {p["line"] for p in problems}, "the quoted ones on lines 11 and 12 are fine")
+        self.assertTrue(all("quotes" in p["message"] for p in problems))
+        with self.assertRaises(store.SaveError):
+            store.save_sensor([], "ok", text, text)
+
+    def test_problems_are_found_on_their_lines(self):
+        problems = store.check_jot_text("name: Bad_Name\nmethods:\n- foo\nmatchers:\n- '(open'\nenabled: maybe\ncolour: red\n")
+        self.assertEqual({1, 3, 5, 6, 7}, {p["line"] for p in problems})
+        self.assertEqual("is empty", store.check_jot_text("")[0]["message"])
+        self.assertIn(store.check_jot_text("name: x\nmethods: [a.b.C.m\n- y\n")[0]["line"], (3, 4), "a YAML mistake is marked where it is found")
 
 
 class LocalOnlyTests(unittest.TestCase):

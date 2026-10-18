@@ -153,6 +153,16 @@ The panel shows what the file says. An agent started with `-Djot.protect=false` 
 at startup in `jot-config` events, so the panel shows it as locked to monitor and disables the switches. The same events
 say which JOTs the agent loaded, and a rule the agent didn't load is marked as such.
 
+## Editing a sensor
+
+A sensor's drawer on the JOTs page shows it as it is written in its file, comments included, in an editor. What you type is
+checked as you type, with the problems marked on their lines. Save, or Ctrl or Cmd S, writes the new text into the `.jot`
+file that has the sensor and changes nothing else in that file, so the comments and the other sensors in a bundle stay as they
+were. The agent reads its `.jot` files when the application starts, so a saved change applies at the next restart.
+The name can be changed, to one that no sensor has, and the drawer says which reports and control file settings still use
+the old name. A save is refused, and nothing is written, if the text has a problem, if the new name is taken, or if the
+file changed since the drawer was opened. Saving is switched off when the dashboard is started with `--allow-remote`.
+
 ## Access
 
 The server has no login, so it only answers this machine. It listens on localhost, refuses any connection that

@@ -16,6 +16,8 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+import yaml
+
 import control as control_module
 import llm
 import store
@@ -61,8 +63,10 @@ class App:
     """Everything the dashboard does, apart from HTTP. The generate function is a parameter so tests
     can run without a model."""
 
-    def __init__(self, db_path, ingestor, generate=llm.generate, control=None):
+    def __init__(self, db_path, ingestor, generate=llm.generate, control=None, jot_paths=(), editable=False):
         self.db_path = db_path
+        self.jot_paths = list(jot_paths)   # where the .jot files are, which is where an edited sensor is saved
+        self.editable = editable
         self.ingestor = ingestor
         self.generate = generate
         self.control = control      # a ControlStore, or None when the jots file has no control
@@ -78,6 +82,30 @@ class App:
             return out
         finally:
             db.close()
+
+    def save_jot(self, name, original, text):
+        """Write an edited sensor back into its .jot file, then read the files again so the page shows it."""
+        if not self.editable:
+            raise store.SaveError("saving is off, the dashboard is open to other machines", 403)
+        path = store.save_sensor(self.jot_paths, name, original, text)
+        new_name = (yaml.safe_load(text) or {}).get("name") or name
+        notes = []
+        if new_name != name:
+            # what still says the old name, so a rename doesn't quietly break it
+            reports = store.reports_using(self.jot_paths, name)
+            if reports:
+                notes.append("reports still using %s are %s" % (name, ", ".join(reports)))
+            if self.control is not None:
+                file = self.control.read()
+                if name in file["rules"] or name in file["enabled"]:
+                    notes.append("the control file still has a setting for %s" % name)
+        db = store.connect(self.db_path)
+        try:
+            store.load_sensors(db, self.jot_paths)
+            store.load_reports(db, self.jot_paths)
+        finally:
+            db.close()
+        return {"saved": os.path.basename(path), "name": new_name, "notes": notes}
 
     def reports(self):
         """The reports from the .jot files, each with the query that builds it and how to show it."""
@@ -147,7 +175,7 @@ class App:
         for r in reports:
             files.setdefault(r["file"], {"sensors": 0, "rules": 0, "reports": 0})["reports"] += 1
         return {"files": [{"name": k, **v} for k, v in files.items()], "sensors": sensors, "reports": reports,
-                "issues": issues}
+                "issues": issues, "editable": self.editable}
 
     def set_since(self, value):
         """Show only events from this time on. "now" starts from this moment, None shows everything again. Nothing is
@@ -477,6 +505,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.ask(body.get("question"), body.get("history") or []))
             if url.path == "/api/sql":
                 return self._send(200, self.app.sql(body.get("sql"), body.get("limit")))
+            if url.path == "/api/jots/save":
+                return self._send(200, self.app.save_jot(body.get("name"), body.get("original"), body.get("text")))
             if url.path == "/api/jots/check":
                 return self._send(200, {"problems": store.check_jot_text(body.get("text"))})
             if url.path == "/api/since":
@@ -491,6 +521,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.change_control(body.get("master"), body.get("rules"), body.get("enabled")))
         except store.QueryError as e:
             return self._send(400, {"error": str(e)})
+        except store.SaveError as e:
+            return self._send(e.status, {"error": str(e)})
         except control_module.ControlError as e:
             return self._send(400, {"error": str(e)})
         except llm.LLMError as e:
@@ -560,7 +592,7 @@ def main(argv=None):
     control = None
     if control_path:
         control = control_module.ControlStore(control_path)
-    app = App(args.db, ingestor, control=control)
+    app = App(args.db, ingestor, control=control, jot_paths=jot_paths, editable=bool(jot_paths) and not args.allow_remote)
     if args.since:
         app.set_since(parse_since(args.since))
 

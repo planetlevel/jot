@@ -40,7 +40,8 @@ function create(parent, options) {
       extensions: [
         lineNumbers(), highlightActiveLine(), highlightActiveLineGutter(), drawSelection(), history(), indentOnInput(),
         lintGutter(), yaml(), syntaxHighlighting(highlight), theme,
-        keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+        keymap.of([{ key: "Mod-s", preventDefault: true, run: () => { if (opts.onSave) opts.onSave(); return true; } },
+                   ...defaultKeymap, ...historyKeymap, indentWithTab]),
         editable.of([EditorState.readOnly.of(!!opts.readOnly), EditorView.editable.of(!opts.readOnly)]),
         EditorView.updateListener.of((u) => { if (u.docChanged && opts.onChange) opts.onChange(u.state.doc.toString()); }),
       ],

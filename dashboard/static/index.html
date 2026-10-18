@@ -852,6 +852,8 @@ function drawPicker() {
 // ---- sensors, rules and reports, read only. How each is defined and whether it fires.
 let jots = null;
 let jotSelected = null;       // "kind:name"
+let savedNote = null;         // what to say in the editor after a save, { key, text }
+let keptEditor = null;        // the open JOT's editor, { key, original, node, editor, focused, scroll }, see jotEditor
 let jotOrder = { jots: [], reports: [] };   // what each page's list shows, in order, so the panel can step through it
 let pendingSelect = null;     // a name from the address, like #jots/get-routes, selected once the list has loaded
 
@@ -863,6 +865,7 @@ function showJotDetail() {
 // hides the panel without touching the address, for when the page is being left
 function hideJotDetail() {
   jotSelected = null;
+  if (keptEditor) { keptEditor.editor.destroy(); keptEditor = null; }
   $("jotDetail").hidden = true;
   $("jotBackdrop").hidden = true;
 }
@@ -1161,31 +1164,76 @@ function drawJotDetail(i) {
       ...(i.kind === "rule" ? [fact(i.blocked, "blocked"), fact(i.monitored, "reported only")] : [])),
     never ? el("div", { class: "hint", text: "No events in the log yet. A sensor only records when the code it watches runs, so check the method names if you expected it." }) : null,
     i.kind === "rule" ? el("div", { class: "notice", text: (i.mode === "block" ? "Blocks the call. " : "Only reports, nothing is stopped. ") + "Message: " + i.exception }) : null,
-    jotEditor(i.definition || ""),
+    jotEditor(i, jots.editable && i.kind !== "report"),
   ].filter(Boolean));
+  restoreEditorFocus();
+}
+
+// The page refreshes its data every few seconds and draws the drawer again. The editor is kept when it is still the same
+// JOT with the same file, so what is being typed isn't thrown away, and it keeps focus and its place.
+function restoreEditorFocus() {
+  if (!keptEditor || !keptEditor.focused) return;
+  keptEditor.editor.focus();
+  const scroller = keptEditor.node.querySelector(".cm-scroller");
+  if (scroller) { scroller.scrollTop = keptEditor.scroll[0]; scroller.scrollLeft = keptEditor.scroll[1]; }
+  keptEditor.focused = false;
 }
 
 // The sensor or rule as YAML, which can be edited. What is typed is checked as it is typed, with the problems marked on
 // the lines they are on. Nothing is saved anywhere yet, Revert goes back to what the file says.
-function jotEditor(original) {
+function jotEditor(item, canSave) {
+  const key = item.key, original = item.definition || "";
+  if (keptEditor && keptEditor.key === key && keptEditor.original === original) {
+    const scroller = keptEditor.node.querySelector(".cm-scroller");
+    keptEditor.focused = keptEditor.node.contains(document.activeElement);
+    keptEditor.scroll = scroller ? [scroller.scrollTop, scroller.scrollLeft] : [0, 0];
+    return keptEditor.node;
+  }
   const host = el("div", { class: "editor" });
   const status = el("div", { class: "editstatus", text: "" });
   const revert = el("button", { type: "button", class: "small", text: "Revert", hidden: "", title: "Back to what the file says" });
   const label = el("h4", { text: "YAML" });
-  const editor = JotEditor.create(host, { doc: original, onChange: changed });
-  let timer = null, serial = 0;
+  const save = el("button", { type: "button", class: "small primary", text: "Save", disabled: "", title: "Write this into " + item.file + " (Ctrl or Cmd S)" });
+  const editor = JotEditor.create(host, { doc: original, onChange: changed, onSave: () => saveNow() });
+  let timer = null, serial = 0, clean = false;
+  if (savedNote && savedNote.key === key) { status.className = "editstatus ok"; status.textContent = savedNote.text; savedNote = null; }
   async function check() {
     const mine = ++serial;
     try {
       const { problems } = await api("/api/jots/check", { text: editor.get() });
       if (mine !== serial) return;
       editor.problems(problems);
+      clean = !problems.length;
+      save.disabled = !clean || editor.get() === original;
       status.className = "editstatus" + (problems.length ? " bad" : " ok");
       status.textContent = problems.length ? problems.length + (problems.length === 1 ? " problem" : " problems") + ", " + problems[0].message
         + " (line " + problems[0].line + ")" : "No problems found";
     } catch (e) { status.className = "editstatus"; status.textContent = ""; }
   }
+  async function saveNow() {
+    if (!canSave || !clean || editor.get() === original) return;
+    save.disabled = true;
+    try {
+      const done = await api("/api/jots/save", { name: item.name, original, text: editor.get() });
+      const renamed = done.name !== item.name;
+      const where = renamed ? item.kind + ":" + done.name : key;
+      savedNote = { key: where, text: (renamed ? "Renamed to " + done.name + " and saved to " : "Saved to ") + done.saved
+        + ". The agent reads it again when the application restarts." + (done.notes.length ? " Note that " + done.notes.join(", and ") + "." : "") };
+      if (renamed) {
+        jotSelected = where;
+        try { history.replaceState(null, "", "#" + currentPage + "/" + encodeURIComponent(done.name)); } catch (e) { /* ignore */ }
+      }
+      await loadJots();
+    } catch (e) {
+      status.className = "editstatus bad";
+      status.textContent = e.message;
+      save.disabled = false;
+    }
+  }
+  save.addEventListener("click", saveNow);
   function changed(text) {
+    clean = false;
+    save.disabled = true;
     revert.hidden = text === original;
     status.className = "editstatus";
     status.textContent = text === original ? "" : "Checking";
@@ -1195,8 +1243,13 @@ function jotEditor(original) {
   revert.addEventListener("click", () => { editor.set(original); editor.focus(); });
   const box = copyBlock(() => editor.get(), "YAML");
   box.querySelector("pre").replaceWith(host);
-  return el("div", {}, el("div", { class: "row" }, label, el("span", { class: "spacer" }), revert), box,
-    status, el("div", { class: "hint", text: "Edits are checked but not saved, the file isn't changed." }));
+  const node = el("div", {}, el("div", { class: "row" }, label, el("span", { class: "spacer" }), revert, canSave ? save : null), box,
+    status, el("div", { class: "hint", text: canSave
+      ? "Save writes this sensor into " + item.file + " and leaves the rest of the file as it is. The agent reads its files when the application starts."
+      : "Edits are checked but can't be saved here." }));
+  if (keptEditor) keptEditor.editor.destroy();
+  keptEditor = { key, original, node, editor, focused: false, scroll: [0, 0] };
+  return node;
 }
 
 $("jotFilter").addEventListener("input", drawJots);

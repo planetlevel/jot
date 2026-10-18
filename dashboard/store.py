@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS sensors (
   protect TEXT,         -- 'false' if the .jot file stages the rule as report only, otherwise null
   enabled TEXT,         -- 'false' if the .jot file writes enabled: false, otherwise null
   source TEXT,          -- the .jot file it came from
+  path TEXT,            -- the full path of that file
   matchers TEXT,        -- JSON array
   excludes TEXT,        -- JSON array
   definition TEXT       -- the sensor as written, as YAML
@@ -374,6 +375,40 @@ _LISTS = ("methods", "scopes", "excludes", "captures", "matchers")
 _BOOLEANS = ("protect", "enabled", "debug")
 
 
+# things Java patterns have that Python's don't, so a pattern with one can't be judged here and is left alone
+_JAVA_ONLY = re.compile(r"\\[pPhRQEXZzGbB]\{|\\[hRQEXG]|[*+?}]\+|\(\?>|\(\?[a-zA-Z]*[uU]")
+
+
+def _pattern_problem(pattern):
+    """Why a matcher is not a pattern, or None. The agent uses Java's patterns, so only mistakes both would call
+    mistakes are reported, like an unclosed group."""
+    if _JAVA_ONLY.search(pattern):
+        return None
+    try:
+        re.compile(re.sub(r"\(\?<([A-Za-z][A-Za-z0-9]*)>", r"(?P<\1>", pattern))
+    except re.error as e:
+        return str(e)
+    return None
+
+
+_TEXTS = ("name", "description", "exception")
+_NOT_TEXT = {"null": "empty", "bool": "true or false", "int": "a number", "float": "a number", "timestamp": "a date"}
+
+
+def _must_be_text(node, add):
+    """Plain text that YAML would read as something else is a quoting mistake, like #P0, which starts a comment, !null,
+    which starts a tag, or yes and 123, which are a boolean and a number. The fix is always quotes."""
+    if not isinstance(node, yaml.ScalarNode):
+        add(node, "must be text, not a list or a block")
+        return
+    kind = node.tag.rsplit(":", 1)[-1]
+    if node.tag.startswith("!"):
+        add(node, "starts with ! which YAML reads as a tag, put it in quotes")
+    elif node.tag.startswith("tag:yaml.org,2002:") and kind != "str":
+        shown = "an empty item, # starts a comment" if kind == "null" and not node.value else "%s" % _NOT_TEXT.get(kind, kind)
+        add(node, "is read as %s, not text, put it in quotes" % shown)
+
+
 def check_jot_text(text):
     """What is wrong with a sensor or rule as written, as a list of {"line", "message"}, line counting from 1. The
     same things the agent would complain about at startup, found before anything is saved. Nothing wrong is []."""
@@ -398,16 +433,22 @@ def check_jot_text(text):
     def entries(node):
         return {text_of(k): (k, v) for k, v in node.value} if isinstance(node, yaml.MappingNode) else {}
 
+    # one sensor on its own, as the drawer shows it, or a whole file with a sensors list
     top = entries(root)
-    if not isinstance(root, yaml.MappingNode) or "sensors" not in top:
-        add(root, "needs a sensors list, like  sensors:  followed by  - name: ...")
+    if isinstance(root, yaml.MappingNode) and "sensors" not in top and "reports" in top:
+        return problems      # a file of reports, which this doesn't check
+    if isinstance(root, yaml.MappingNode) and "sensors" not in top:
+        sensor_nodes = [root]
+    elif isinstance(root, yaml.MappingNode) and isinstance(top["sensors"][1], yaml.SequenceNode):
+        sensor_nodes = top["sensors"][1].value
+    elif isinstance(root, yaml.MappingNode):
+        add(top["sensors"][1], "sensors must be a list, with each sensor starting with  - name:")
         return problems
-    sensors = top["sensors"][1]
-    if not isinstance(sensors, yaml.SequenceNode):
-        add(sensors, "sensors must be a list, with each sensor starting with  - name:")
+    else:
+        add(root, "must be a sensor, with a name and methods")
         return problems
     seen = set()
-    for node in sensors.value:
+    for node in sensor_nodes:
         keys = entries(node)
         if not isinstance(node, yaml.MappingNode):
             add(node, "each sensor must be a block of name, methods and so on")
@@ -427,6 +468,12 @@ def check_jot_text(text):
         for k in _LISTS:
             if k in keys and not isinstance(keys[k][1], yaml.SequenceNode):
                 add(keys[k][0], "%s must be a list, each item starting with -" % k)
+            elif k in keys:
+                for item in keys[k][1].value:
+                    _must_be_text(item, add)
+        for k in _TEXTS:
+            if k in keys:
+                _must_be_text(keys[k][1], add)
         for k in _BOOLEANS:
             if k in keys and text_of(keys[k][1]) not in ("true", "false"):
                 add(keys[k][1], "%s must be true or false" % k)
@@ -442,10 +489,9 @@ def check_jot_text(text):
         if "matchers" in keys and isinstance(keys["matchers"][1], yaml.SequenceNode):
             for m in keys["matchers"][1].value:
                 value = text_of(m) or ""
-                try:
-                    re.compile(value[1:] if value.startswith("!") else value)
-                except re.error as e:
-                    add(m, "isn't a valid pattern, %s" % e)
+                problem = _pattern_problem(value[1:] if value.startswith("!") else value)
+                if problem:
+                    add(m, "isn't a valid pattern, %s" % problem)
         if "protect" in keys and "exception" not in keys:
             add(keys["protect"][0], "protect only matters for a rule, which has an exception message")
     return problems
@@ -467,6 +513,103 @@ def _issue(db, level, text, source):
     db.execute("INSERT INTO jot_issues VALUES (?,?,?)", (level, text, source))
 
 
+def _last_end(node):
+    """Where the last thing written inside a YAML node ends, not counting the blank lines and comments after it."""
+    if isinstance(node, yaml.MappingNode) and node.value:
+        return _last_end(node.value[-1][1])
+    if isinstance(node, yaml.SequenceNode) and node.value:
+        return _last_end(node.value[-1])
+    return node.end_mark.index
+
+
+def sensor_spans(text):
+    """Where each sensor is written in a .jot file, as {name: {"start", "end", "column", "text"}}. The text is the sensor as
+    written, comments and quotes included, moved to the left edge. The first sensor of a name wins, like the agent."""
+    try:
+        root = yaml.compose(text)
+    except yaml.YAMLError:
+        return {}
+    spans = {}
+    if not isinstance(root, yaml.MappingNode):
+        return spans
+    for key, value in root.value:
+        if key.value != "sensors" or not isinstance(value, yaml.SequenceNode):
+            continue
+        for item in value.value:
+            if not isinstance(item, yaml.MappingNode):
+                continue
+            name = next((v.value for k, v in item.value if k.value == "name" and isinstance(v, yaml.ScalarNode)), None)
+            if not name or name in spans:
+                continue
+            start, end, column = item.start_mark.index, _last_end(item), item.start_mark.column
+            lines = text[start:end].split("\n")
+            body = [lines[0]] + [l[column:] if l[:column].strip() == "" else l for l in lines[1:]]
+            spans[name] = {"start": start, "end": end, "column": column, "text": "\n".join(body).rstrip()}
+    return spans
+
+
+class SaveError(Exception):
+    """A sensor could not be saved. status is the HTTP status that says why."""
+    def __init__(self, message, status=400):
+        super().__init__(message)
+        self.status = status
+
+
+def reports_using(paths, name):
+    """The reports in the .jot files that name this sensor as their rows or columns, which a rename leaves behind."""
+    used = []
+    for path in jot_files(paths):
+        for r in _read_jot(path).get("reports") or []:
+            if isinstance(r, dict) and name in [r.get("rows")] + [c.strip() for c in str(r.get("cols") or "").split(",")]:
+                used.append(str(r.get("name")))
+    return used
+
+
+def save_sensor(paths, name, original, new_text):
+    """Writes the new text of one sensor into the .jot file that has it, leaving everything else in the file as it was,
+    comments and the other sensors included. original is what the editor started from. If the file no longer says that,
+    someone else changed it and nothing is written. The name can be changed to one that isn't taken. Returns the path written."""
+    new_text = (new_text or "").rstrip() + "\n"
+    problems = check_jot_text(new_text)
+    if problems:
+        raise SaveError("not saved, line %d %s" % (problems[0]["line"], problems[0]["message"]))
+    written = yaml.safe_load(new_text)
+    new_name = written.get("name") if isinstance(written, dict) else None
+    if new_name != name:
+        for path in jot_files(paths):
+            with open(path, encoding="utf-8") as fh:
+                if new_name in sensor_spans(fh.read()):
+                    raise SaveError("not saved, %s is already the name of a sensor, in %s" % (new_name, os.path.basename(path)))
+    for path in jot_files(paths):
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        span = sensor_spans(text).get(name)
+        if not span:
+            continue
+        if (original or "").rstrip() != span["text"]:
+            raise SaveError("not saved, %s has changed since this was opened. Close it and open it again" % os.path.basename(path), 409)
+        line_start = text.rfind("\n", 0, span["start"]) + 1
+        if not re.match(r"^\s*-\s+$", text[line_start:span["start"]]):
+            raise SaveError("not saved, this sensor isn't written as a block in the list, edit the file by hand")
+        pad = " " * span["column"]
+        lines = new_text.rstrip().split("\n")
+        body = "\n".join([lines[0]] + [pad + l if l.strip() else l for l in lines[1:]])
+        result = text[:span["start"]] + body + text[span["end"]:]
+        # the file must still say what was meant, this sensor as written and every other one as before
+        before, after = yaml.safe_load(text) or {}, yaml.safe_load(result) or {}
+        expected = [written if x.get("name") == name else x for x in before.get("sensors") or []]
+        if after.get("sensors") != expected or {k: v for k, v in after.items() if k != "sensors"} != {k: v for k, v in before.items() if k != "sensors"}:
+            raise SaveError("not saved, putting this in the file would have changed something else in it")
+        mode = os.stat(path).st_mode
+        tmp = path + ".saving"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(result)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+        return path
+    raise SaveError("not saved, no loaded file has a sensor called %s" % name, 404)
+
+
 def load_sensors(db, paths):
     """Read sensor definitions from .jot files, or directories of them, so the model knows what they mean and
     the JOTs view can show them. Like the agent, the first definition of a name wins and a later one is skipped."""
@@ -475,6 +618,11 @@ def load_sensors(db, paths):
     loaded = 0
     for f in jot_files(paths):
         source = os.path.basename(f)
+        try:
+            with open(f, encoding="utf-8") as fh:
+                written = sensor_spans(fh.read())
+        except OSError:
+            written = {}
         for s in _read_jot(f).get("sensors") or []:
             if not isinstance(s, dict) or not s.get("name") or s["name"] == "example":
                 continue
@@ -492,12 +640,13 @@ def load_sensors(db, paths):
                     _issue(db, "warning", "%s has %r, which doesn't look like Class.method" % (name, m), source)
             staged = "false" if s.get("protect") is False else None
             off = "false" if s.get("enabled") is False else None
-            db.execute("""INSERT INTO sensors (name, description, methods, scopes, captures, blocks, protect, enabled, source,
-                                               matchers, excludes, definition) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", (
+            db.execute("""INSERT INTO sensors (name, description, methods, scopes, captures, blocks, protect, enabled, source, path,
+                                               matchers, excludes, definition) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
                 name, s.get("description"), json.dumps(methods), json.dumps(s.get("scopes") or []),
-                json.dumps(s.get("captures") or []), s.get("exception"), staged, off, source,
+                json.dumps(s.get("captures") or []), s.get("exception"), staged, off, source, f,
                 json.dumps(s.get("matchers") or []), json.dumps(s.get("excludes") or []),
-                yaml.safe_dump(s, sort_keys=False, default_flow_style=False, allow_unicode=True).rstrip()))
+                (written.get(name) or {}).get("text")
+                or yaml.safe_dump(s, sort_keys=False, default_flow_style=False, allow_unicode=True).rstrip()))
             loaded += 1
     db.commit()
     return loaded
