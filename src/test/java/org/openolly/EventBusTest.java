@@ -232,6 +232,7 @@ class EventBusTest {
 		Assertions.assertEquals( 1, r.events.size() );
 		Event e = r.events.get( 0 );
 		Assertions.assertEquals( Event.Action.MONITORED, e.getAction() );
+		Assertions.assertEquals( s.getName() + "-monitored", e.getRule() );
 		Assertions.assertEquals( "Not allowed", e.getMessage() );
 		Assertions.assertEquals( "bar", e.getCapture() );
 		Assertions.assertNotNull( e.getStack() );
@@ -243,6 +244,7 @@ class EventBusTest {
 		Assertions.assertTrue( s.isProtected() );
 		Recorder r = run( () -> Assertions.assertThrows( SensorException.class, () -> fire( s ) ) );
 		Assertions.assertEquals( Event.Action.BLOCKED, r.events.get( 0 ).getAction() );
+		Assertions.assertEquals( s.getName() + "-blocked", r.events.get( 0 ).getRule() );
 	}
 
 	@Test

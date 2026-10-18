@@ -220,7 +220,7 @@ class ControlFileTest {
 		Assertions.assertEquals( 1, a.execute( "t", "sig", null, new Object[] { "x" }, null ).size() );
 		EventBus.shutdown();
 		List<Event.Action> actions = new ArrayList<Event.Action>();
-		for ( Event e : events ) if ( e.getRule().equals( "rule-a" ) ) actions.add( e.getAction() );
+		for ( Event e : events ) if ( e.getRule().startsWith( "rule-a-" ) ) actions.add( e.getAction() );
 		Assertions.assertEquals( List.of( Event.Action.BLOCKED, Event.Action.MONITORED ), actions );
 	}
 

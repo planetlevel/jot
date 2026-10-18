@@ -234,11 +234,11 @@ public class Sensor {
 					String details = results.stream().map( String::valueOf ).collect( Collectors.joining( " | " ) );
 					if ( isProtected() ) {
 						SensorException e = new SensorException( getException() );
-						EventBus.publish( new Event( getName(), details, stack, Event.Action.BLOCKED, getException() ) );
+						EventBus.publish( new Event( getName() + "-blocked", details, stack, Event.Action.BLOCKED, getException() ) );
 						throw e;
 					}
 					// not protecting, so say what would have been stopped and let the call go ahead
-					EventBus.publish( new Event( getName(), details, stack, Event.Action.MONITORED, getException() ) );
+					EventBus.publish( new Event( getName() + "-monitored", details, stack, Event.Action.MONITORED, getException() ) );
 				}
 			}			
 		} finally {
@@ -647,7 +647,8 @@ public class Sensor {
 
 	/**
 	 * A rule that sandboxes some code also says when that code was entered, as an observed event named
-	 * for the rule plus "-entered". It is sent once for each outermost entry, whether or not the sandbox
+	 * for the rule plus "-entered". The rule's other events are named the same way, "-blocked" when it stopped
+	 * the call and "-monitored" when it only reported. It is sent once for each outermost entry, whether or not the sandbox
 	 * then blocked anything, so there is a trail of exposure as well as of attacks.
 	 */
 	private void publishEntered(Object[] args) {
