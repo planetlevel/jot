@@ -4,7 +4,7 @@
 
 sensors:
 
-- name: get-route
+- name: http-route
   description: Identifies the route for this HTTP request
   methods:
   - javax.servlet.Servlet.service
@@ -13,7 +13,7 @@ sensors:
   - "#P0.getRequestURI()"
 
   
-- name: get-user
+- name: auth-user
   description: Identifies user names
   methods:
   - javax.servlet.Servlet.service
@@ -22,7 +22,7 @@ sensors:
   - "#P0.getRemoteUser()==null ? \"Guest\" : #P0.getRemoteUser()"
   
   
-- name: get-role
+- name: auth-role-check
   description: "Records each role check and whether the current user has the role, like ADMIN: true"
   methods:
   - javax.servlet.ServletRequest.isUserInRole
@@ -34,7 +34,7 @@ sensors:
   - '!: null$'
     
   
-- name: get-received-param-names
+- name: http-parameter-received
   description: Identifies parameter names used in HTTP requests
   methods:
   - javax.servlet.Servlet.service
@@ -45,7 +45,7 @@ sensors:
   - "!null"
 
 
-- name: get-accessed-param-names
+- name: http-parameter-read
   description: Identifies parameter names referenced by the app
   methods:
   - javax.servlet.ServletRequest.getParameter
@@ -58,7 +58,7 @@ sensors:
   - "!null"
 
 
-- name: get-redirects
+- name: http-redirect
   description: Extracts any response redirects in this app
   methods:
   - javax.servlet.ServletResponse.sendRedirect
@@ -69,7 +69,7 @@ sensors:
   - "!null"
 
 
-- name: get-forwards
+- name: http-forward
   description: Extracts any request forwards in this app
   methods:
   - javax.servlet.ServletRequest.getRequestDispatcher
@@ -82,7 +82,7 @@ sensors:
   - "!null"
 
 
-- name: get-filters
+- name: http-filter-registered
   description: Extracts the filters in this app"
   methods:
   - javax.servlet.ServletContext.addFilter
@@ -93,7 +93,7 @@ sensors:
   - "!null"
 
 
-- name: get-servlets
+- name: http-servlet-registered
   description: Identifies the servlets in this app
   methods:
   - javax.servlet.ServletContext.addServlet
@@ -104,7 +104,7 @@ sensors:
   - "!null"
 
 
-- name: get-cache-header
+- name: http-cache-header
   description: Identifies whether cache header is set
   methods:
   - javax.servlet.ServletResponse.setHeader
@@ -139,7 +139,7 @@ sensors:
 
 ##### detect attacks #####
 
-- name: block-nasty-expressions
+- name: expression-suspicious
   description: Blocks expresssions containing dangerous patterns from being evaluated
   methods:
   - javax.servlet.jsp.el.ExpressionEvaluator.evaluate
@@ -152,7 +152,7 @@ sensors:
   exception: Attack detected. Go away or I'm calling the FBI.
   
 
-- name: sandbox-expressions
+- name: expression
   description: Prevents harmful methods from being used during expresssion evaluation
   methods:
   - java.lang.ProcessBuilder.<init>

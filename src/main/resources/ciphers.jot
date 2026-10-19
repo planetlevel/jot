@@ -2,7 +2,7 @@
 # Java Observability Toolkit (JOT)
 
 sensors:
- - name: get-ciphers
+ - name: crypto-cipher
    description: Records each use of an encryption cipher, its algorithm and whether it encrypts or decrypts
    methods:
    - javax.crypto.Cipher.init
@@ -12,4 +12,4 @@ sensors:
 reports:
  - name: Encryption Usage
    type: list
-   cols: get-ciphers 
+   cols: crypto-cipher 

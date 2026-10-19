@@ -3,7 +3,7 @@
 
 sensors: 
 
-- name: get-route
+- name: http-route
   description: Identifies the route for this HTTP request
   methods:
   - javax.servlet.Servlet.service
@@ -11,7 +11,7 @@ sensors:
   captures:
   - "#P0.getRequestURI()"
 
-- name: sandbox-expressions
+- name: expression
   description: Prevents harmful methods from being used during expresssion evaluation
   methods:
   - java.lang.ProcessBuilder.<init>
@@ -21,4 +21,4 @@ sensors:
   - jakarta.el.ValueExpression.getValue
   captures:
   - "#P0"
-  exception: Attempt to escape expression language sandbox prevented by JST rule 'sandbox-expressions'
+  exception: Attempt to escape expression language sandbox prevented by JST rule 'expression'

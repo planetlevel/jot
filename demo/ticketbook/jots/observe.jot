@@ -7,7 +7,7 @@ sensors:
 
 ##### the application #####
 
-- name: get-route
+- name: http-route
   description: Identifies the entry point for this HTTP request
   methods:
   - javax.servlet.Servlet.service
@@ -15,7 +15,7 @@ sensors:
   captures:
   - "#P0.getRequestURI()"
 
-- name: get-user
+- name: auth-user
   description: Identifies the user name of current user if authenticated
   methods:
   - javax.servlet.Servlet.service
@@ -23,7 +23,7 @@ sensors:
   captures:
   - "#P0.getRemoteUser()==null ? \"Guest\" : #P0.getRemoteUser()"
 
-- name: get-role
+- name: auth-role-check
   description: Records authorization checks and whether the current user has the role
   methods:
   - javax.servlet.ServletRequest.isUserInRole
@@ -34,7 +34,7 @@ sensors:
   - '!^null:'
   - '!: null$'
 
-- name: get-received-param-names
+- name: http-parameter-received
   description: Identifies parameter names used in HTTP requests
   methods:
   - javax.servlet.Servlet.service
@@ -44,7 +44,7 @@ sensors:
   matchers:
   - "!null"
 
-- name: get-accessed-param-names
+- name: http-parameter-read
   description: Identifies parameter names referenced by the app
   methods:
   - javax.servlet.ServletRequest.getParameter
@@ -56,7 +56,7 @@ sensors:
   matchers:
   - "!null"
 
-- name: get-redirect
+- name: http-redirect
   description: Identifies a response redirect
   methods:
   - javax.servlet.ServletResponse.sendRedirect
@@ -66,7 +66,7 @@ sensors:
   matchers:
   - "!null"
 
-- name: get-forward
+- name: http-forward
   description: Identifies a request forward
   methods:
   - javax.servlet.ServletRequest.getRequestDispatcher
@@ -78,7 +78,7 @@ sensors:
   matchers:
   - "!null"
 
-- name: get-filter
+- name: http-filter-registered
   description: Identify a filter being added
   methods:
   - javax.servlet.ServletContext.addFilter
@@ -88,7 +88,7 @@ sensors:
   matchers:
   - "!null"
 
-- name: get-servlet
+- name: http-servlet-registered
   description: Identify a servlet being added
   methods:
   - javax.servlet.ServletContext.addServlet
@@ -98,7 +98,7 @@ sensors:
   matchers:
   - "!null"
 
-- name: get-cache-header
+- name: http-cache-header
   description: Identifies a cache header being set
   methods:
   - javax.servlet.ServletResponse.setHeader
@@ -110,32 +110,84 @@ sensors:
 
 ##### security relevant behavior #####
 
-- name: get-cipher
+
+- name: http-cookie-set
+  description: Records each cookie the application sets and whether it is Secure and HttpOnly
+  methods:
+  - javax.servlet.http.HttpServletResponse.addCookie
+  - jakarta.servlet.http.HttpServletResponse.addCookie
+  captures:
+  - '#P0.getName() + ": secure=" + #P0.getSecure() + " httpOnly=" + #P0.isHttpOnly()'
+
+- name: http-security-header
+  description: Records the security headers the application sets and their values
+  methods:
+  - javax.servlet.ServletResponse.setHeader
+  - jakarta.servlet.ServletResponse.setHeader
+  - javax.servlet.ServletResponse.addHeader
+  - jakarta.servlet.ServletResponse.addHeader
+  captures:
+  - '#P0 + ": " + #P1'
+  matchers:
+  - '(?i)^(Content-Security-Policy|Strict-Transport-Security|X-Frame-Options|X-Content-Type-Options|Referrer-Policy|Permissions-Policy|X-XSS-Protection|Cross-Origin-[\w-]+):'
+
+- name: crypto-cipher
   description: Records each use of an encryption cipher, its algorithm and whether it encrypts or decrypts
   methods:
   - javax.crypto.Cipher.init
   captures:
   - '#OBJ.getAlgorithm() + ": " + (#P0 == 1 ? "encrypt" : #P0 == 2 ? "decrypt" : "other")'
 
-- name: get-hashes
+- name: crypto-hash
   description: Identifies hash algorithm usage
   methods:
   - java.security.MessageDigest.getInstance
+  scopes:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#P0"
 
-- name: native-libraries
+
+- name: crypto-key-size
+  description: Records the key size when a key or key pair is generated, like RSA 1024 bits
+  methods:
+  - java.security.KeyPairGenerator.initialize
+  - javax.crypto.KeyGenerator.init
+  captures:
+  - '#OBJ.getAlgorithm() + ": " + #P0 + " bits"'
+  matchers:
+  - '^[\w/-]+: \d+ bits$'
+
+- name: crypto-key-spec
+  description: Records the algorithm and length of a secret key built from bytes. The bytes themselves are never recorded
+  methods:
+  - javax.crypto.spec.SecretKeySpec.<init>
+  captures:
+  - '#P1 + ": " + (#P0.length * 8) + " bits"'
+
+- name: object-class
+  description: Records each class an ObjectInputStream turns bytes into, which is the real deserialization exposure
+  methods:
+  - java.io.ObjectInputStream.resolveClass
+  captures:
+  - '#P0.getName()'
+
+- name: native-library
   description: Identifies the use of native libraries
   methods:
   - java.lang.System.load
   - java.lang.System.loadLibrary
   - java.lang.System.mapLibraryName
+  scopes:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#P0"
   matchers:
   - "!null"
 
-- name: get-unsafe-queries
+- name: sql-statement
   description: Identifies unparameterized database queries
   methods:
   - java.sql.Statement.execute
@@ -147,7 +199,7 @@ sensors:
   captures:
   - "#ARGS"
 
-- name: get-safe-queries
+- name: sql-prepared
   description: Identifies parameterized database queries
   methods:
   - java.sql.Connection.prepareCall
@@ -155,10 +207,13 @@ sensors:
   captures:
   - "#ARGS"
 
-- name: get-files
-  description: Identifies the use of files outside the application and the server
+- name: file-path
+  description: Identifies file and directory use (excludes jdk and appserver)
   methods:
   - java.io.File.<init>
+  scopes:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "#OBJ.getCanonicalPath()"
   matchers:
@@ -169,12 +224,27 @@ sensors:
   - "!/Cellar/"
   - "!/candidates/java/"
 
-- name: get-sockets
+- name: net-socket
   description: Identifies the use of sockets
   methods:
   - java.net.Socket.<init>
+  scopes:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
   captures:
   - "\"\"+#P0+\":\"+#P1"     # ""+#P0 is a shorthand String conversion
   matchers:
   - "!null:null"
   - "!:8080"               # any port that's not 8080
+
+- name: net-url
+  description: Records the host and protocol of each URL the application connects to
+  methods:
+  - java.net.URL.openConnection
+  scopes:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
+  captures:
+  - '#OBJ.getHost() + ": " + #OBJ.getProtocol() + " port " + (#OBJ.getPort() == -1 ? #OBJ.getDefaultPort() : #OBJ.getPort())'
+  matchers:
+  - '(?i): (https?|ftp) port'

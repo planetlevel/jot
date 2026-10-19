@@ -4,7 +4,7 @@
 
 sensors:
 
-- name: get-ciphers
+- name: crypto-cipher
   description: Records each use of an encryption cipher, its algorithm and whether it encrypts or decrypts
   methods:
   - javax.crypto.Cipher.init
@@ -12,7 +12,7 @@ sensors:
   - '#OBJ.getAlgorithm() + ": " + (#P0 == 1 ? "encrypt" : #P0 == 2 ? "decrypt" : "other")'
 
 
-- name: native-libraries
+- name: native-library
   description: Identifies the use of native libraries
   methods:
   - java.lang.System.load
@@ -24,7 +24,7 @@ sensors:
   - "!null"
   
 
-- name: get-unsafe-queries
+- name: sql-statement
   description: Identifies unparameterized database queries
   methods:
   - java.sql.Statement.execute
@@ -37,7 +37,7 @@ sensors:
   - "#ARGS"
 
 
-- name: get-safe-queries
+- name: sql-prepared
   description: Identifies parameterized database queries
   methods:
   - java.sql.Connection.prepareCall
@@ -46,7 +46,7 @@ sensors:
   - "#ARGS"
 
 
-- name: get-files
+- name: file-path
   description: Identifies the use of Files outside certain paths
   methods:
   - java.io.File.<init>
@@ -58,7 +58,7 @@ sensors:
   - "!eclipse\\-workspace"
 
 
-- name: get-sockets
+- name: net-socket
   description: Identifies the use of sockets
   methods:
   - java.net.Socket.<init>

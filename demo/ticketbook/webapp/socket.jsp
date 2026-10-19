@@ -10,7 +10,7 @@
 	int port = 80;
 	StringBuilder response2 = new StringBuilder();
 	try {
-		// the two argument constructor is what the get-sockets sensor watches
+		// the two argument constructor is what the net-socket sensor watches
 		Socket s = new Socket( host, port );
 		s.setSoTimeout( 5000 );
 		try {

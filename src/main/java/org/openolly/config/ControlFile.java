@@ -30,7 +30,7 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
  *   sensors:
  *     cve-log4shell-no-exec:
  *       protect: false
- *     get-ciphers:
+ *     crypto-cipher:
  *       enabled: false
  *
  * protect is the master switch. When false, every rule only reports. Under sensors, each name has the settings

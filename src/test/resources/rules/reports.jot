@@ -7,61 +7,61 @@ reports:
 
  - name: Test Coverage Matrix
    type: compare
-   rows: get-route
-   cols: get-user
+   rows: http-route
+   cols: auth-user
    
  - name: Access Control Matrix
    type: compare
-   rows: get-route
-   cols: get-role
+   rows: http-route
+   cols: auth-role-check
    
  - name: Role Membership
    type: compare
-   rows: get-user
-   cols: get-role
+   rows: auth-user
+   cols: auth-role-check
    
  - name: Cache Headers
    type: table
-   rows: get-route
-   cols: get-cache-header
+   rows: http-route
+   cols: http-cache-header
    
  - name: Encryption Algorithms
    type: compare
-   rows: get-route
-   cols: get-ciphers  
+   rows: http-route
+   cols: crypto-cipher  
    
  - name: Unauthorized Files
    type: table
-   rows: get-route
-   cols: get-files
+   rows: http-route
+   cols: file-path
    
  - name: Database Queries
    type: table
-   rows: get-route
-   cols: get-unsafe-queries
+   rows: http-route
+   cols: sql-statement
    
  - name: Encryption Users
    type: compare
-   rows: get-user
-   cols: get-ciphers
+   rows: auth-user
+   cols: crypto-cipher
       
  - name: HTTP Parameters
    type: table
-   rows: get-route
-   cols: get-accessed-param-names, get-received-param-names
+   rows: http-route
+   cols: http-parameter-read, http-parameter-received
    
  - name: Request Forwards
    type: table
-   rows: get-route
-   cols: get-forwards
+   rows: http-route
+   cols: http-forward
    
  - name: Timeseries
    type: series
    rows: unused
-   cols: get-ciphers
+   cols: crypto-cipher
     
  - name: Exceptions
    type: table
-   rows: get-route
+   rows: http-route
    cols: get-exceptions
    

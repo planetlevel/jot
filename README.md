@@ -35,7 +35,7 @@ Define your sensors and reports in yaml and save it in a .jot file. Sensors defi
 to capture and "reports" tell JOT how to track the data over time. 
 
     sensors:
-    - name: "get-ciphers"
+    - name: "crypto-cipher"
       description: "Identifies encryption ciphers"
       methods:
       - "javax.crypto.Cipher.getInstance"
@@ -45,7 +45,7 @@ to capture and "reports" tell JOT how to track the data over time.
     reports:
     - name: "Encryption Usage"
       type: "list"
-      cols: "get-ciphers"  
+      cols: "crypto-cipher"  
 
 ## Getting Started with JOT
 
@@ -58,7 +58,7 @@ Then you just use your application normally and let JOT gather data for you.
 JOT will make a nice table capturing exactly where encryption is used and
 what algorithm is specified.
 
-    Encryption Algorithms                                        get-ciphers            
+    Encryption Algorithms                                        crypto-cipher            
     ------------------------------------------------------------ ---------------------- 
     com.acme.ticketbook.Ticket.encrypt(Ticket.java:125)          DES                    
     org.apache.jsp.accessA_jsp._jspService(accessA_jsp.java:212) AES                    
@@ -142,7 +142,7 @@ turn it back on when the master switch is off.
 Any sensor or rule can be switched off with `enabled: false`. It records nothing, and a rule neither blocks nor reports.
 A sensor that doesn't say is enabled.
 
-    - name: "get-ciphers"
+    - name: "crypto-cipher"
       enabled: false
 
 ### Switching while the application runs
@@ -155,7 +155,7 @@ no connections, so nothing can reach into it.
     sensors:
       cve-log4shell-no-exec:
         protect: false
-      get-ciphers:
+      crypto-cipher:
         enabled: false
 
 `protect` is the master switch, and when it is false every rule only reports. Under `sensors`, each name has the
@@ -262,7 +262,7 @@ Sensors are how you define the data you want to gather. You can also use
 sensors to perform limited actions within an application.
     
     # The name of this sensor, which can be referenced by reports
-    - name: "get-ciphers"
+    - name: "crypto-cipher"
     
 	  # Use this to describe what this sensor does. Try to provide enough
 	  # detail so that anyone would understand what it's about.
@@ -392,10 +392,10 @@ independent of the event output, so they work the same with `jot.output=console`
          type: "table"
 
          # A sensor to be used to populate row headers (compare, table and graph)
-         rows: "get-route"
+         rows: "http-route"
 
          # A sensor, or a comma separated list of sensors, to be used to populate columns
-         cols: "get-user"
+         cols: "auth-user"
 
 compare, table and graph relate a row to a column when both were observed during the same request,
 in either order. Outside of a servlet request, events are related when they happen on the same thread.

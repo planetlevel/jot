@@ -22,13 +22,13 @@ rules report or block. Add your own rules by adding a path to that file.
 | `rules/protect.jot` | 4 rules |
 | `../../cves/` | the CVE microsandboxes, one per vulnerable library in the app |
 
-The rules are `block-native-process` (a web request must not start a process), `block-deserialization`,
-`sandbox-expressions` (an expression being evaluated must not start a process or open a socket) and
-`block-nasty-expressions` (looks for attack text in an expression, and is easier to get around than the sandbox).
+The rules are `native-process` (a web request must not start a process), `object-deserialization`,
+`expression` (an expression being evaluated must not start a process or open a socket) and
+`expression-suspicious` (looks for attack text in an expression, and is easier to get around than the sandbox).
 
-`block-native-process` is the broad rule and `sandbox-expressions` the narrow one. Both match an expression injection
+`native-process` is the broad rule and `expression` the narrow one. Both match an expression injection
 that starts a process, and the broad one fires first, so the sandbox rule only shows up when the broad rule is switched
-off. To show the microsandbox on its own, start without `block-native-process`.
+off. To show the microsandbox on its own, start without `native-process`.
 
 ## Switching while it runs
 

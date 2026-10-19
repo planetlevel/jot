@@ -93,7 +93,7 @@ class SensorTest {
 
 	@Test
 	void testRoleCheckRecordsTheRoleAndTheAnswerButNotNulls() {
-		// the get-role sensor, which captures like ADMIN: true and leaves out a null role or a null answer
+		// the auth-role-check sensor, which captures like ADMIN: true and leaves out a null role or a null answer
 		Sensor s = new Sensor().method("a.b.Class.method").capture("#P0 + \": \" + #RET").matcher("!^null:").matcher("!: null$");
 		StackTraceElement[] stack = new Exception().getStackTrace();
 		Assertions.assertEquals("[ADMIN: true]", SafeString.format(s.execute("test", "a.b.Class.Method", "foo", new Object[] { "ADMIN" }, Boolean.TRUE, stack), false));
@@ -106,7 +106,7 @@ class SensorTest {
 
 	@Test
 	void testCipherUseRecordsTheAlgorithmAndTheModeFromInit() throws Exception {
-		// the get-cipher sensor, on Cipher.init, which says what was really used and for what
+		// the crypto-cipher sensor, on Cipher.init, which says what was really used and for what
 		Sensor s = new Sensor().method("javax.crypto.Cipher.init")
 				.capture("#OBJ.getAlgorithm() + \": \" + (#P0 == 1 ? \"encrypt\" : #P0 == 2 ? \"decrypt\" : \"other\")");
 		StackTraceElement[] stack = new Exception().getStackTrace();
