@@ -16,8 +16,10 @@ vulnpoint can fail to tie an active policy to its shield, for example when the p
 doesn't list, and the shield then says nothing is disallowed. So the active policy in data/policies is read as well,
 and its methods are added to the scope.
 
-A shield with no disallowed capabilities and no policy has nothing to sandbox. With --observe it becomes a sensor with no
-exception, which records that the vulnerable code was reached.
+A rule says when the vulnerable code runs, without anything more in the file. The agent reports that the scope of a JOT
+is active, once, as cve-...-active, and that is how to tell whether a CVE is active in an application. A shield with no
+disallowed capabilities and no policy has nothing to sandbox. With --observe it becomes a sensor on the vulnerable
+methods instead.
 
     tools/vulnpoint2jot.py CVE-2021-44228 CVE-2019-12384 -o cves
     tools/vulnpoint2jot.py --all -o /tmp/all-cves
@@ -154,17 +156,19 @@ def rule(shield, catalog, deny, observe, policy=()):
         text += "  methods:\n" + lines(sinks)
         text += "  scopes:\n" + lines(jot_method(m) for m in methods)
         text += "  captures:\n  - \"#ARGS\"\n"
-        text += "  exception: %s\n" % q("%s microsandbox blocked %s" % (shield["cve"], ", ".join(caps)))
+        text += "  block-when: true\n"
         if (behavior != "BLOCK" and not from_policy) or overridden:
             text += "  protect: false\n"   # reports what it would have blocked until someone turns it on
         texts.append(text)
     if texts:
         return "\n".join(texts)
     if observe:
+        # nothing to sandbox, so only a sensor on the methods that make up the vulnerable code. It records the word reached
+        # and not the arguments, which can be anything, a whole request body for a JSON library.
         text = header + "- name: %s\n" % q(base)
         text += "  description: %s\n" % q("%s. The vulnerable code was reached" % shield["cve"])
         text += "  methods:\n" + lines(jot_method(m["method"]) for m in scope_methods)
-        text += "  captures:\n  - \"#ARGS\"\n"
+        text += "  captures:\n  - %s\n" % q("'reached'")
         return text
     return None
 

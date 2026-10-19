@@ -6,7 +6,27 @@ jots:
   - rules
   - ../../cves
 control: ../../jot-control.yaml
-# The application's own packages, which the dashboard uses to tell your code from libraries. The agent ignores it.
+# The application as a scope. A JOT that doesn't write scopes of its own only applies while one of these entry points is running,
+# so it leaves out startup, background threads and anything else that isn't the application at work. Each is a method, or an
+# annotation like "@dev.langchain4j.agent.tool.Tool", which is every method that carries it. A JOT that writes scopes uses those,
+# and scopes: [] means anywhere. Without an entry list the servlet service methods are used, and entry: [] means no application scope.
+# packages are the application's own code, which the dashboard uses to tell it from libraries. The agent ignores them.
 app:
-  - com.acme
-  - org.apache.jsp
+  entry:
+    - javax.servlet.Servlet.service
+    - jakarta.servlet.Servlet.service
+  packages:
+    - com.acme
+    - org.apache.jsp
+# Calls made while the platform loads classes or compiles pages are left out of what sensors report, since the JVM checks
+# jar signatures and Tomcat reads page source in the middle of requests. An entry is a package, a class or a class and
+# method, and matches everything inside it. The agent and the dashboard both read this list, and leave out the same
+# calls. Rules still see everything. Without a list these seven are used. An empty list, ignore: [], leaves out nothing.
+ignore:
+  - java.lang.ClassLoader
+  - java.net.URLClassLoader
+  - jdk.internal.loader
+  - org.apache.catalina.loader
+  - org.apache.jasper.compiler
+  - org.apache.jasper.JspCompilationContext.compile
+  - org.eclipse.jdt

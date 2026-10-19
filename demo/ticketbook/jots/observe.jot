@@ -142,9 +142,6 @@ sensors:
   description: Identifies hash algorithm usage
   methods:
   - java.security.MessageDigest.getInstance
-  scopes:
-  - javax.servlet.Servlet.service
-  - jakarta.servlet.Servlet.service
   captures:
   - "#P0"
 
@@ -173,20 +170,6 @@ sensors:
   captures:
   - '#P0.getName()'
 
-- name: native-library
-  description: Identifies the use of native libraries
-  methods:
-  - java.lang.System.load
-  - java.lang.System.loadLibrary
-  - java.lang.System.mapLibraryName
-  scopes:
-  - javax.servlet.Servlet.service
-  - jakarta.servlet.Servlet.service
-  captures:
-  - "#P0"
-  matchers:
-  - "!null"
-
 - name: sql-statement
   description: Identifies unparameterized database queries
   methods:
@@ -211,9 +194,6 @@ sensors:
   description: Identifies file and directory use (excludes jdk and appserver)
   methods:
   - java.io.File.<init>
-  scopes:
-  - javax.servlet.Servlet.service
-  - jakarta.servlet.Servlet.service
   captures:
   - "#OBJ.getCanonicalPath()"
   matchers:
@@ -228,9 +208,6 @@ sensors:
   description: Identifies the use of sockets
   methods:
   - java.net.Socket.<init>
-  scopes:
-  - javax.servlet.Servlet.service
-  - jakarta.servlet.Servlet.service
   captures:
   - "\"\"+#P0+\":\"+#P1"     # ""+#P0 is a shorthand String conversion
   matchers:
@@ -241,9 +218,6 @@ sensors:
   description: Records the host and protocol of each URL the application connects to
   methods:
   - java.net.URL.openConnection
-  scopes:
-  - javax.servlet.Servlet.service
-  - jakarta.servlet.Servlet.service
   captures:
   - '#OBJ.getHost() + ": " + #OBJ.getProtocol() + " port " + (#OBJ.getPort() == -1 ? #OBJ.getDefaultPort() : #OBJ.getPort())'
   matchers:

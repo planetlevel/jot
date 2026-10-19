@@ -1,5 +1,6 @@
 ---
-# TicketBook demo, the rules. A sensor with an exception is a rule, its message says why the call is bad.
+# TicketBook demo, the rules. A sensor with a block-when is a rule. Its description says what was found, and when the
+# condition is not just true the message adds the condition.
 # run.sh always loads this file. MODE decides what the rules do.
 #   monitor   the rules only report, nothing is stopped, the attacks still work
 #   protect   the rules stop the call
@@ -10,33 +11,27 @@ sensors:
 
 # A web request must never start an operating system process.
 - name: native-process
-  description: Blocks attempts to start native processes from a web request
+  description: A web request started a process
   methods:
   - java.lang.ProcessBuilder.<init>
-  scopes:
-  - javax.servlet.Servlet.service
-  - jakarta.servlet.Servlet.service
   captures:
   - "#ARGS"
-  exception: Attempt to create a process from within Servlet.service() prevented by JOT rule 'native-process'
+  block-when: true
 
 # A web request must never deserialize objects.
 - name: object-deserialization
-  description: Blocks attempts to deserialize objects from a web request
+  description: A web request deserialized an object
   methods:
   - java.io.ObjectInputStream.readObject
   - java.io.ObjectInputStream.readUnshared
-  scopes:
-  - javax.servlet.Servlet.service
-  - jakarta.servlet.Servlet.service
   captures:
   - "#ARGS"
-  exception: Attempt to deserialize an object from within Servlet.service() prevented by JOT rule 'object-deserialization'
+  block-when: true
 
 # The microsandbox for expression injection. Evaluating an expression is allowed, but while one is being
 # evaluated it can't start a process or open a socket.
 - name: expression
-  description: Stops expressions from starting processes or opening sockets while they are evaluated
+  description: An expression being evaluated started a process or opened a socket
   methods:
   - java.lang.ProcessBuilder.<init>
   - java.net.Socket.<init>
@@ -45,13 +40,13 @@ sensors:
   - jakarta.el.ValueExpression.getValue
   captures:
   - "#ARGS"
-  exception: Expression language sandbox escape prevented by JOT rule 'expression'
+  block-when: true
 
 # The pattern based alternative, which looks for attack text in the expression itself. It is easier to get
 # around than the sandbox above. Add "protect: false" to stage it as report only, and the dashboard can then
 # promote it to block.
 - name: expression-suspicious
-  description: Blocks expressions that contain reflection or process APIs
+  description: An expression contained reflection or process APIs
   methods:
   - javax.el.ExpressionFactory.createValueExpression
   - jakarta.el.ExpressionFactory.createValueExpression
@@ -62,17 +57,30 @@ sensors:
   - getRuntime
   - ProcessBuilder
   - forName
-  exception: Suspicious expression detected by JOT rule 'expression-suspicious'
+  block-when: true
 
 # The JVM must never be shut down by a web request.
 - name: jvm-exit
-  description: Blocks attempts to end the JVM from a web request
+  description: A web request tried to end the JVM
   methods:
   - java.lang.Runtime.exit
   - java.lang.Runtime.halt
-  scopes:
-  - javax.servlet.Servlet.service
-  - jakarta.servlet.Servlet.service
   captures:
   - "#ARGS"
-  exception: Attempt to end the JVM from within Servlet.service() prevented by JOT rule 'jvm-exit'
+  block-when: true
+
+# Native code loaded by a web request can do anything the JVM can. Libraries are loaded once, often on first use inside the
+# first request (a JDBC driver extracting its native part, for example), so run in monitor for a while, see what loads, then
+# move to protect.
+- name: native-library
+  description: A web request loaded a native library
+  methods:
+  - java.lang.System.load
+  - java.lang.System.loadLibrary
+  - java.lang.Runtime.load
+  - java.lang.Runtime.loadLibrary
+  captures:
+  - "#P0"
+  matchers:
+  - "!null"
+  block-when: true

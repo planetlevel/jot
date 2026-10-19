@@ -17,12 +17,13 @@ rules report or block. Add your own rules by adding a path to that file.
 
 | Where | What |
 |---|---|
-| `jots/observe.jot` | 18 sensors that only record what they see, such as routes, users, roles, ciphers, hashes, queries, files and sockets |
+| `jots/observe.jot` | 22 sensors that only record what they see, such as routes, users, roles, ciphers, hashes, queries, files and sockets |
 | `jots/reports.jot` | the original reports, such as the Access Control Matrix and Encryption Algorithms |
-| `rules/protect.jot` | 4 rules |
+| `rules/protect.jot` | 6 rules |
 | `../../cves/` | the CVE microsandboxes, one per vulnerable library in the app |
 
-The rules are `native-process` (a web request must not start a process), `object-deserialization`,
+The rules are `native-process` (a web request must not start a process), `object-deserialization`, `native-library`
+(a web request must not load native code), `jvm-exit` (a web request must not end the JVM),
 `expression` (an expression being evaluated must not start a process or open a socket) and
 `expression-suspicious` (looks for attack text in an expression, and is easier to get around than the sandbox).
 

@@ -1,0 +1,25 @@
+sensors:
+# no scopes, so it applies only while the application is running, which here is inside a method carrying @Entry
+- name: file-in-app
+  methods:
+  - java.io.File.<init>
+  captures:
+  - "#P0"
+  matchers:
+  - ^(inside|outside)/
+- name: digest-in-app
+  methods:
+  - java.security.MessageDigest.getInstance
+  captures:
+  - "#P0"
+  matchers:
+  - ^(SHA-256|MD5)$
+# scopes: [] means anywhere, also before and after the application runs
+- name: file-anywhere
+  scopes: []
+  methods:
+  - java.io.File.<init>
+  captures:
+  - "#P0"
+  matchers:
+  - ^(inside|outside)/

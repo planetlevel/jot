@@ -8,4 +8,4 @@ sensors:
   - org.apache.logging.log4j.core.lookup.JndiLookup.lookup
   captures:
   - "#ARGS"
-  exception: CVE-2021-44228 microsandbox blocked process execution
+  block-when: true

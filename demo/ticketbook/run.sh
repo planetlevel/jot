@@ -52,7 +52,7 @@ case "$MODE" in monitor|protect) ;; *) echo "MODE must be monitor or protect" >&
 # left over from an earlier session can't quietly change what this run does.
 CONTROL=${JOT_CONTROL:-$ROOT/jot-control.yaml}
 rm -f "$CONTROL"
-[ "$MODE" = monitor ] && printf 'v: 1\nprotect: false\nrules: {}\nby: run.sh\n' > "$CONTROL"
+[ "$MODE" = monitor ] && printf 'v: 1\nprotect: false\nsensors: {}\nby: run.sh\n' > "$CONTROL"
 
 LOG=${JOT_LOG:-$ROOT/jot-events.jsonl}
 export CATALINA_BASE=$BASE

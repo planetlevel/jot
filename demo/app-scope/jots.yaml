@@ -1,0 +1,5 @@
+jots:
+  - watch.jot
+app:
+  entry:
+    - "@Demo$Entry"
