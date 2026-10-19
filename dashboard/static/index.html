@@ -1275,6 +1275,9 @@ function jotEditor(item, canSave) {
         jotSelected = where;
         try { history.replaceState(null, "", "#" + currentPage + "/" + encodeURIComponent(done.name)); } catch (e) { /* ignore */ }
       }
+      // what is in the editor is now what the file says. This editor compares itself with the old file, and would stay
+      // marked as unsaved, so it is dropped and drawn again from the saved one
+      if (keptEditor && keptEditor.editor === editor) { editor.destroy(); keptEditor = null; }
       await loadJots();
     } catch (e) {
       status.className = "editstatus bad";

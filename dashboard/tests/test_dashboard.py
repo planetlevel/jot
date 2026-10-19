@@ -1902,6 +1902,182 @@ class AlwaysCurrentTests(unittest.TestCase):
         self.assertNotIn("setInterval(tick, 6000)", page)
 
 
+class SaveFlowTests(unittest.TestCase):
+    CHROME = DraftUiTests.CHROME
+
+    # runs in the page. It edits a sensor in the editor, presses Save, and says what the page looks like afterwards
+    SCRIPT = """
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const until = async (f, ms = 5000) => { const t = Date.now(); while (Date.now() - t < ms) { const v = f(); if (v) return v; await wait(40); } return null; };
+      const button = (text) => [...document.querySelectorAll("#jotDetail button")].find((b) => b.textContent === text);
+      const out = {};
+      try {
+        location.hash = "#jots/crypto-cipher";
+        await until(() => document.querySelector("#jotDetail .cm-content"));
+        const first = keptEditor.editor;
+        keptEditor.editor.set(keptEditor.editor.get().replace("Records ciphers", "Records every cipher"));
+        await until(() => button("Save") && !button("Save").disabled);
+        out.saveWasOn = !!button("Save") && !button("Save").disabled;
+        button("Save").click();
+        await until(() => /Saved to/.test(document.getElementById("jotDetail").innerText));
+        await wait(3500);                      // past a refresh of the page too
+        const status = document.querySelector("#jotDetail .editstatus");
+        out.status = status ? status.textContent : null;
+        out.dirty = editorDirty();
+        out.replacedEditor = keptEditor.editor !== first;
+        out.text = keptEditor.editor.get();
+        out.saveDisabled = button("Save").disabled;
+        out.revertHidden = [...document.querySelectorAll("#jotDetail button")].find((b) => b.textContent === "Revert").hidden;
+        // and leaving is allowed now
+        button("Close").click();
+        await wait(300);
+        out.closed = document.getElementById("jotDetail").hidden;
+      } catch (e) { out.error = String(e); }
+      const pre = document.createElement("pre"); pre.id = "testResult"; pre.textContent = JSON.stringify(out); document.body.append(pre);
+    })();
+    """
+
+    HEAD = """
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const until = async (f, ms = 5000) => { const t = Date.now(); while (Date.now() - t < ms) { const v = f(); if (v) return v; await wait(40); } return null; };
+      const button = (text) => [...document.querySelectorAll("#jotDetail button")].find((b) => b.textContent === text);
+    """
+
+    def page(self, body):
+        """Opens the dashboard in Chrome on a file with one sensor, runs body in the page, and returns what it put in out, and the path."""
+        env = Env()
+        path = os.path.join(env.dir, "a.jot")
+        with open(path, "w") as f:
+            f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n  - '#P0'\n")
+        store.load_sensors(env.ingestor.db, [env.dir])
+        app = server.App(env.db, env.ingestor, jot_paths=[env.dir], editable=True)
+        script = "(async () => { %s const out = {}; try { %s } catch (e) { out.error = String(e); } " \
+                 "const pre = document.createElement('pre'); pre.id = 'testResult'; pre.textContent = JSON.stringify(out); document.body.append(pre); })();" % (self.HEAD, body)
+
+        class Injected(server.Handler):
+            def do_GET(self):
+                if self.path.split("?")[0] in ("/", "/index.html"):
+                    with open(os.path.join(server.HERE, "static", "index.html"), encoding="utf-8") as fh:
+                        html = fh.read().replace("</body>", "<script>" + script + "</script></body>")
+                    return self._send(200, html.encode(), "text/html; charset=utf-8")
+                return super().do_GET()
+
+        httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), type("H", (Injected,), {"app": app, "port": 0, "enforce_host": True}))
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        done = subprocess.run([self.CHROME, "--headless=new", "--disable-gpu", "--no-first-run", "--user-data-dir=" + tempfile.mkdtemp(),
+                               "--virtual-time-budget=40000", "--dump-dom", "http://127.0.0.1:%d/" % port],
+                              capture_output=True, text=True, timeout=120)
+        found = re.search(r'<pre id="testResult">(.*?)</pre>', done.stdout, re.S)
+        self.assertIsNotNone(found, done.stdout[-600:])
+        import html as htmllib
+        out = json.loads(htmllib.unescape(found.group(1)))
+        self.assertNotIn("error", out, out)
+        return out, path
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_typed_changes_survive_a_refresh_and_hold_you_until_they_are_saved_or_reverted(self):
+        out, path = self.page("""
+          location.hash = "#jots/crypto-cipher";
+          await until(() => document.querySelector("#jotDetail .cm-content"));
+          const first = keptEditor.editor;
+          first.set(first.get().replace("Records ciphers", "Typed but not saved"));
+          await wait(3800);                                   // the page refreshes its data and draws the drawer again
+          out.sameEditor = keptEditor.editor === first;
+          out.text = keptEditor.editor.get();
+          button("Close").click();
+          await wait(300);
+          out.stillOpen = !document.getElementById("jotDetail").hidden;
+          out.warned = /aren't saved/.test(document.querySelector("#jotDetail .editstatus").textContent);
+          button("Revert").click();
+          await wait(200);
+          out.reverted = keptEditor.editor.get().indexOf("Records ciphers") >= 0;
+          button("Close").click();
+          await wait(300);
+          out.closedAfterRevert = document.getElementById("jotDetail").hidden;
+        """)
+        self.assertTrue(out["sameEditor"], "a refresh doesn't throw the typing away")
+        self.assertIn("Typed but not saved", out["text"])
+        self.assertTrue(out["stillOpen"], "unsaved typing holds you in the drawer")
+        self.assertTrue(out["warned"])
+        self.assertTrue(out["reverted"])
+        self.assertTrue(out["closedAfterRevert"], "and Revert lets you go")
+        with open(path) as f:
+            self.assertIn("Records ciphers", f.read(), "nothing was written")
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_a_rename_ends_clean_on_the_new_name(self):
+        out, path = self.page("""
+          location.hash = "#jots/crypto-cipher";
+          await until(() => document.querySelector("#jotDetail .cm-content"));
+          keptEditor.editor.set(keptEditor.editor.get().replace("name: crypto-cipher", "name: crypto-cipher-use"));
+          await until(() => button("Save") && !button("Save").disabled);
+          button("Save").click();
+          await until(() => /Renamed to crypto-cipher-use/.test(document.getElementById("jotDetail").innerText));
+          await wait(3500);
+          out.title = document.querySelector("#jotDetail h2").textContent;
+          out.hash = location.hash;
+          out.dirty = editorDirty();
+          out.status = document.querySelector("#jotDetail .editstatus").textContent;
+          button("Close").click();
+          await wait(300);
+          out.closed = document.getElementById("jotDetail").hidden;
+        """)
+        self.assertEqual("crypto-cipher-use", out["title"])
+        self.assertEqual("#jots/crypto-cipher-use", out["hash"])
+        self.assertFalse(out["dirty"])
+        self.assertIn("Renamed to crypto-cipher-use", out["status"])
+        self.assertTrue(out["closed"])
+        with open(path) as f:
+            self.assertIn("name: crypto-cipher-use", f.read())
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_after_a_save_the_editor_is_clean_says_saved_and_lets_you_leave(self):
+        env = Env()
+        path = os.path.join(env.dir, "a.jot")
+        with open(path, "w") as f:
+            f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n  - '#P0'\n")
+        store.load_sensors(env.ingestor.db, [env.dir])
+        app = server.App(env.db, env.ingestor, jot_paths=[env.dir], editable=True)
+        script = self.SCRIPT
+
+        class Injected(server.Handler):
+            def do_GET(self):
+                if self.path.split("?")[0] in ("/", "/index.html"):
+                    with open(os.path.join(server.HERE, "static", "index.html"), encoding="utf-8") as fh:
+                        html = fh.read().replace("</body>", "<script>" + script + "</script></body>")
+                    return self._send(200, html.encode(), "text/html; charset=utf-8")
+                return super().do_GET()
+
+        httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), type("H", (Injected,), {"app": app, "port": 0, "enforce_host": True}))
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        done = subprocess.run([self.CHROME, "--headless=new", "--disable-gpu", "--no-first-run", "--user-data-dir=" + tempfile.mkdtemp(),
+                               "--virtual-time-budget=30000", "--dump-dom", "http://127.0.0.1:%d/" % port],
+                              capture_output=True, text=True, timeout=120)
+        found = re.search(r'<pre id="testResult">(.*?)</pre>', done.stdout, re.S)
+        self.assertIsNotNone(found, done.stdout[-600:])
+        import html as htmllib
+        out = json.loads(htmllib.unescape(found.group(1)))
+        self.assertNotIn("error", out, out)
+        self.assertTrue(out["saveWasOn"])
+        with open(path) as f:
+            self.assertIn("Records every cipher", f.read(), "it was written")
+        self.assertIn("Saved to a.jot", out["status"], "the editor says so, and doesn't say there is something unsaved")
+        self.assertNotIn("aren't saved", out["status"])
+        self.assertFalse(out["dirty"], "what is in the editor is what the file says")
+        self.assertTrue(out["replacedEditor"], "it is drawn again from the file")
+        self.assertIn("Records every cipher", out["text"])
+        self.assertTrue(out["saveDisabled"])
+        self.assertTrue(out["revertHidden"])
+        self.assertTrue(out["closed"], "nothing holds you in the drawer")
+
+
 class AgentProblemsTests(unittest.TestCase):
     def test_what_the_agent_left_out_is_listed_with_the_issues(self):
         env = Env()
