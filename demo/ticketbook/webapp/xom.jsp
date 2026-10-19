@@ -8,7 +8,7 @@
 <html>
 
 <head>
-<title>XML External Entity (XXE)</title>
+<title>XML External Entity (XXE) in XOM</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <link href="/ticketbook/css/bootstrap.min.css" rel="stylesheet">
@@ -17,7 +17,7 @@
 
 <body>
 <%@ include file="/menu.jsp" %>
-<H1>XML External Entity (XXE)</H1>
+<H1>XML External Entity (XXE) in XOM</H1>
 
 <p>XML external entity attacks are a way of adding a &lt;DOCTYPE&gt; to an XML document and using it to trick a server-side XML
 parser into doing things that it wasn't supposed to, like accessing protected files and URLs, and potentially exposing the data they contain.</p>

@@ -34,7 +34,7 @@
 %>
 
 <head>
-<title>Network Dashboard</title>
+<title>Command Injection</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <link href="/ticketbook/css/bootstrap.min.css" rel="stylesheet">

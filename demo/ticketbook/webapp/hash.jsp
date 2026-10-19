@@ -6,7 +6,7 @@
 <html>
 
 <head>
-<title>Weak Hash Algorithms</title>
+<title>Weak Hash Algorithm</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <link href="/ticketbook/css/bootstrap.min.css" rel="stylesheet">
