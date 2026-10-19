@@ -18,7 +18,7 @@ class UnquoteTests(unittest.TestCase):
             self.assertTrue(needs_quotes(value), repr(value))
 
     def test_quotes_go_where_plain_text_reads_the_same(self):
-        for value in ("get-routes", "javax.servlet.Servlet.service", "java.lang.ProcessBuilder.<init>", r"\.class", "a, b (c)",
+        for value in ("get-route", "javax.servlet.Servlet.service", "java.lang.ProcessBuilder.<init>", r"\.class", "a, b (c)",
                       "Blocks attempts to start native processes", "it's fine", 'say "hi"', "static java.util.UUID.<init>", "#P0.getRequestURI()".replace("#", "x")):
             self.assertFalse(needs_quotes(value), repr(value))
 

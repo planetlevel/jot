@@ -92,6 +92,37 @@ class SensorTest {
 	}
 
 	@Test
+	void testRoleCheckRecordsTheRoleAndTheAnswerButNotNulls() {
+		// the get-role sensor, which captures like ADMIN: true and leaves out a null role or a null answer
+		Sensor s = new Sensor().method("a.b.Class.method").capture("#P0 + \": \" + #RET").matcher("!^null:").matcher("!: null$");
+		StackTraceElement[] stack = new Exception().getStackTrace();
+		Assertions.assertEquals("[ADMIN: true]", SafeString.format(s.execute("test", "a.b.Class.Method", "foo", new Object[] { "ADMIN" }, Boolean.TRUE, stack), false));
+		Assertions.assertEquals("[MANAGER: false]", SafeString.format(s.execute("test", "a.b.Class.Method", "foo", new Object[] { "MANAGER" }, Boolean.FALSE, stack), false));
+		Assertions.assertEquals("[nullable: false]", SafeString.format(s.execute("test", "a.b.Class.Method", "foo", new Object[] { "nullable" }, Boolean.FALSE, stack), false),
+				"a role with null in its name is still a role");
+		Assertions.assertEquals("[]", SafeString.format(s.execute("test", "a.b.Class.Method", "foo", new Object[] { null }, Boolean.FALSE, stack), false), "no role");
+		Assertions.assertEquals("[]", SafeString.format(s.execute("test", "a.b.Class.Method", "foo", new Object[] { "ADMIN" }, null, stack), false), "no answer");
+	}
+
+	@Test
+	void testCipherUseRecordsTheAlgorithmAndTheModeFromInit() throws Exception {
+		// the get-cipher sensor, on Cipher.init, which says what was really used and for what
+		Sensor s = new Sensor().method("javax.crypto.Cipher.init")
+				.capture("#OBJ.getAlgorithm() + \": \" + (#P0 == 1 ? \"encrypt\" : #P0 == 2 ? \"decrypt\" : \"other\")");
+		StackTraceElement[] stack = new Exception().getStackTrace();
+		javax.crypto.SecretKey key = new javax.crypto.spec.SecretKeySpec(new byte[16], "AES");
+		javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding");
+		Assertions.assertEquals("[AES/CBC/PKCS5Padding: encrypt]", SafeString.format(
+				s.execute("test", "javax.crypto.Cipher.init", cipher, new Object[] { javax.crypto.Cipher.ENCRYPT_MODE, key }, null, stack), false));
+		Assertions.assertEquals("[AES/CBC/PKCS5Padding: decrypt]", SafeString.format(
+				s.execute("test", "javax.crypto.Cipher.init", cipher, new Object[] { javax.crypto.Cipher.DECRYPT_MODE, key }, null, stack), false));
+		Assertions.assertEquals("[AES/CBC/PKCS5Padding: other]", SafeString.format(
+				s.execute("test", "javax.crypto.Cipher.init", cipher, new Object[] { javax.crypto.Cipher.WRAP_MODE, key }, null, stack), false));
+		Assertions.assertFalse(SafeString.format(
+				s.execute("test", "javax.crypto.Cipher.init", cipher, new Object[] { 1, key }, null, stack), false).contains("0000"), "the key itself is never recorded");
+	}
+
+	@Test
 	void testNegativeMatches() {
 		Sensor s = new Sensor().method("a.b.Class.method").capture("#P0").matcher("!^\\[ca");
 		Object ret = s.execute("test", "a.b.Class.Method", "foo", new String[] { "bar" }, "zoo",

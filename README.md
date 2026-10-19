@@ -392,10 +392,10 @@ independent of the event output, so they work the same with `jot.output=console`
          type: "table"
 
          # A sensor to be used to populate row headers (compare, table and graph)
-         rows: "get-routes"
+         rows: "get-route"
 
          # A sensor, or a comma separated list of sensors, to be used to populate columns
-         cols: "get-users"
+         cols: "get-user"
 
 compare, table and graph relate a row to a column when both were observed during the same request,
 in either order. Outside of a servlet request, events are related when they happen on the same thread.

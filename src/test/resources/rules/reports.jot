@@ -7,52 +7,52 @@ reports:
 
  - name: Test Coverage Matrix
    type: compare
-   rows: get-routes
-   cols: get-users
+   rows: get-route
+   cols: get-user
    
  - name: Access Control Matrix
    type: compare
-   rows: get-routes
+   rows: get-route
    cols: get-role
    
  - name: Role Membership
    type: compare
-   rows: get-users
-   cols: get-role-membership   
+   rows: get-user
+   cols: get-role
    
  - name: Cache Headers
    type: table
-   rows: get-routes
+   rows: get-route
    cols: get-cache-header
    
  - name: Encryption Algorithms
    type: compare
-   rows: get-routes
+   rows: get-route
    cols: get-ciphers  
    
  - name: Unauthorized Files
    type: table
-   rows: get-routes
+   rows: get-route
    cols: get-files
    
  - name: Database Queries
    type: table
-   rows: get-routes
+   rows: get-route
    cols: get-unsafe-queries
    
  - name: Encryption Users
    type: compare
-   rows: get-users
+   rows: get-user
    cols: get-ciphers
       
  - name: HTTP Parameters
    type: table
-   rows: get-routes
+   rows: get-route
    cols: get-accessed-param-names, get-received-param-names
    
  - name: Request Forwards
    type: table
-   rows: get-routes
+   rows: get-route
    cols: get-forwards
    
  - name: Timeseries
@@ -62,6 +62,6 @@ reports:
     
  - name: Exceptions
    type: table
-   rows: get-routes
+   rows: get-route
    cols: get-exceptions
    

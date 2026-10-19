@@ -7,16 +7,16 @@ sensors:
 
 ##### the application #####
 
-- name: get-routes
-  description: Identifies the route for this HTTP request
+- name: get-route
+  description: Identifies the entry point for this HTTP request
   methods:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
   - "#P0.getRequestURI()"
 
-- name: get-users
-  description: Identifies user names
+- name: get-user
+  description: Identifies the user name of current user if authenticated
   methods:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
@@ -24,22 +24,15 @@ sensors:
   - "#P0.getRemoteUser()==null ? \"Guest\" : #P0.getRemoteUser()"
 
 - name: get-role
-  description: Identifies roles
+  description: Records authorization checks and whether the current user has the role
   methods:
   - javax.servlet.ServletRequest.isUserInRole
   - jakarta.servlet.ServletRequest.isUserInRole
   captures:
-  - "#P0"
-
-- name: get-role-membership
-  description: Figures out which users have which roles
-  methods:
-  - javax.servlet.ServletRequest.isUserInRole
-  - jakarta.servlet.ServletRequest.isUserInRole
-  captures:
-  - "#RET ? #P0 : \"null\""
+  - '#P0 + ": " + #RET'
   matchers:
-  - "!null"
+  - '!^null:'
+  - '!: null$'
 
 - name: get-received-param-names
   description: Identifies parameter names used in HTTP requests
@@ -63,8 +56,8 @@ sensors:
   matchers:
   - "!null"
 
-- name: get-redirects
-  description: Extracts any response redirects in this app
+- name: get-redirect
+  description: Identifies a response redirect
   methods:
   - javax.servlet.ServletResponse.sendRedirect
   - jakarta.servlet.ServletResponse.sendRedirect
@@ -73,8 +66,8 @@ sensors:
   matchers:
   - "!null"
 
-- name: get-forwards
-  description: Extracts any request forwards in this app
+- name: get-forward
+  description: Identifies a request forward
   methods:
   - javax.servlet.ServletRequest.getRequestDispatcher
   - jakarta.servlet.ServletRequest.getRequestDispatcher
@@ -85,8 +78,8 @@ sensors:
   matchers:
   - "!null"
 
-- name: get-filters
-  description: Extracts the filters in this app
+- name: get-filter
+  description: Identify a filter being added
   methods:
   - javax.servlet.ServletContext.addFilter
   - jakarta.servlet.ServletContext.addFilter
@@ -95,8 +88,8 @@ sensors:
   matchers:
   - "!null"
 
-- name: get-servlets
-  description: Identifies the servlets in this app
+- name: get-servlet
+  description: Identify a servlet being added
   methods:
   - javax.servlet.ServletContext.addServlet
   - jakarta.servlet.ServletContext.addServlet
@@ -106,7 +99,7 @@ sensors:
   - "!null"
 
 - name: get-cache-header
-  description: Identifies whether cache header is set
+  description: Identifies a cache header being set
   methods:
   - javax.servlet.ServletResponse.setHeader
   - jakarta.servlet.ServletResponse.setHeader
@@ -117,14 +110,12 @@ sensors:
 
 ##### security relevant behavior #####
 
-- name: get-ciphers
-  description: Identifies encryption ciphers
+- name: get-cipher
+  description: Records each use of an encryption cipher, its algorithm and whether it encrypts or decrypts
   methods:
-  - javax.crypto.Cipher.getInstance
+  - javax.crypto.Cipher.init
   captures:
-  - "#P0"
-  matchers:
-  - "!null"
+  - '#OBJ.getAlgorithm() + ": " + (#P0 == 1 ? "encrypt" : #P0 == 2 ? "decrypt" : "other")'
 
 - name: get-hashes
   description: Identifies hash algorithm usage

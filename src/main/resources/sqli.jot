@@ -3,7 +3,7 @@
 
 sensors: 
 
-- name: get-routes
+- name: get-route
   description: Identifies the route for this HTTP request
   methods:
   - javax.servlet.Servlet.service

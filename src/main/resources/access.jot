@@ -3,7 +3,7 @@
 
 sensors:
 
-- name: get-routes
+- name: get-route
   description: Identifies the route for this HTTP request
   methods:
   - javax.servlet.Servlet.service
@@ -11,7 +11,7 @@ sensors:
   captures:
   - "#P0.getRequestURI()"
 
-- name: get-users
+- name: get-user
   description: Identifies user names
   methods:
   - javax.servlet.Servlet.service
@@ -20,23 +20,26 @@ sensors:
   - "#P0.getRemoteUser() ?: \"Guest\""
 
 - name: get-role
-  description: Identifies roles
+  description: "Records each role check and whether the current user has the role, like ADMIN: true"
   methods:
   - javax.servlet.ServletRequest.isUserInRole
   - jakarta.servlet.ServletRequest.isUserInRole
   captures:
-  - "#P0"
+  - '#P0 + ": " + #RET'
+  matchers:
+  - '!^null:'
+  - '!: null$'
     
   
 reports:
 
  - name: Test Coverage Matrix
    type: compare
-   rows: get-routes
-   cols: get-users
+   rows: get-route
+   cols: get-user
    
  - name: Access Control Matrix
    type: compare
-   rows: get-routes
+   rows: get-route
    cols: get-role
    

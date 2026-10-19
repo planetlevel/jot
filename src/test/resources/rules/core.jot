@@ -5,13 +5,11 @@
 sensors:
 
 - name: get-ciphers
-  description: Identifies encryption ciphers
+  description: Records each use of an encryption cipher, its algorithm and whether it encrypts or decrypts
   methods:
-  - javax.crypto.Cipher.getInstance
+  - javax.crypto.Cipher.init
   captures:
-  - "#P0"
-  matchers:
-  - "!null"
+  - '#OBJ.getAlgorithm() + ": " + (#P0 == 1 ? "encrypt" : #P0 == 2 ? "decrypt" : "other")'
 
 
 - name: native-libraries
