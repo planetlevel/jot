@@ -48,9 +48,11 @@ Grids (crosstabs)
   this order, a row label, a column label and optionally a value. Use SELECT DISTINCT. Set chart to "grid".
   The dashboard builds the columns from the values it finds. A cell shows the value, or X when there is no
   value column. Example for routes by role, relating events from the same request
-    SELECT DISTINCT r.capture AS route, c.capture AS role
+    SELECT DISTINCT r.capture AS route, trim(substr(c.capture, 1, instr(c.capture, ':') - 1)) AS role,
+           trim(substr(c.capture, instr(c.capture, ':') + 1)) AS value
     FROM events r JOIN events c ON r.run = c.run AND r.trace = c.trace
-    WHERE r.sensor = 'get-routes' AND c.sensor = 'get-role' ORDER BY 1, 2
+    WHERE r.sensor = 'get-route' AND c.sensor = 'get-role' ORDER BY 1, 2
+  (get-role captures the role and whether the user has it, like ADMIN: true)
 - The reports section lists the reports the user defined in their .jot files, which they may ask you to
   recreate or adapt. The types are
     list     rows are the code that called the instrumented method (call_site), one column for the sensor

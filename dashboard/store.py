@@ -684,8 +684,8 @@ def _lit(text):
 
 
 # the name:value convention of the original compare report. A capture with no colon is all name.
-_NAME = "CASE WHEN instr({c}, ':') > 0 THEN substr({c}, 1, instr({c}, ':') - 1) ELSE {c} END"
-_VALUE = "CASE WHEN instr({c}, ':') > 0 THEN substr({c}, instr({c}, ':') + 1) ELSE 'X' END"
+_NAME = "trim(CASE WHEN instr({c}, ':') > 0 THEN substr({c}, 1, instr({c}, ':') - 1) ELSE {c} END)"
+_VALUE = "trim(CASE WHEN instr({c}, ':') > 0 THEN substr({c}, instr({c}, ':') + 1) ELSE 'X' END)"
 
 
 def report_sql(rtype, rows, cols):
@@ -755,8 +755,8 @@ def search_where(query):
         if field is None:
             cond = "(%s) LIKE %s" % (SEARCH_TEXT, _like(text))
         elif SEARCH_FIELDS[field] == "route":
-            # the request an event happened in came in at this route, as the get-routes sensor saw it
-            seen = "SELECT run, trace FROM events_raw WHERE sensor = 'get-routes'"
+            # the request an event happened in came in at this route, as the get-route sensor saw it
+            seen = "SELECT run, trace FROM events_raw WHERE sensor IN %s" % ROUTE_SENSORS_SQL
             cond = ("(run, trace) NOT IN (%s)" % seen if text == NO_REQUEST
                     else "(run, trace) IN (%s AND capture = %s)" % (seen, _lit(text)))
         elif SEARCH_FIELDS[field] == "number":
@@ -774,7 +774,12 @@ def search_where(query):
 # ---------------------------------------------------------------------------- graph
 
 NO_REQUEST = "(outside a request)"
-JUMPS = ("get-forwards", "get-redirects")   # sensors whose capture is another route
+# the sensor that says which route a request came in at. It was called get-routes before it was get-route, and the log
+# still has events from the old name
+ROUTE_SENSORS = ("get-route", "get-routes")
+ROUTE_SENSORS_SQL = "(%s)" % ", ".join("'%s'" % x for x in ROUTE_SENSORS)
+# sensors whose capture is another route. They were get-forwards and get-redirects before they were singular
+JUMPS = ("get-forward", "get-forwards", "get-redirect", "get-redirects")
 
 
 def _short(name):
@@ -790,13 +795,13 @@ def _page_of(route):
 
 def graph_rows(db_path, route=None):
     """The events of the graph in the order they happened, request by request. The route is the first request the
-    event happened in, as the get-routes sensor saw it. Events of one request are together and in the agent's own
+    event happened in, as the get-route sensor saw it. Events of one request are together and in the agent's own
     order, which is the order the application caused them."""
-    where = "WHERE sensor <> 'get-routes' AND stack IS NOT NULL"
+    where = "WHERE sensor NOT IN %s AND stack IS NOT NULL" % ROUTE_SENSORS_SQL
     sql = """SELECT route, run, trace, sensor, action, capture, stack FROM (
-               SELECT (SELECT r.capture FROM events_raw r WHERE r.run = e.run AND r.trace = e.trace AND r.sensor = 'get-routes'
+               SELECT (SELECT r.capture FROM events_raw r WHERE r.run = e.run AND r.trace = e.trace AND r.sensor IN %s
                        ORDER BY r.pk LIMIT 1) AS route, e.run, e.trace, e.id, e.sensor, e.action, e.capture, e.stack
-               FROM events e %s) %s ORDER BY run, trace, id""" % (where, "WHERE route = %s" % _lit(route) if route else "")
+               FROM events e %s) %s ORDER BY run, trace, id""" % (ROUTE_SENSORS_SQL, where, "WHERE route = %s" % _lit(route) if route else "")
     return run_query(db_path, sql, limit=GRAPH_ROW_LIMIT)
 
 

@@ -173,6 +173,8 @@
   #eventDrawer .when, #jotDetail .when { color: var(--muted); font-size: 13px; margin-top: 4px; }
   #eventDrawer pre.value, #jotDetail pre.value { margin: 0; padding: 10px 12px; background: var(--code); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere;
     font-size: 13px; max-height: 260px; overflow: auto; }
+  table.list th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  table.list th.sortable:hover { color: var(--text); }
   #jotDetail .editor .cm-editor { max-height: 60vh; }
   #jotDetail .editor .cm-scroller { overflow: auto; }
   #jotDetail .codebox:has(.editor) .copy { z-index: 5; }
@@ -424,7 +426,7 @@ const PRESETS = [
   { label: "CVE frequency", chart: "bar", title: "CVE frequency, events by CVE sensor. A rule counts every sink call, so a monitored entry can count more than once",
     sql: "SELECT sensor || ' (' || action || ')' AS cve, COUNT(*) AS events\nFROM events WHERE sensor LIKE 'cve-%' GROUP BY sensor, action ORDER BY events DESC" },
   { label: "CVEs by route", chart: "table", title: "CVEs by route, which requests reach vulnerable code or trigger a rule",
-    sql: "SELECT r.capture AS route, c.sensor AS cve, c.action, COUNT(*) AS events\nFROM events c JOIN events_raw r ON r.run = c.run AND r.trace = c.trace AND r.sensor = 'get-routes'\nWHERE c.sensor LIKE 'cve-%' GROUP BY r.capture, c.sensor, c.action ORDER BY events DESC" },
+    sql: "SELECT r.capture AS route, c.sensor AS cve, c.action, COUNT(*) AS events\nFROM events c JOIN events_raw r ON r.run = c.run AND r.trace = c.trace AND r.sensor = 'get-route'\nWHERE c.sensor LIKE 'cve-%' GROUP BY r.capture, c.sensor, c.action ORDER BY events DESC" },
   { label: "Sinks in CVEs", chart: "table", title: "Sinks in CVEs, the dangerous calls a CVE rule saw inside vulnerable code, one count for every call",
     sql: "SELECT method_name AS sink, sensor AS cve, action, COUNT(*) AS events, MAX(capture) AS example\nFROM events WHERE sensor LIKE 'cve-%' AND sensor NOT LIKE '%-entered' GROUP BY method_name, sensor, action ORDER BY events DESC" },
   { label: "CVE payloads", chart: "table", title: "CVE payloads, what was passed into vulnerable code",
@@ -499,7 +501,14 @@ function showPage(address) {
   }
   setTimer();
 }
-window.addEventListener("hashchange", () => showPage(location.hash.slice(1)));
+window.addEventListener("hashchange", () => {
+  if (editorDirty()) {
+    // going anywhere but the JOT being edited is put back, without adding to the history
+    const here = "#" + currentPage + "/" + encodeURIComponent(keptEditor.item.name);
+    if (location.hash !== here) { holdForEdits(); try { history.replaceState(null, "", here); } catch (e) { /* ignore */ } return; }
+  }
+  showPage(location.hash.slice(1));
+});
 
 // ---- protection. Agents read a control file, nothing here reaches an agent.
 let controlState = null;
@@ -853,9 +862,21 @@ function drawPicker() {
 let jots = null;
 let jotSelected = null;       // "kind:name"
 let savedNote = null;         // what to say in the editor after a save, { key, text }
-let keptEditor = null;        // the open JOT's editor, { key, original, node, editor, focused, scroll }, see jotEditor
+let keptEditor = null;        // the open JOT's editor, { key, item, original, node, editor, warn, focused, scroll }, see jotEditor
+let jotSort = { by: "Name", dir: 1 };         // how the list of sensors and rules is sorted, dir 1 is the column's first direction
 let jotOrder = { jots: [], reports: [] };   // what each page's list shows, in order, so the panel can step through it
-let pendingSelect = null;     // a name from the address, like #jots/get-routes, selected once the list has loaded
+let pendingSelect = null;     // a name from the address, like #jots/get-route, selected once the list has loaded
+
+// Edits that aren't saved keep you where you are. Leaving by any route in the page says so, in the editor, and stays put.
+// The browser's own prompt is the only thing that can stop the tab being closed or reloaded.
+function editorDirty() { return !!keptEditor && keptEditor.editor.get() !== keptEditor.original; }
+
+function holdForEdits() {
+  if (!editorDirty()) return false;
+  keptEditor.warn();
+  return true;
+}
+window.addEventListener("beforeunload", (ev) => { if (editorDirty()) { ev.preventDefault(); ev.returnValue = ""; } });
 
 function showJotDetail() {
   $("jotDetail").hidden = false;
@@ -877,6 +898,7 @@ function stepJot(step) {
 }
 
 function selectJot(key, name) {
+  if (key !== jotSelected && holdForEdits()) return;
   if (key !== jotSelected) $("jotDetail").scrollTop = 0;
   jotSelected = key;
   showJotDetail();
@@ -885,6 +907,7 @@ function selectJot(key, name) {
 }
 
 function closeDetail() {
+  if (holdForEdits()) return;
   hideJotDetail();
   try { history.replaceState(null, "", "#" + currentPage); } catch (e) { /* ignore */ }
   drawJots();
@@ -959,8 +982,28 @@ function drawSensors(all) {
   const canSwitch = !!(controlState && controlState.enabled);
   const controls = new Map(canSwitch ? controlState.rules.map((r) => [r.name, r]) : []);
   const enabledNow = canSwitch ? controlState.enabled : {};
+  // what each column can be sorted by. Text goes A to Z first and numbers biggest first, and a second click reverses it
+  const watchesOf = (i) => (i.scopes.length ? i.scopes[0] : i.methods[0]) || "";
+  const sorts = {
+    "Name": [(i) => i.name, "text"], "Kind": [(i) => i.kind, "text"], "Watches or inside": [watchesOf, "text"],
+    "File": [(i) => i.file || "", "text"], "Last hour": [(i) => i.last_hour, "number"], "Total": [(i) => i.events, "number"],
+    "Last fired": [(i) => i.events ? i.last_ts : -1, "number"],
+  };
+  const [by, type] = sorts[jotSort.by] || sorts.Name;
+  const dir = (type === "number" ? -1 : 1) * jotSort.dir;
+  shown.sort((a, b) => {
+    const x = by(a), y = by(b);
+    const order = type === "number" ? x - y : String(x).localeCompare(String(y), undefined, { sensitivity: "base" });
+    return dir * order || a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  });
+  const sortBy = (title) => {
+    jotSort = { by: title, dir: jotSort.by === title ? -jotSort.dir : 1 };
+    drawJots();
+  };
   const head = el("tr", {}, el("th", { class: "sw", text: "Enabled" }),
-    ...["Name", "Kind", "Watches or inside", "File", "Last hour", "Total", "Last fired"].map((t) => el("th", { class: t === "Last hour" || t === "Total" ? "num" : "", text: t })),
+    ...Object.keys(sorts).map((t) => el("th", { class: (t === "Last hour" || t === "Total" ? "num " : "") + "sortable",
+      "aria-sort": jotSort.by === t ? (jotSort.dir === 1 ? "ascending" : "descending") : "none", title: "Sort by " + t.toLowerCase(),
+      onclick: () => sortBy(t), text: t + (jotSort.by === t ? (jotSort.dir === 1 ? " ▲" : " ▼") : "") })),
     el("th", { class: "sw", text: "Mode" }));
   const body = shown.map((i) => {
     // A rule limited to certain methods is identified by where it applies. Its watched methods are often the same
@@ -1183,7 +1226,9 @@ function restoreEditorFocus() {
 // the lines they are on. Nothing is saved anywhere yet, Revert goes back to what the file says.
 function jotEditor(item, canSave) {
   const key = item.key, original = item.definition || "";
-  if (keptEditor && keptEditor.key === key && keptEditor.original === original) {
+  // kept while it is the same JOT with the same file, and also if it has unsaved edits, whatever the file now says,
+  // since the edits are not thrown away by a refresh and a save will say if the file changed under them
+  if (keptEditor && keptEditor.key === key && (keptEditor.original === original || editorDirty())) {
     const scroller = keptEditor.node.querySelector(".cm-scroller");
     keptEditor.focused = keptEditor.node.contains(document.activeElement);
     keptEditor.scroll = scroller ? [scroller.scrollTop, scroller.scrollLeft] : [0, 0];
@@ -1248,7 +1293,12 @@ function jotEditor(item, canSave) {
       ? "Save writes this sensor into " + item.file + " and leaves the rest of the file as it is. The agent reads its files when the application starts."
       : "Edits are checked but can't be saved here." }));
   if (keptEditor) keptEditor.editor.destroy();
-  keptEditor = { key, original, node, editor, focused: false, scroll: [0, 0] };
+  const warn = () => {
+    status.className = "editstatus bad";
+    status.textContent = "You have changes that aren't saved. Save them, or Revert, before you leave.";
+    editor.focus();
+  };
+  keptEditor = { key, item, original, node, editor, warn, focused: false, scroll: [0, 0] };
   return node;
 }
 

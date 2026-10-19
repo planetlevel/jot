@@ -11,6 +11,7 @@ import json
 import os
 import sqlite3
 import sys
+import threading
 import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -67,6 +68,8 @@ class App:
         self.db_path = db_path
         self.jot_paths = list(jot_paths)   # where the .jot files are, which is where an edited sensor is saved
         self.editable = editable
+        self._jot_lock = threading.Lock()
+        self._jot_seen = self._jot_signature()
         self.ingestor = ingestor
         self.generate = generate
         self.control = control      # a ControlStore, or None when the jots file has no control
@@ -82,6 +85,33 @@ class App:
             return out
         finally:
             db.close()
+
+    def _jot_signature(self):
+        """Which .jot files there are and when each last changed, so a change to any of them can be noticed."""
+        out = []
+        for f in store.jot_files(self.jot_paths):
+            try:
+                st = os.stat(f)
+                out.append((f, st.st_mtime_ns, st.st_size))
+            except OSError:
+                pass
+        return tuple(out)
+
+    def reload_jots(self, force=False):
+        """Read the .jot files again when one has changed since they were last read, whoever changed it, so the page
+        shows what the files say without the dashboard being restarted."""
+        with self._jot_lock:
+            now = self._jot_signature()
+            if not force and now == self._jot_seen:
+                return False
+            db = store.connect(self.db_path)
+            try:
+                store.load_sensors(db, self.jot_paths)
+                store.load_reports(db, self.jot_paths)
+            finally:
+                db.close()
+            self._jot_seen = now
+            return True
 
     def save_jot(self, name, original, text):
         """Write an edited sensor back into its .jot file, then read the files again so the page shows it."""
@@ -99,12 +129,7 @@ class App:
                 file = self.control.read()
                 if name in file["rules"] or name in file["enabled"]:
                     notes.append("the control file still has a setting for %s" % name)
-        db = store.connect(self.db_path)
-        try:
-            store.load_sensors(db, self.jot_paths)
-            store.load_reports(db, self.jot_paths)
-        finally:
-            db.close()
+        self.reload_jots(force=True)
         return {"saved": os.path.basename(path), "name": new_name, "notes": notes}
 
     def reports(self):
@@ -125,6 +150,8 @@ class App:
     def jots(self):
         """Everything the JOTs view shows. Read only. How each sensor, rule and report is defined, which file it
         is in, whether it has fired, and what looks wrong."""
+        if self.jot_paths:
+            self.reload_jots()
         db = sqlite3.connect(self.db_path)
         try:
             rows = db.execute("""SELECT name, description, methods, scopes, captures, blocks, protect, source,
@@ -222,8 +249,8 @@ class App:
         """The paths through the application, from each route through the methods that ran to what the sensors saw."""
         rows = store.graph_rows(self.db_path, route or None)
         routes = [r[0] for r in store.run_query(self.db_path, """
-            SELECT capture, COUNT(*) FROM events_raw WHERE sensor = 'get-routes' AND ts >= %d
-            GROUP BY capture ORDER BY capture""" % (store.get_since(self.db_path) or 0), limit=2000)["rows"]]
+            SELECT capture, COUNT(*) FROM events_raw WHERE sensor IN %s AND ts >= %d
+            GROUP BY capture ORDER BY capture""" % (store.ROUTE_SENSORS_SQL, store.get_since(self.db_path) or 0), limit=2000)["rows"]]
         build = store.build_graphs if split else store.build_graph
         return build(rows["rows"], routes, self.ingestor.app_prefixes, bool(details), rows["truncated"])
 
