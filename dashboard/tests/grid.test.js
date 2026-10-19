@@ -17,9 +17,9 @@ test("routes by roles with an X where detected, columns come from the data", () 
 
 test("a third column supplies the cell values, several are listed together", () => {
   const g = pivot(["route", "sensor", "value"], [
-    ["/a", "get-ciphers", "DES"], ["/a", "get-ciphers", "AES"], ["/a", "get-hashes", "MD5"], ["/a", "get-ciphers", "DES"],
+    ["/a", "crypto-cipher", "DES"], ["/a", "crypto-cipher", "AES"], ["/a", "crypto-hash", "MD5"], ["/a", "crypto-cipher", "DES"],
   ]);
-  assert.deepStrictEqual(g.columns, ["get-ciphers", "get-hashes"]);
+  assert.deepStrictEqual(g.columns, ["crypto-cipher", "crypto-hash"]);
   assert.deepStrictEqual(g.rows[0].cells, [["AES", "DES"], ["MD5"]]);
 });
 

@@ -26,7 +26,7 @@ import server
 import store
 
 
-def event(i, sensor="get-ciphers", capture="AES", action="observed", trace=1, run="r1", **extra):
+def event(i, sensor="crypto-cipher", capture="AES", action="observed", trace=1, run="r1", **extra):
     e = {"v": 1, "time": "2026-10-16T00:00:00Z", "ts": 1792111134000 + i, "run": run, "host": "h", "pid": 1,
          "app": "App", "id": i, "trace": trace, "thread": "main", "thread_id": 1, "sensor": sensor,
          "action": action, "capture": capture,
@@ -114,12 +114,12 @@ class IngestTests(unittest.TestCase):
     def test_loads_sensor_descriptions(self):
         jot = os.path.join(self.env.dir, "a.jot")
         with open(jot, "w") as f:
-            f.write("sensors:\n- name: 'get-ciphers'\n  description: 'Identifies ciphers'\n  methods:\n"
+            f.write("sensors:\n- name: 'crypto-cipher'\n  description: 'Identifies ciphers'\n  methods:\n"
                     "  - 'javax.crypto.Cipher.getInstance'\n- name: 'block-it'\n  exception: 'no'\n")
         self.assertEqual(2, store.load_sensors(self.env.ingestor.db, [self.env.dir]))
         app = server.App(self.env.db, self.env.ingestor)
         by_name = {s["name"]: s for s in app.sensors()}
-        self.assertEqual("Identifies ciphers", by_name["get-ciphers"]["description"])
+        self.assertEqual("Identifies ciphers", by_name["crypto-cipher"]["description"])
         self.assertEqual("no", by_name["block-it"]["blocks"])
 
 
@@ -180,30 +180,30 @@ class QueryTests(unittest.TestCase):
 
 REPORTS_JOT = """
 sensors:
-- name: 'get-route'
+- name: 'http-route'
 reports:
 - name: 'Access Control Matrix'
   type: 'compare'
-  rows: 'get-route'
-  cols: 'get-role'
+  rows: 'http-route'
+  cols: 'auth-role-check'
 - name: 'Test Coverage Matrix'
   type: 'compare'
-  rows: 'get-route'
-  cols: 'get-user'
+  rows: 'http-route'
+  cols: 'auth-user'
 - name: 'Encryption Usage'
   type: 'list'
-  cols: 'get-ciphers'
+  cols: 'crypto-cipher'
 - name: 'Cipher Table'
   type: 'table'
-  rows: 'get-route'
-  cols: 'get-ciphers, get-hashes'
+  rows: 'http-route'
+  cols: 'crypto-cipher, crypto-hash'
 - name: 'Old Timeseries'
   type: 'series'
   rows: 'x'
   cols: 'y'
 - name: 'Broken'
   type: 'table'
-  cols: 'get-ciphers'
+  cols: 'crypto-cipher'
 """
 
 
@@ -219,16 +219,16 @@ class ReportTests(unittest.TestCase):
         self.app = server.App(self.env.db, self.env.ingestor)
         # two requests. /buy has two roles and a cipher, /home has one role and none
         self.env.write(
-            event(1, sensor="get-route", capture="/buy", trace=7),
-            event(2, sensor="get-role", capture="RoleA", trace=7),
-            event(3, sensor="get-role", capture="RoleB", trace=7),
-            event(4, sensor="get-role", capture="RoleB", trace=7),
-            event(5, sensor="get-ciphers", capture="DES", trace=7),
-            event(6, sensor="get-route", capture="/home", trace=8),
-            event(7, sensor="get-role", capture="RoleA", trace=8),
-            event(8, sensor="get-user", capture="alice:Role1", trace=8),
-            event(9, sensor="get-route", capture="/other", trace=9, run="r2"),
-            event(10, sensor="get-role", capture="RoleC", trace=9, run="r1"))  # a different run, must not join
+            event(1, sensor="http-route", capture="/buy", trace=7),
+            event(2, sensor="auth-role-check", capture="RoleA", trace=7),
+            event(3, sensor="auth-role-check", capture="RoleB", trace=7),
+            event(4, sensor="auth-role-check", capture="RoleB", trace=7),
+            event(5, sensor="crypto-cipher", capture="DES", trace=7),
+            event(6, sensor="http-route", capture="/home", trace=8),
+            event(7, sensor="auth-role-check", capture="RoleA", trace=8),
+            event(8, sensor="auth-user", capture="alice:Role1", trace=8),
+            event(9, sensor="http-route", capture="/other", trace=9, run="r2"),
+            event(10, sensor="auth-role-check", capture="RoleC", trace=9, run="r1"))  # a different run, must not join
         self.env.ingestor.poll()
 
     def report(self, name):
@@ -251,10 +251,10 @@ class ReportTests(unittest.TestCase):
         self.assertEqual([("/home", "alice", "Role1")], self.rows("Test Coverage Matrix"))
 
     def test_list_is_call_sites_with_what_they_captured(self):
-        self.assertEqual([("com.acme.Ticket.encrypt(Ticket.java:125)", "get-ciphers", "DES")], self.rows("Encryption Usage"))
+        self.assertEqual([("com.acme.Ticket.encrypt(Ticket.java:125)", "crypto-cipher", "DES")], self.rows("Encryption Usage"))
 
     def test_table_has_a_column_per_sensor(self):
-        self.assertEqual([("/buy", "get-ciphers", "DES")], self.rows("Cipher Table"))
+        self.assertEqual([("/buy", "crypto-cipher", "DES")], self.rows("Cipher Table"))
 
     def test_sensor_names_with_quotes_cannot_break_the_query(self):
         sql = store.report_sql("compare", "a'b", "c'); DROP TABLE events; --")
@@ -275,8 +275,8 @@ class ReportTests(unittest.TestCase):
         self.assertIn("Never ask the user for values", llm.SYSTEM)
         self.assertIn("grid", llm.TOOL["input_schema"]["properties"]["chart"]["enum"])
         prompt = llm.build_prompt("recreate it", "s", [], reports=self.app.report_summaries())
-        self.assertIn("Access Control Matrix (compare, rows get-route, cols get-role)", prompt)
-        self.assertIn("Encryption Usage (list, rows none, cols get-ciphers)", prompt)
+        self.assertIn("Access Control Matrix (compare, rows http-route, cols auth-role-check)", prompt)
+        self.assertIn("Encryption Usage (list, rows none, cols crypto-cipher)", prompt)
 
     def test_report_definitions_sent_to_the_model_contain_no_event_data(self):
         sent = json.dumps(self.app.report_summaries())
@@ -299,9 +299,9 @@ class ReportTests(unittest.TestCase):
 class AskTests(unittest.TestCase):
     def setUp(self):
         self.env = Env()
-        self.env.write(event(1, sensor="get-route", capture="/buy", trace=7),
-                       event(2, sensor="get-ciphers", capture="DES", trace=7),
-                       event(3, sensor="get-ciphers", capture="AES", trace=8))
+        self.env.write(event(1, sensor="http-route", capture="/buy", trace=7),
+                       event(2, sensor="crypto-cipher", capture="DES", trace=7),
+                       event(3, sensor="crypto-cipher", capture="AES", trace=8))
         self.env.ingestor.poll()
         self.calls = []
 
@@ -320,7 +320,7 @@ class AskTests(unittest.TestCase):
     def test_runs_the_generated_sql(self):
         app = self.app(self.answer(
             "SELECT r.capture AS route, c.capture AS cipher FROM events r JOIN events c "
-            "ON r.run = c.run AND r.trace = c.trace WHERE r.sensor='get-route' AND c.sensor='get-ciphers'"))
+            "ON r.run = c.run AND r.trace = c.trace WHERE r.sensor='http-route' AND c.sensor='crypto-cipher'"))
         r = app.ask("which routes use which ciphers?")
         self.assertEqual([["/buy", "DES"]], r["rows"])
         self.assertEqual("T", r["title"])
@@ -340,8 +340,8 @@ class AskTests(unittest.TestCase):
     def test_an_empty_result_says_which_sensors_do_have_events(self):
         r = self.app(self.answer("SELECT capture FROM events WHERE sensor = 'get-routes-nothing'")).ask("routes?")
         self.assertEqual([], r["rows"])
-        self.assertIn("get-ciphers (2)", r["hint"])
-        self.assertIn("get-route (1)", r["hint"])
+        self.assertIn("crypto-cipher (2)", r["hint"])
+        self.assertIn("http-route (1)", r["hint"])
 
     def test_an_empty_result_with_no_events_at_all_points_at_the_log(self):
         env = Env()
@@ -363,11 +363,11 @@ class AskTests(unittest.TestCase):
     def test_prompt_contains_sensors_history_and_error(self):
         prompt = llm.build_prompt(
             "q?", "CREATE TABLE events (a);",
-            [{"name": "get-ciphers", "description": "Identifies ciphers",
+            [{"name": "crypto-cipher", "description": "Identifies ciphers",
               "methods": ["javax.crypto.Cipher.getInstance"], "scopes": [], "blocks": None},
              {"name": "blocker", "description": None, "methods": [], "scopes": ["a.B.c"], "blocks": "denied"}],
             [{"question": "before", "sql": "SELECT 1"}], error="boom")
-        for text in ("get-ciphers: Identifies ciphers", "watches javax.crypto.Cipher.getInstance",
+        for text in ("crypto-cipher: Identifies ciphers", "watches javax.crypto.Cipher.getInstance",
                      "only inside a.B.c", "blocks, message: denied", "Q: before", "SQL: SELECT 1",
                      "Question: q?", "boom"):
             self.assertIn(text, prompt)
@@ -541,7 +541,7 @@ sensors:
 
 JOTS_A = """
 sensors:
-- name: 'get-route'
+- name: 'http-route'
   description: 'Identifies the route'
   methods: ['javax.servlet.Servlet.service']
   captures: ['#P0.getRequestURI()']
@@ -562,17 +562,17 @@ sensors:
 reports:
 - name: 'Routes by users'
   type: 'compare'
-  rows: 'get-route'
-  cols: 'get-user'
+  rows: 'http-route'
+  cols: 'auth-user'
 - name: 'Old series'
   type: 'series'
-  rows: 'get-route'
-  cols: 'get-route'
+  rows: 'http-route'
+  cols: 'http-route'
 """
 
 JOTS_B = """
 sensors:
-- name: 'get-route'
+- name: 'http-route'
   methods: ['x.Y.z']
 - name: 'block-staged'
   methods: ['java.net.Socket.<init>']
@@ -590,8 +590,8 @@ class JotsViewTests(unittest.TestCase):
         store.load_sensors(self.env.ingestor.db, [self.env.dir])
         store.load_reports(self.env.ingestor.db, [self.env.dir])
         now = int(time.time() * 1000)
-        self.env.write(event(1, sensor="get-route", capture="/a", ts=now),
-                       event(2, sensor="get-route", capture="/b", ts=now - 7200 * 1000),
+        self.env.write(event(1, sensor="http-route", capture="/a", ts=now),
+                       event(2, sensor="http-route", capture="/b", ts=now - 7200 * 1000),
                        event(3, sensor="block-exec", action="blocked", ts=now),
                        event(4, sensor="block-exec", action="monitored", ts=now),
                        event(5, sensor="mystery", ts=now),
@@ -602,20 +602,20 @@ class JotsViewTests(unittest.TestCase):
         self.by_name = {s["name"]: s for s in self.view["sensors"]}
 
     def test_lists_sensors_rules_and_reports_with_their_definitions(self):
-        self.assertEqual({"get-route", "never-fires", "no-methods", "bad-method", "block-exec", "block-staged"},
+        self.assertEqual({"http-route", "never-fires", "no-methods", "bad-method", "block-exec", "block-staged"},
                          set(self.by_name))
-        routes = self.by_name["get-route"]
+        routes = self.by_name["http-route"]
         self.assertEqual(("sensor", "observe"), (routes["kind"], routes["mode"]))
         self.assertEqual(["javax.servlet.Servlet.service"], routes["methods"])
         self.assertEqual(["#P0.getRequestURI()"], routes["captures"])
         self.assertEqual(["!null"], routes["matchers"])
-        self.assertIn("name: 'get-route'", routes["definition"], "the sensor as written in its file")
+        self.assertIn("name: 'http-route'", routes["definition"], "the sensor as written in its file")
         self.assertEqual(["Routes by users"], [r["name"] for r in self.view["reports"]])
 
     def test_the_first_definition_wins_like_the_agent_and_the_duplicate_is_reported(self):
-        self.assertEqual("a.jot", self.by_name["get-route"]["file"])
-        self.assertEqual(["javax.servlet.Servlet.service"], self.by_name["get-route"]["methods"])
-        self.assertTrue(any("get-route is defined again in b.jot" in i["text"] and "a.jot" in i["text"]
+        self.assertEqual("a.jot", self.by_name["http-route"]["file"])
+        self.assertEqual(["javax.servlet.Servlet.service"], self.by_name["http-route"]["methods"])
+        self.assertTrue(any("http-route is defined again in b.jot" in i["text"] and "a.jot" in i["text"]
                             for i in self.view["issues"]))
 
     def test_rules_show_their_mode_and_a_staged_rule_is_monitor(self):
@@ -624,7 +624,7 @@ class JotsViewTests(unittest.TestCase):
         self.assertEqual("no processes", self.by_name["block-exec"]["exception"])
 
     def test_activity_counts(self):
-        routes = self.by_name["get-route"]
+        routes = self.by_name["http-route"]
         self.assertEqual((2, 1), (routes["events"], routes["last_hour"]))
         self.assertIsNotNone(routes["last_ts"])
         rule = self.by_name["block-exec"]
@@ -636,7 +636,7 @@ class JotsViewTests(unittest.TestCase):
         texts = " | ".join(i["text"] for i in self.view["issues"])
         self.assertIn("no-methods has no methods", texts)
         self.assertIn("'not a method'", texts)
-        self.assertIn("report Routes by users uses get-user, which no loaded sensor defines", texts)
+        self.assertIn("report Routes by users uses auth-user, which no loaded sensor defines", texts)
         self.assertIn("Old series is type series", texts)
         self.assertIn("mystery, which isn't in the loaded .jot files", texts)
         self.assertNotIn("jot-control", texts)          # the agent's own events aren't a sensor
@@ -681,11 +681,16 @@ class JotsViewTests(unittest.TestCase):
     def test_the_list_is_sorted_by_name_and_the_headers_say_so(self):
         page = self.render("#jots")
         table = re.search(r'<table class="list">(.*?)</table>', page, re.S).group(1)
-        names = re.findall(r'<td>([a-z-]+)</td><td><span class="badge', table)
+        names = re.findall(r'<td>([a-z-]+)</td><td class="watch"', table)
         self.assertEqual(6, len(names))
         self.assertEqual(sorted(names, key=str.lower), names, "A to Z by name")
         self.assertRegex(table, r'aria-sort="ascending"[^>]*>Name ▲')
-        self.assertEqual(7, table.count('class="sortable"') + table.count(' sortable"'), "every column but the switches can be sorted")
+        self.assertRegex(table, r'<th[^>]*>Protect</th>', "the last column is Protect, a toggle")
+        self.assertNotIn(">Mode<", table)
+        self.assertNotIn("modeswitch", table, "no Monitor and Protect words around the toggle")
+        self.assertEqual(3, table.count('class="sortable"') + table.count(' sortable"'), "Name, Location and File can be sorted")
+        for gone in (">Kind<", ">Last hour<", ">Total<", ">Last fired<"):
+            self.assertNotIn(gone, table)
 
     @unittest.skipUnless(CHROME, "Chrome is not installed")
     def test_a_selected_sensor_is_shown_without_stray_null_text_and_nothing_shows_before_a_selection(self):
@@ -775,14 +780,14 @@ class JotsViewTests(unittest.TestCase):
 
     @unittest.skipUnless(CHROME, "Chrome is not installed")
     def test_the_event_panel_links_its_sensor_to_the_jot_definition(self):
-        pk = store.run_query(self.env.db, "SELECT pk FROM events WHERE sensor = 'get-route' LIMIT 1")["rows"][0][0]
+        pk = store.run_query(self.env.db, "SELECT pk FROM events WHERE sensor = 'http-route' LIMIT 1")["rows"][0][0]
         page = self.render("#event/%d" % pk)
         drawer = re.search(r'<aside id="eventDrawer"[^>]*>(.*?)</aside>', page, re.S).group(1)
-        self.assertGreaterEqual(drawer.count('href="#jots/get-route"'), 2, "linked in the heading and in the details")
+        self.assertGreaterEqual(drawer.count('href="#jots/http-route"'), 2, "linked in the heading and in the details")
 
     @unittest.skipUnless(CHROME, "Chrome is not installed")
     def test_the_panel_has_previous_and_next_buttons_with_the_position_in_the_list(self):
-        page = self.render("#jots/get-route")
+        page = self.render("#jots/http-route")
         detail = re.search(r'<aside id="jotDetail"([^>]*)>(.*?)</aside>', page, re.S).group(2)
         self.assertIn('aria-label="Previous"', detail)
         self.assertIn('aria-label="Next"', detail)
@@ -811,7 +816,7 @@ class JotsViewTests(unittest.TestCase):
         for name in ("block-exec", "block-staged"):
             self.assertIn('aria-label="%s enabled"' % name, jots, "a rule has an enabled switch on its left")
             self.assertIn('aria-label="%s protects"' % name, jots, "and a monitor or protect switch on its right")
-        for sensor in ("get-route", "never-fires"):
+        for sensor in ("http-route", "never-fires"):
             row = next(r for r in rows if ">%s<" % sensor in r)
             self.assertIn('aria-label="%s enabled"' % sensor, row, "a sensor that only observes can be switched off too")
             self.assertNotIn("protects", row, "but it has no monitor or protect switch")
@@ -834,11 +839,11 @@ class JotsViewTests(unittest.TestCase):
     def test_a_sensor_that_is_not_enabled_shows_off_too(self):
         path = os.path.join(self.env.dir, "control-sensor.yaml")
         store_ = control.ControlStore(path)
-        store_.write(enabled={"get-route": False}, known_rules=["block-exec"], known_sensors=["get-route"])
+        store_.write(enabled={"http-route": False}, known_rules=["block-exec"], known_sensors=["http-route"])
         self.app = server.App(self.env.db, self.env.ingestor, control=store_)
         jots = self.page_section(self.render("#jots"), "jotsPage")
         rows = re.findall(r'<tr[^>]*>.*?</tr>', jots, re.S)
-        self.assertRegex(next(r for r in rows if ">get-route<" in r), r'<tr class="off"')
+        self.assertRegex(next(r for r in rows if ">http-route<" in r), r'<tr class="off"')
         self.assertNotIn('class="off"', next(r for r in rows if ">never-fires<" in r))
 
     @unittest.skipUnless(CHROME, "Chrome is not installed")
@@ -915,7 +920,7 @@ class StartTimeTests(unittest.TestCase):
 
     def test_every_query_and_view_honours_it_including_the_ones_the_model_writes(self):
         self.app.set_since(1003)
-        for sql in ("SELECT COUNT(*) FROM events", "SELECT COUNT(*) FROM events WHERE sensor = 'get-ciphers'",
+        for sql in ("SELECT COUNT(*) FROM events", "SELECT COUNT(*) FROM events WHERE sensor = 'crypto-cipher'",
                     "SELECT COUNT(DISTINCT trace) FROM events"):
             self.assertLessEqual(self.app.sql(sql)["rows"][0][0], 2, sql)
 
@@ -1282,7 +1287,7 @@ class HttpTests(unittest.TestCase):
         code, r = self.call("/api/ask", {"question": "how many?"})
         self.assertEqual((200, [[2]]), (code, r["rows"]))
         _, r = self.call("/api/sql", {"sql": "SELECT sensor FROM events WHERE action='blocked'"})
-        self.assertEqual([["get-ciphers"]], r["rows"])
+        self.assertEqual([["crypto-cipher"]], r["rows"])
 
     def test_bad_sql_is_a_400_with_a_message(self):
         code, r = self.call("/api/sql", {"sql": "DROP TABLE events"})
@@ -1409,7 +1414,7 @@ class SaveJotTests(unittest.TestCase):
     def test_a_saved_sensor_changes_only_itself_and_the_page_shows_it(self):
         one = self.shown("one")
         self.assertIn("# trailing comment", one, "the sensor is shown as it is written, comments too")
-        self.assertEqual({"saved": "bundle.jot", "name": "one", "notes": []}, self.app.save_jot("one", one, one.replace("First", "Changed") + "\nenabled: false"))
+        self.assertEqual({"saved": "bundle.jot", "name": "one", "reports": [], "notes": []}, self.app.save_jot("one", one, one.replace("First", "Changed") + "\nenabled: false"))
         saved = self.read()
         self.assertEqual(BUNDLE.replace('"First"', '"Changed"').replace('  - "#P0"\n', '  - "#P0"\n  enabled: false\n'), saved)
         self.assertIn("# keep", saved)
@@ -1447,17 +1452,35 @@ class SaveJotTests(unittest.TestCase):
         self.assertEqual(404, e.exception.status)
         self.assertEqual(BUNDLE, self.read())
 
-    def test_a_sensor_can_be_renamed_and_what_still_uses_the_old_name_is_said(self):
-        with open(os.path.join(self.env.dir, "r.jot"), "w") as f:
-            f.write("reports:\n- name: Uses Two\n  type: list\n  rows: get-route\n  cols: two, other\n")
+    def test_a_renamed_sensor_is_renamed_in_the_reports_that_use_it(self):
+        reports = "# reports\nreports:\n- name: Uses Two\n  type: list\n  rows: other\n  cols: \"one, two\"   # both\n- name: Not Two\n  type: list\n  rows: twofold\n  cols: two-ish\n"
+        other = os.path.join(self.env.dir, "r.jot")
+        with open(other, "w") as f:
+            f.write(reports)
         store.load_sensors(self.env.ingestor.db, self.paths)
         two = self.shown("two")
         done = self.app.save_jot("two", two, two.replace("name: two", "name: three"))
         self.assertEqual("three", done["name"])
-        self.assertEqual(["reports still using two are Uses Two"], done["notes"])
+        self.assertEqual(["Uses Two"], done["reports"])
         self.assertEqual(BUNDLE.replace("- name: two", "- name: three"), self.read(), "only the name changed, the rest of the bundle is as it was")
-        names = {s["name"] for s in self.app.jots()["sensors"]}
-        self.assertEqual({"one", "three"}, names)
+        with open(other) as f:
+            self.assertEqual(reports.replace('"one, two"', '"one, three"'), f.read(), "the whole name only, in this report only, comment kept")
+        self.assertEqual({"one", "three"}, {s["name"] for s in self.app.jots()["sensors"]})
+
+    def test_a_report_in_the_same_file_as_the_renamed_sensor_is_changed_with_it(self):
+        bundle = BUNDLE + "\nreports:\n- name: Two Report\n  type: list\n  cols: two\n"
+        with open(self.path, "w") as f:
+            f.write(bundle)
+        store.load_sensors(self.env.ingestor.db, self.paths)
+        two = self.shown("two")
+        done = self.app.save_jot("two", two, two.replace("name: two", "name: three"))
+        self.assertEqual(["Two Report"], done["reports"])
+        self.assertEqual(bundle.replace("- name: two", "- name: three").replace("cols: two", "cols: three"), self.read())
+
+    def test_other_edits_leave_the_reports_alone(self):
+        one = self.shown("one")
+        done = self.app.save_jot("one", one, one.replace("First", "Second"))
+        self.assertEqual([], done["reports"])
 
     def test_saving_is_off_when_the_dashboard_is_open_to_other_machines(self):
         app = server.App(self.env.db, self.env.ingestor, jot_paths=self.paths, editable=False)
@@ -1494,7 +1517,7 @@ class CheckJotTests(unittest.TestCase):
     ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 
     def test_a_sensor_on_its_own_and_a_whole_file_are_both_fine(self):
-        one = "name: get-route\nmethods:\n- javax.servlet.Servlet.service\ncaptures:\n- '#P0'\n"
+        one = "name: http-route\nmethods:\n- javax.servlet.Servlet.service\ncaptures:\n- '#P0'\n"
         self.assertEqual([], store.check_jot_text(one))
         self.assertEqual([], store.check_jot_text("sensors:\n- " + one.replace("\n", "\n  ").rstrip(" ")))
 
@@ -1619,7 +1642,7 @@ class OriginTests(unittest.TestCase):
     def test_the_blocked_and_monitored_filters_keep_only_those_events(self):
         ing = self.ingestor()
         self.write(event(1, stack=JSP), event(2, stack=JSP, action="blocked", sensor="block-x"),
-                   event(3, stack=JDK_ONLY, action="monitored", sensor="block-y"), event(4, stack=JSP, sensor="get-user"))
+                   event(3, stack=JDK_ONLY, action="monitored", sensor="block-y"), event(4, stack=JSP, sensor="auth-user"))
         ing.poll()
         self.assertEqual({"blocked": False, "monitored": False}, store.get_action_filter(self.db))
         self.assertEqual(sorted(self.origins("events")), [1, 2, 3, 4])
@@ -1692,10 +1715,10 @@ class EventViewerTests(unittest.TestCase):
         self.env = Env()
         self.env.ingestor.app_prefixes = ("org.apache.jsp",)
         self.app = server.App(self.env.db, self.env.ingestor)
-        self.env.write(event(1, sensor="get-route", capture="/cmd.jsp", trace=7, ts=1792111135000, stack=self.STACK),
+        self.env.write(event(1, sensor="http-route", capture="/cmd.jsp", trace=7, ts=1792111135000, stack=self.STACK),
                        event(2, sensor="block-exec", capture="[[open]]", action="blocked", trace=7, ts=1792111135100,
                              message="stopped", stack=self.STACK),
-                       event(3, sensor="get-route", capture="/other.jsp", trace=8, stack=self.STACK))
+                       event(3, sensor="http-route", capture="/other.jsp", trace=8, stack=self.STACK))
         self.env.ingestor.poll()
 
     def pk_of(self, event_id):
@@ -1713,7 +1736,7 @@ class EventViewerTests(unittest.TestCase):
 
     def test_the_other_events_of_the_same_request_are_listed_and_only_those(self):
         related = self.app.event(self.pk_of(1))["related"]
-        self.assertEqual([(1, "get-route"), (2, "block-exec")], [(r[0] and self.env.ingestor.db.execute(
+        self.assertEqual([(1, "http-route"), (2, "block-exec")], [(r[0] and self.env.ingestor.db.execute(
             "SELECT id FROM events_raw WHERE pk = ?", (r[0],)).fetchone()[0], r[3]) for r in related])
 
     def test_an_event_the_filter_hides_can_still_be_opened(self):
@@ -1787,11 +1810,11 @@ class SearchTests(unittest.TestCase):
         self.app = server.App(self.env.db, self.env.ingestor)
         app_stack = ["java.base/java.security.MessageDigest.getInstance(M.java:1)", "com.acme.Ticket.save(Ticket.java:9)"]
         jdk_stack = ["java.base/sun.security.rsa.RSASignature.<init>(RSASignature.java:81)", "java.base/java.lang.Thread.run(Thread.java:833)"]
-        self.env.write(event(1, sensor="get-hashes", capture="SHA-256", stack=app_stack),
-                       event(2, sensor="get-hashes", capture="MD5", stack=app_stack),
-                       event(3, sensor="get-hashes", capture="SHA-256", stack=jdk_stack),
+        self.env.write(event(1, sensor="crypto-hash", capture="SHA-256", stack=app_stack),
+                       event(2, sensor="crypto-hash", capture="MD5", stack=app_stack),
+                       event(3, sensor="crypto-hash", capture="SHA-256", stack=jdk_stack),
                        event(4, sensor="block-exec", capture="[[/usr/bin/open]]", action="blocked", message="100% stopped", stack=app_stack),
-                       event(5, sensor="get-ciphers", capture="RSA/ECB", trace=2, stack=app_stack))
+                       event(5, sensor="crypto-cipher", capture="RSA/ECB", trace=2, stack=app_stack))
         self.env.ingestor.poll()
 
     def pks(self, sql):
@@ -1822,7 +1845,7 @@ class SearchTests(unittest.TestCase):
         self.assertEqual([4], self.found("100%"))
         self.assertEqual([], self.found("o'brien"))
         self.assertEqual([], self.found("get_hashes"), "an underscore is not a wildcard")
-        self.assertEqual([1, 2], self.found("get-hashes"))
+        self.assertEqual([1, 2], self.found("crypto-hash"))
         before = self.env.ingestor.db.execute("SELECT COUNT(*) FROM events_raw").fetchone()[0]
         self.found("x'; DROP TABLE events_raw; --")
         self.assertEqual(before, self.env.ingestor.db.execute("SELECT COUNT(*) FROM events_raw").fetchone()[0])
@@ -1868,14 +1891,14 @@ class GraphTests(unittest.TestCase):
         jdk = "java.base/javax.crypto.Cipher.getInstance(Cipher.java:534)"
         chain = [jdk, self.ENCRYPT, self.GET, self.LIST_PAGE, self.FILTER]
         self.env.write(
-            event(1, sensor="get-route", capture="/app/list.jsp", trace=1, stack=[self.SERVLET, self.FILTER]),
-            event(2, sensor="get-user", capture="Guest", trace=1, stack=[self.SERVLET, self.FILTER]),
-            event(3, sensor="get-ciphers", capture="AES", trace=1, stack=chain),
-            event(4, sensor="get-ciphers", capture="DES", trace=1, stack=chain),
-            event(5, sensor="get-route", capture="/app/profile", trace=2, stack=[self.SERVLET, self.FILTER]),
-            event(6, sensor="get-forwards", capture="/list.jsp", trace=2,
+            event(1, sensor="http-route", capture="/app/list.jsp", trace=1, stack=[self.SERVLET, self.FILTER]),
+            event(2, sensor="auth-user", capture="Guest", trace=1, stack=[self.SERVLET, self.FILTER]),
+            event(3, sensor="crypto-cipher", capture="AES", trace=1, stack=chain),
+            event(4, sensor="crypto-cipher", capture="DES", trace=1, stack=chain),
+            event(5, sensor="http-route", capture="/app/profile", trace=2, stack=[self.SERVLET, self.FILTER]),
+            event(6, sensor="http-forward", capture="/list.jsp", trace=2,
                   stack=["jakarta.servlet.RequestDispatcher.forward(R.java:1)", "com.acme.ProfileController.doPost(P.java:28)", self.FILTER]),
-            event(7, sensor="get-hashes", capture="SHA-256", trace=99, stack=["java.base/a.B.c(B.java:1)", "com.acme.Startup.run(S.java:1)"]),
+            event(7, sensor="crypto-hash", capture="SHA-256", trace=99, stack=["java.base/a.B.c(B.java:1)", "com.acme.Startup.run(S.java:1)"]),
             event(8, sensor="block-exec", action="blocked", capture="[[open]]", trace=1,
                   stack=["java.base/java.lang.Runtime.exec(R.java:1)", self.LIST_PAGE, self.FILTER]))
         self.env.ingestor.poll()
@@ -1888,9 +1911,9 @@ class GraphTests(unittest.TestCase):
         g, nodes, edges = self.graph()
         self.assertEqual(2, edges[("route:/app/list.jsp", "code:com.acme.Database.getTickets")])
         self.assertEqual(2, edges[("code:com.acme.Database.getTickets", "code:com.acme.Ticket.encrypt")])
-        self.assertEqual(2, edges[("code:com.acme.Ticket.encrypt", "effect:get-ciphers")])
-        self.assertEqual(2, nodes["effect:get-ciphers"]["events"])
-        self.assertEqual([("AES", 1), ("DES", 1)], sorted(nodes["effect:get-ciphers"]["captures"]))
+        self.assertEqual(2, edges[("code:com.acme.Ticket.encrypt", "effect:crypto-cipher")])
+        self.assertEqual(2, nodes["effect:crypto-cipher"]["events"])
+        self.assertEqual([("AES", 1), ("DES", 1)], sorted(nodes["effect:crypto-cipher"]["captures"]))
 
     def test_the_jsp_page_is_the_route_and_is_not_drawn_twice(self):
         g, nodes, edges = self.graph()
@@ -1903,74 +1926,76 @@ class GraphTests(unittest.TestCase):
     def test_a_blocked_event_marks_its_effect(self):
         g, nodes, edges = self.graph()
         self.assertEqual(1, nodes["effect:block-exec"]["blocked"])
-        self.assertEqual(0, nodes["effect:get-ciphers"]["blocked"])
-        self.assertIn(("effect:get-ciphers", "effect:block-exec"), edges, "it came after the ciphers in that request")
+        self.assertEqual(0, nodes["effect:crypto-cipher"]["blocked"])
+        self.assertIn(("effect:crypto-cipher", "effect:block-exec"), edges, "it came after the ciphers in that request")
 
     def test_a_request_is_one_line_with_a_stop_for_each_event_in_the_order_they_happened(self):
         self.env.write(
-            event(30, sensor="get-route", capture="/app/order.jsp", trace=30, stack=[self.SERVLET, self.FILTER]),
-            event(31, sensor="get-hashes", capture="MD5", trace=30, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]),
-            event(32, sensor="get-ciphers", capture="AES", trace=30, stack=["java.base/a.B.c(B.java:1)", self.ENCRYPT, self.GET, self.FILTER]),
-            event(33, sensor="get-ciphers", capture="DES", trace=30, stack=["java.base/a.B.c(B.java:1)", self.ENCRYPT, self.GET, self.FILTER]),
-            event(34, sensor="get-hashes", capture="SHA", trace=30, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
+            event(30, sensor="http-route", capture="/app/order.jsp", trace=30, stack=[self.SERVLET, self.FILTER]),
+            event(31, sensor="crypto-hash", capture="MD5", trace=30, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]),
+            event(32, sensor="crypto-cipher", capture="AES", trace=30, stack=["java.base/a.B.c(B.java:1)", self.ENCRYPT, self.GET, self.FILTER]),
+            event(33, sensor="crypto-cipher", capture="DES", trace=30, stack=["java.base/a.B.c(B.java:1)", self.ENCRYPT, self.GET, self.FILTER]),
+            event(34, sensor="crypto-hash", capture="SHA", trace=30, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
         self.env.ingestor.poll()
         g, nodes, edges = self.graph(route="/app/order.jsp")
         get, enc = "code:com.acme.Database.getTickets", "code:com.acme.Ticket.encrypt"
-        self.assertEqual({("route:/app/order.jsp", get): 1, (get, "effect:get-hashes"): 1,
-                          ("effect:get-hashes", enc): 2, (enc, "effect:get-ciphers"): 2,
-                          ("effect:get-ciphers", "effect:get-hashes"): 1}, edges)
-        self.assertEqual(2, nodes["effect:get-ciphers"]["events"], "the repeat is one stop, both events are counted")
+        self.assertEqual({("route:/app/order.jsp", get): 1, (get, "effect:crypto-hash"): 1,
+                          ("effect:crypto-hash", enc): 2, (enc, "effect:crypto-cipher"): 2,
+                          ("effect:crypto-cipher", "effect:crypto-hash"): 1}, edges)
+        self.assertEqual(2, nodes["effect:crypto-cipher"]["events"], "the repeat is one stop, both events are counted")
 
     def test_a_method_the_line_is_already_inside_is_not_entered_again(self):
         self.env.write(
-            event(40, sensor="get-route", capture="/app/inside.jsp", trace=40, stack=[self.SERVLET, self.FILTER]),
-            event(41, sensor="get-hashes", capture="MD5", trace=40, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]),
-            event(42, sensor="get-ciphers", capture="AES", trace=40, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
+            event(40, sensor="http-route", capture="/app/inside.jsp", trace=40, stack=[self.SERVLET, self.FILTER]),
+            event(41, sensor="crypto-hash", capture="MD5", trace=40, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]),
+            event(42, sensor="crypto-cipher", capture="AES", trace=40, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
         self.env.ingestor.poll()
         g, nodes, edges = self.graph(route="/app/inside.jsp")
-        self.assertIn(("effect:get-hashes", "effect:get-ciphers"), edges)
-        self.assertNotIn(("effect:get-hashes", "code:com.acme.Database.getTickets"), edges)
+        self.assertIn(("effect:crypto-hash", "effect:crypto-cipher"), edges)
+        self.assertNotIn(("effect:crypto-hash", "code:com.acme.Database.getTickets"), edges)
 
     def test_requests_that_did_the_same_things_in_the_same_order_share_a_line(self):
         for trace, base in ((60, 60), (61, 70)):
             self.env.write(
-                event(base, sensor="get-route", capture="/app/twice.jsp", trace=trace, stack=[self.SERVLET, self.FILTER]),
-                event(base + 1, sensor="get-ciphers", capture="AES", trace=trace, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]),
-                event(base + 2, sensor="get-hashes", capture="MD5", trace=trace, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
+                event(base, sensor="http-route", capture="/app/twice.jsp", trace=trace, stack=[self.SERVLET, self.FILTER]),
+                event(base + 1, sensor="crypto-cipher", capture="AES", trace=trace, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]),
+                event(base + 2, sensor="crypto-hash", capture="MD5", trace=trace, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
         self.env.ingestor.poll()
         g, nodes, edges = self.graph(route="/app/twice.jsp")
-        self.assertEqual(2, edges[("effect:get-ciphers", "effect:get-hashes")])
+        self.assertEqual(2, edges[("effect:crypto-cipher", "effect:crypto-hash")])
 
-    def test_a_forward_and_a_redirect_lead_to_their_route_under_the_singular_names_too(self):
-        self.env.write(
-            event(60, sensor="get-route", capture="/app/profile", trace=60, stack=[self.SERVLET, self.FILTER]),
-            event(61, sensor="get-forward", capture="/list.jsp", trace=60,
-                  stack=["jakarta.servlet.RequestDispatcher.forward(R.java:1)", "com.acme.ProfileController.doPost(P.java:28)", self.FILTER]),
-            event(62, sensor="get-route", capture="/app/other", trace=61, stack=[self.SERVLET, self.FILTER]),
-            event(63, sensor="get-redirect", capture="/app/list.jsp", trace=61,
-                  stack=["jakarta.servlet.http.HttpServletResponse.sendRedirect(R.java:1)", "com.acme.OtherController.doGet(O.java:9)", self.FILTER]))
+    def test_a_forward_and_a_redirect_lead_to_their_route_under_every_name_they_have_had(self):
+        for base, (route_sensor, forward, redirect) in ((60, ("http-route", "http-forward", "http-redirect")),
+                                                         (70, ("get-route", "get-forward", "get-redirect")),
+                                                         (80, ("get-routes", "get-forwards", "get-redirects"))):
+            self.env.write(
+                event(base, sensor=route_sensor, capture="/app/profile%d" % base, trace=base, stack=[self.SERVLET, self.FILTER]),
+                event(base + 1, sensor=forward, capture="/list.jsp", trace=base,
+                      stack=["jakarta.servlet.RequestDispatcher.forward(R.java:1)", "com.acme.ProfileController.doPost(P.java:28)", self.FILTER]),
+                event(base + 2, sensor=route_sensor, capture="/app/other%d" % base, trace=base + 1, stack=[self.SERVLET, self.FILTER]),
+                event(base + 3, sensor=redirect, capture="/app/list.jsp", trace=base + 1,
+                      stack=["jakarta.servlet.http.HttpServletResponse.sendRedirect(R.java:1)", "com.acme.OtherController.doGet(O.java:9)", self.FILTER]))
         self.env.ingestor.poll()
         g = self.app.graph()
+        for route in ("/app/profile60", "/app/profile70", "/app/profile80", "/app/other60", "/app/other70", "/app/other80"):
+            self.assertIn(route, g["routes"], "a route is found whatever the route sensor was called")
         exits = {n["id"] for n in g["nodes"] if n["kind"] == "exit"}
-        self.assertIn("exit:/app/list.jsp", exits, "a route out, for both the forward and the redirect")
+        self.assertIn("exit:/app/list.jsp", exits, "a route out, for the forwards and the redirects under every name")
 
-    def test_events_from_the_old_route_sensor_name_still_find_their_route(self):
-        # the sensor was called get-routes before it was get-route, and the log still has its events
-        self.env.write(event(70, sensor="get-routes", capture="/app/old.jsp", trace=70, stack=[self.SERVLET, self.FILTER]),
-                       event(71, sensor="get-hashes", capture="MD5", trace=70, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
+    def test_route_search_and_one_route_graphs_work_for_events_from_the_old_names(self):
+        self.env.write(event(90, sensor="get-routes", capture="/app/old.jsp", trace=90, stack=[self.SERVLET, self.FILTER]),
+                       event(91, sensor="crypto-hash", capture="MD5", trace=90, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
         self.env.ingestor.poll()
-        g = self.app.graph("/app/old.jsp", split=True)
-        self.assertEqual(["/app/old.jsp"], [x["route"] for x in g["graphs"]])
-        self.assertIn("/app/old.jsp", self.app.graph()["routes"])
-        self.assertEqual(1, self.app.search('route:"/app/old.jsp" get-hashes')["matches"])
+        self.assertEqual(["/app/old.jsp"], [x["route"] for x in self.app.graph("/app/old.jsp", split=True)["graphs"]])
+        self.assertEqual(1, self.app.search('route:"/app/old.jsp" crypto-hash')["matches"])
 
     def test_every_node_and_edge_says_which_lines_use_it(self):
         # one request does a hash and a cipher, another only the hash, and they share the hash
         for trace, base, route, ciphers in ((80, 80, "/app/one.jsp", True), (81, 90, "/app/two.jsp", False)):
-            self.env.write(event(base, sensor="get-route", capture=route, trace=trace, stack=[self.SERVLET, self.FILTER]),
-                           event(base + 1, sensor="get-hashes", capture="MD5", trace=trace, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
+            self.env.write(event(base, sensor="http-route", capture=route, trace=trace, stack=[self.SERVLET, self.FILTER]),
+                           event(base + 1, sensor="crypto-hash", capture="MD5", trace=trace, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
             if ciphers:
-                self.env.write(event(base + 2, sensor="get-ciphers", capture="AES", trace=trace,
+                self.env.write(event(base + 2, sensor="crypto-cipher", capture="AES", trace=trace,
                                      stack=["java.base/a.B.c(B.java:1)", self.ENCRYPT, self.GET, self.FILTER]))
         self.env.ingestor.poll()
         g = self.app.graph()
@@ -1978,22 +2003,22 @@ class GraphTests(unittest.TestCase):
         edge_lines = {(e["from"], e["to"]): set(e["lines"]) for e in g["edges"]}
         one, two = lines["route:/app/one.jsp"], lines["route:/app/two.jsp"]
         self.assertTrue(one and two and not one & two, "each route is its own kind of request")
-        self.assertTrue((one | two) <= lines["effect:get-hashes"], "both used the hash")
-        cipher_edge = edge_lines[("code:com.acme.Ticket.encrypt", "effect:get-ciphers")]
+        self.assertTrue((one | two) <= lines["effect:crypto-hash"], "both used the hash")
+        cipher_edge = edge_lines[("code:com.acme.Ticket.encrypt", "effect:crypto-cipher")]
         self.assertTrue(one & cipher_edge and not two & cipher_edge, "only the first request reached the cipher")
-        self.assertTrue(lines["effect:get-ciphers"] >= one and not (lines["effect:get-ciphers"] & two))
+        self.assertTrue(lines["effect:crypto-cipher"] >= one and not (lines["effect:crypto-cipher"] & two))
 
     def test_request_details_are_left_out_unless_asked_for(self):
         g, nodes, edges = self.graph()
-        self.assertNotIn("effect:get-user", nodes)
+        self.assertNotIn("effect:auth-user", nodes)
         g, nodes, edges = self.graph(details=True)
-        self.assertEqual(1, edges[("route:/app/list.jsp", "effect:get-user")])
+        self.assertEqual(1, edges[("route:/app/list.jsp", "effect:auth-user")])
 
     def test_a_forward_leads_on_to_the_route_it_names(self):
         g, nodes, edges = self.graph()
-        self.assertEqual(1, edges[("effect:get-forwards", "exit:/app/list.jsp")])
+        self.assertEqual(1, edges[("effect:http-forward", "exit:/app/list.jsp")])
         self.assertEqual("exit", nodes["exit:/app/list.jsp"]["kind"])
-        self.assertIn(("code:com.acme.ProfileController.doPost", "effect:get-forwards"), edges)
+        self.assertIn(("code:com.acme.ProfileController.doPost", "effect:http-forward"), edges)
 
     def test_events_outside_a_request_start_from_their_own_route(self):
         g, nodes, edges = self.graph()
@@ -2014,15 +2039,15 @@ class GraphTests(unittest.TestCase):
         self.assertLess(len(effects), len(everything))
         self.assertTrue(all(n["blocked"] for n in effects), "only blocked effects are left")
         routes = {n["label"] for n in g["nodes"] if n["kind"] == "route"}
-        self.assertNotIn("(outside a request)", routes, "the get-route events are hidden by the filter but still name the route")
+        self.assertNotIn("(outside a request)", routes, "the http-route events are hidden by the filter but still name the route")
         self.assertTrue(routes)
         self.assertIn("/app/list.jsp", g["routes"], "the route list isn't narrowed by the filter")
 
     def test_it_follows_the_filters(self):
-        self.env.write(event(20, sensor="get-hashes", capture="MD5", trace=50, stack=["java.base/a.B.c(B.java:1)", "java.base/d.E.f(E.java:1)"]))
+        self.env.write(event(20, sensor="crypto-hash", capture="MD5", trace=50, stack=["java.base/a.B.c(B.java:1)", "java.base/d.E.f(E.java:1)"]))
         self.env.ingestor.poll()
         g, nodes, edges = self.graph()
-        self.assertNotIn("effect:get-hashes", [e[1] for e in edges if e[1] == "effect:get-hashes" and "MD5" in str(nodes[e[1]]["captures"])])
+        self.assertNotIn("effect:crypto-hash", [e[1] for e in edges if e[1] == "effect:crypto-hash" and "MD5" in str(nodes[e[1]]["captures"])])
         self.app.set_since(int(time.time() * 1000) + 100000)
         g, nodes, edges = self.graph()
         self.assertEqual([], g["nodes"])
@@ -2046,7 +2071,7 @@ class GraphTests(unittest.TestCase):
         page = self.render("#graph")
         self.assertEqual(1, len(re.findall(r'<aside class="card" id="graphDetail"[^>]* hidden', page)), "nothing is picked, so no panel")
         self.assertIn('<svg class="graph"', page)
-        for expected in ("/app/list.jsp", "Database.getTickets", "Ticket.encrypt", "get-ciphers"):
+        for expected in ("/app/list.jsp", "Database.getTickets", "Ticket.encrypt", "crypto-cipher"):
             self.assertIn(expected, page)
         self.assertNotIn("_jspService", page, "the page is the route")
         self.assertIn("route out", page)
@@ -2058,21 +2083,21 @@ class GraphTests(unittest.TestCase):
 
     @unittest.skipUnless(CHROME, "Chrome is not installed")
     def test_a_picked_node_follows_its_paths_and_dims_the_rest(self):
-        page = self.render("#graph/effect%3Aget-ciphers")
+        page = self.render("#graph/effect%3Acrypto-cipher")
         self.assertRegex(page, r'<g class="node effect picked"')
         panel = re.search(r'<aside class="card" id="graphDetail"([^>]*)>(.*?)</aside>', page, re.S)
         self.assertNotIn("hidden", panel.group(1))
         text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", panel.group(2)))
-        for expected in ("get-ciphers", "AES", "DES", "Comes from", "Ticket.encrypt", "Show these events"):
+        for expected in ("crypto-cipher", "AES", "DES", "Comes from", "Ticket.encrypt", "Show these events"):
             self.assertIn(expected, text)
         self.assertNotIn("null", text.lower())
         self.assertNotIn("routegraph off", page, "only the route the node is in is lit, others are left alone")
         self.assertRegex(page, r'class="edge on"')
 
     def test_search_can_be_limited_to_one_route(self):
-        every = self.app.search("get-ciphers")["matches"]
-        here = self.app.search('get-ciphers route:"/app/list.jsp"')["matches"]
-        elsewhere = self.app.search('get-ciphers -route:"/app/list.jsp"')["matches"]
+        every = self.app.search("crypto-cipher")["matches"]
+        here = self.app.search('crypto-cipher route:"/app/list.jsp"')["matches"]
+        elsewhere = self.app.search('crypto-cipher -route:"/app/list.jsp"')["matches"]
         self.assertTrue(0 < here <= every)
         self.assertEqual(every, here + elsewhere, "an event is in one route or not")
         self.assertEqual(0, self.app.search("route:/nowhere")["matches"])
@@ -2081,7 +2106,7 @@ class GraphTests(unittest.TestCase):
     def test_rule_events_count_against_their_rule(self):
         self.assertEqual("cve-x", store.rule_name("cve-x-blocked"))
         self.assertEqual("cve-x", store.rule_name("cve-x-entered"))
-        self.assertEqual("get-ciphers", store.rule_name("get-ciphers"))
+        self.assertEqual("crypto-cipher", store.rule_name("crypto-cipher"))
 
     def test_over_http(self):
         httpd = server.make_server(self.app, "127.0.0.1", 0)

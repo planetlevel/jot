@@ -461,7 +461,7 @@ def check_jot_text(text):
             add(node, "needs a name")
         else:
             if not _SENSOR_NAME.match(name):
-                add(keys["name"][1], "%s should be lower case words joined with -, like get-hashes" % name)
+                add(keys["name"][1], "%s should be lower case words joined with -, like crypto-hash" % name)
             if name in seen:
                 add(keys["name"][1], "%s is used twice" % name)
             seen.add(name)
@@ -555,20 +555,57 @@ class SaveError(Exception):
         self.status = status
 
 
-def reports_using(paths, name):
-    """The reports in the .jot files that name this sensor as their rows or columns, which a rename leaves behind."""
-    used = []
-    for path in jot_files(paths):
-        for r in _read_jot(path).get("reports") or []:
-            if isinstance(r, dict) and name in [r.get("rows")] + [c.strip() for c in str(r.get("cols") or "").split(",")]:
-                used.append(str(r.get("name")))
-    return used
+def rename_in_reports(text, old, new):
+    """The .jot text with the sensor name old changed to new in the rows and cols of every report that uses it, and the names
+    of those reports. Only the name changes, the comments, quotes and layout around it stay as written."""
+    try:
+        root = yaml.compose(text)
+    except yaml.YAMLError:
+        return text, []
+    if not isinstance(root, yaml.MappingNode):
+        return text, []
+    token = re.compile(r"(?<![\w-])%s(?![\w-])" % re.escape(old))
+    edits, changed = [], []
+    for key, value in root.value:
+        if key.value != "reports" or not isinstance(value, yaml.SequenceNode):
+            continue
+        for report in value.value:
+            if not isinstance(report, yaml.MappingNode):
+                continue
+            fields = {k.value: v for k, v in report.value if isinstance(k, yaml.ScalarNode)}
+            used = False
+            for field in ("rows", "cols"):
+                node = fields.get(field)
+                if not isinstance(node, yaml.ScalarNode):
+                    continue
+                raw = text[node.start_mark.index:node.end_mark.index]
+                if "\n" in raw or not token.search(node.value):
+                    continue
+                edits.append((node.start_mark.index, node.end_mark.index, token.sub(new, raw)))
+                used = True
+            if used:
+                changed.append(str(fields["name"].value) if "name" in fields else "(unnamed)")
+    for start, end, replacement in sorted(edits, reverse=True):
+        text = text[:start] + replacement + text[end:]
+    return text, changed
+
+
+def _report_uses(doc, rename=None):
+    """Each report of a parsed file as (the whole report, its rows, its cols as a list), with old to new applied to the names
+    when rename is (old, new). Used to check that editing the text changed the names and nothing else."""
+    out = []
+    swap = (lambda n: rename[1] if n == rename[0] else n) if rename else (lambda n: n)
+    for r in (doc or {}).get("reports") or []:
+        if isinstance(r, dict):
+            rest = {k: v for k, v in r.items() if k not in ("rows", "cols")}
+            out.append((rest, swap(r.get("rows")), [swap(c.strip()) for c in str(r.get("cols") or "").split(",") if c.strip()]))
+    return out
 
 
 def save_sensor(paths, name, original, new_text):
     """Writes the new text of one sensor into the .jot file that has it, leaving everything else in the file as it was,
     comments and the other sensors included. original is what the editor started from. If the file no longer says that,
-    someone else changed it and nothing is written. The name can be changed to one that isn't taken. Returns the path written."""
+    someone else changed it and nothing is written. The name can be changed to one that isn't taken, and then the reports that use the old name are changed to the new one. Returns the path written and the names of the reports changed."""
     new_text = (new_text or "").rstrip() + "\n"
     problems = check_jot_text(new_text)
     if problems:
@@ -600,13 +637,28 @@ def save_sensor(paths, name, original, new_text):
         expected = [written if x.get("name") == name else x for x in before.get("sensors") or []]
         if after.get("sensors") != expected or {k: v for k, v in after.items() if k != "sensors"} != {k: v for k, v in before.items() if k != "sensors"}:
             raise SaveError("not saved, putting this in the file would have changed something else in it")
-        mode = os.stat(path).st_mode
-        tmp = path + ".saving"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write(result)
-        os.chmod(tmp, mode)
-        os.replace(tmp, path)
-        return path
+        # a new name is also written into the reports that use the old one, in this file and in any other
+        writes, updated = {path: result}, []
+        if new_name != name:
+            for other in jot_files(paths):
+                with open(other, encoding="utf-8") as fh:
+                    base = result if other == path else fh.read()
+                edited, reports = rename_in_reports(base, name, new_name)
+                if reports:
+                    before_doc, after_doc = yaml.safe_load(base), yaml.safe_load(edited)
+                    if _report_uses(after_doc) != _report_uses(before_doc, (name, new_name)) or \
+                            {k: v for k, v in (after_doc or {}).items() if k != "reports"} != {k: v for k, v in (before_doc or {}).items() if k != "reports"}:
+                        raise SaveError("not saved, changing the reports that use %s would have changed something else in %s" % (name, os.path.basename(other)))
+                    writes[other] = edited
+                    updated.extend(reports)
+        for target, content in writes.items():
+            mode = os.stat(target).st_mode
+            tmp = target + ".saving"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            os.chmod(tmp, mode)
+            os.replace(tmp, target)
+        return path, updated
     raise SaveError("not saved, no loaded file has a sensor called %s" % name, 404)
 
 
@@ -714,7 +766,7 @@ def report_sql(rtype, rows, cols):
 
 # ---------------------------------------------------------------------------- search
 
-# word:value narrows by a field, for example sensor:get-hashes or action:blocked
+# word:value narrows by a field, for example sensor:crypto-hash or action:blocked
 SEARCH_FIELDS = {"sensor": "contains", "action": "equals", "origin": "equals", "app": "equals", "run": "equals",
                  "host": "equals", "trace": "number", "pid": "number", "route": "route"}
 # a plain word is looked for in all of these
@@ -755,7 +807,7 @@ def search_where(query):
         if field is None:
             cond = "(%s) LIKE %s" % (SEARCH_TEXT, _like(text))
         elif SEARCH_FIELDS[field] == "route":
-            # the request an event happened in came in at this route, as the get-route sensor saw it
+            # the request an event happened in came in at this route, as the http-route sensor saw it
             seen = "SELECT run, trace FROM events_raw WHERE sensor IN %s" % ROUTE_SENSORS_SQL
             cond = ("(run, trace) NOT IN (%s)" % seen if text == NO_REQUEST
                     else "(run, trace) IN (%s AND capture = %s)" % (seen, _lit(text)))
@@ -774,12 +826,12 @@ def search_where(query):
 # ---------------------------------------------------------------------------- graph
 
 NO_REQUEST = "(outside a request)"
-# the sensor that says which route a request came in at. It was called get-routes before it was get-route, and the log
-# still has events from the old name
-ROUTE_SENSORS = ("get-route", "get-routes")
+# the sensor that says which route a request came in at. It has been called get-routes and get-route, and the log still
+# has events from the old names
+ROUTE_SENSORS = ("http-route", "get-route", "get-routes")
 ROUTE_SENSORS_SQL = "(%s)" % ", ".join("'%s'" % x for x in ROUTE_SENSORS)
-# sensors whose capture is another route. They were get-forwards and get-redirects before they were singular
-JUMPS = ("get-forward", "get-forwards", "get-redirect", "get-redirects")
+# sensors whose capture is another route, under the names they had before they were http-forward and http-redirect too
+JUMPS = ("http-forward", "http-redirect", "get-forward", "get-forwards", "get-redirect", "get-redirects")
 
 
 def _short(name):
@@ -795,7 +847,7 @@ def _page_of(route):
 
 def graph_rows(db_path, route=None):
     """The events of the graph in the order they happened, request by request. The route is the first request the
-    event happened in, as the get-route sensor saw it. Events of one request are together and in the agent's own
+    event happened in, as the http-route sensor saw it. Events of one request are together and in the agent's own
     order, which is the order the application caused them."""
     where = "WHERE sensor NOT IN %s AND stack IS NOT NULL" % ROUTE_SENSORS_SQL
     sql = """SELECT route, run, trace, sensor, action, capture, stack FROM (

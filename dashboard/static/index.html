@@ -140,8 +140,6 @@
   #jotList table.list td.watch { max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
   #jotList table.list td.sw, #jotList table.list th.sw { width: 1%; }
   #jotList table.list tr.off td:not(.sw) { opacity: 0.5; }
-  .modeswitch { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
-  .modeswitch .on { color: var(--text); font-weight: 600; }
   .badge.rule { background: var(--code); color: var(--muted); }
   .applied { color: var(--muted); font-size: 12px; margin-top: 8px; }
   .jotbar { display: flex; gap: 8px; }
@@ -314,7 +312,7 @@
     </form>
     <form class="ask" id="searchForm" style="margin-top:8px">
       <input type="search" id="searchBox" autocomplete="off" aria-label="Search events"
-             placeholder="Search events, like: rsa   or   sensor:get-hashes -jasper   or   action:blocked">
+             placeholder="Search events, like: rsa   or   sensor:crypto-hash -jasper   or   action:blocked">
       <button type="submit" id="searchBtn">Search</button>
     </form>
     <div class="row picker">
@@ -426,7 +424,7 @@ const PRESETS = [
   { label: "CVE frequency", chart: "bar", title: "CVE frequency, events by CVE sensor. A rule counts every sink call, so a monitored entry can count more than once",
     sql: "SELECT sensor || ' (' || action || ')' AS cve, COUNT(*) AS events\nFROM events WHERE sensor LIKE 'cve-%' GROUP BY sensor, action ORDER BY events DESC" },
   { label: "CVEs by route", chart: "table", title: "CVEs by route, which requests reach vulnerable code or trigger a rule",
-    sql: "SELECT r.capture AS route, c.sensor AS cve, c.action, COUNT(*) AS events\nFROM events c JOIN events_raw r ON r.run = c.run AND r.trace = c.trace AND r.sensor = 'get-route'\nWHERE c.sensor LIKE 'cve-%' GROUP BY r.capture, c.sensor, c.action ORDER BY events DESC" },
+    sql: "SELECT r.capture AS route, c.sensor AS cve, c.action, COUNT(*) AS events\nFROM events c JOIN events_raw r ON r.run = c.run AND r.trace = c.trace AND r.sensor IN ('http-route', 'get-route', 'get-routes')\nWHERE c.sensor LIKE 'cve-%' GROUP BY r.capture, c.sensor, c.action ORDER BY events DESC" },
   { label: "Sinks in CVEs", chart: "table", title: "Sinks in CVEs, the dangerous calls a CVE rule saw inside vulnerable code, one count for every call",
     sql: "SELECT method_name AS sink, sensor AS cve, action, COUNT(*) AS events, MAX(capture) AS example\nFROM events WHERE sensor LIKE 'cve-%' AND sensor NOT LIKE '%-entered' GROUP BY method_name, sensor, action ORDER BY events DESC" },
   { label: "CVE payloads", chart: "table", title: "CVE payloads, what was passed into vulnerable code",
@@ -865,7 +863,7 @@ let savedNote = null;         // what to say in the editor after a save, { key, 
 let keptEditor = null;        // the open JOT's editor, { key, item, original, node, editor, warn, focused, scroll }, see jotEditor
 let jotSort = { by: "Name", dir: 1 };         // how the list of sensors and rules is sorted, dir 1 is the column's first direction
 let jotOrder = { jots: [], reports: [] };   // what each page's list shows, in order, so the panel can step through it
-let pendingSelect = null;     // a name from the address, like #jots/get-route, selected once the list has loaded
+let pendingSelect = null;     // a name from the address, like #jots/http-route, selected once the list has loaded
 
 // Edits that aren't saved keep you where you are. Leaving by any route in the page says so, in the editor, and stays put.
 // The browser's own prompt is the only thing that can stop the tab being closed or reloaded.
@@ -985,9 +983,8 @@ function drawSensors(all) {
   // what each column can be sorted by. Text goes A to Z first and numbers biggest first, and a second click reverses it
   const watchesOf = (i) => (i.scopes.length ? i.scopes[0] : i.methods[0]) || "";
   const sorts = {
-    "Name": [(i) => i.name, "text"], "Kind": [(i) => i.kind, "text"], "Watches or inside": [watchesOf, "text"],
-    "File": [(i) => i.file || "", "text"], "Last hour": [(i) => i.last_hour, "number"], "Total": [(i) => i.events, "number"],
-    "Last fired": [(i) => i.events ? i.last_ts : -1, "number"],
+    "Name": [(i) => i.name, "text"], "Location": [watchesOf, "text"],
+    "File": [(i) => i.file || "", "text"],
   };
   const [by, type] = sorts[jotSort.by] || sorts.Name;
   const dir = (type === "number" ? -1 : 1) * jotSort.dir;
@@ -1001,10 +998,10 @@ function drawSensors(all) {
     drawJots();
   };
   const head = el("tr", {}, el("th", { class: "sw", text: "Enabled" }),
-    ...Object.keys(sorts).map((t) => el("th", { class: (t === "Last hour" || t === "Total" ? "num " : "") + "sortable",
-      "aria-sort": jotSort.by === t ? (jotSort.dir === 1 ? "ascending" : "descending") : "none", title: "Sort by " + t.toLowerCase(),
+    ...Object.keys(sorts).map((t) => el("th", { class: "sortable",
+      "aria-sort": jotSort.by === t ? (jotSort.dir === 1 ? "ascending" : "descending") : "none", title: (t === "Location" ? "The method the sensor watches, or the method it is limited to. " : "") + "Sort by " + t.toLowerCase(),
       onclick: () => sortBy(t), text: t + (jotSort.by === t ? (jotSort.dir === 1 ? " ▲" : " ▼") : "") })),
-    el("th", { class: "sw", text: "Mode" }));
+    el("th", { class: "sw", title: "On, the rule blocks the call. Off, it only reports what it would have blocked", text: "Protect" }));
   const body = shown.map((i) => {
     // A rule limited to certain methods is identified by where it applies. Its watched methods are often the same
     // list for every rule, like the expression and process sinks in the CVE microsandboxes.
@@ -1016,10 +1013,8 @@ function drawSensors(all) {
     return el("tr", { class: [i.key === jotSelected ? "selected" : "", off ? "off" : ""].join(" ").trim(),
         onclick: () => selectJot(i.key, i.name) },
       el("td", { class: "sw" }, canSwitch ? enableSwitch(i, !off) : null),
-      el("td", { text: i.name }), el("td", {}, el("span", { class: "badge " + (i.kind === "rule" ? "rule" : "sensor"), text: i.kind === "rule" ? "rule" : "observe" })),
+      el("td", { text: i.name }),
       el("td", { class: "watch", title: watches, text: watches }), el("td", { text: i.file || "" }),
-      el("td", { class: "num", text: String(i.last_hour) }), el("td", { class: "num", text: String(i.events) }),
-      el("td", { class: !i.events ? "null" : "", text: i.events ? ago(i.last_ts) : "never" }),
       el("td", { class: "sw" }, rule ? modeSwitch(rule) : null));
   });
   jotOrder.jots = shown;
@@ -1052,14 +1047,14 @@ function modeSwitch(r) {
   const sw = el("button", { type: "button", class: "switch", role: "switch", "aria-checked": String(shown), "aria-label": r.name + " protects",
     disabled: stuck ? "" : null,
     title: locked ? "The agent is locked to monitor" : !c.master ? "Monitor is on, so no rule blocks" : !r.enabled ? "Enable the rule first"
-      : intended ? "Protect. Click to make this rule report only" : "Monitor. Click to make this rule block",
+      : intended ? "Protecting, the rule blocks. Click to make it report only" : "Reporting only. Click to make this rule block",
     onclick: (ev) => {
       ev.stopPropagation();
       const next = !intended;
       // switching back to what the .jot file says removes the override
       changeControl({ rules: { [r.name]: next === !r.staged ? null : next } });
     } });
-  return el("span", { class: "modeswitch" }, el("span", { class: shown ? "" : "on", text: "Monitor" }), sw, el("span", { class: shown ? "on" : "", text: "Protect" }));
+  return sw;
 }
 
 // ---- reports. A report runs on its own tab, and its result sits under the list.
@@ -1240,7 +1235,7 @@ function jotEditor(item, canSave) {
   const label = el("h4", { text: "YAML" });
   const save = el("button", { type: "button", class: "small primary", text: "Save", disabled: "", title: "Write this into " + item.file + " (Ctrl or Cmd S)" });
   const editor = JotEditor.create(host, { doc: original, onChange: changed, onSave: () => saveNow() });
-  let timer = null, serial = 0, clean = false;
+  let timer = null, serial = 0, blocked = false;   // blocked is true only when the check has found a problem
   if (savedNote && savedNote.key === key) { status.className = "editstatus ok"; status.textContent = savedNote.text; savedNote = null; }
   async function check() {
     const mine = ++serial;
@@ -1248,22 +1243,31 @@ function jotEditor(item, canSave) {
       const { problems } = await api("/api/jots/check", { text: editor.get() });
       if (mine !== serial) return;
       editor.problems(problems);
-      clean = !problems.length;
-      save.disabled = !clean || editor.get() === original;
+      blocked = problems.length > 0;
+      save.disabled = blocked || editor.get() === original;
       status.className = "editstatus" + (problems.length ? " bad" : " ok");
       status.textContent = problems.length ? problems.length + (problems.length === 1 ? " problem" : " problems") + ", " + problems[0].message
         + " (line " + problems[0].line + ")" : "No problems found";
-    } catch (e) { status.className = "editstatus"; status.textContent = ""; }
+    } catch (e) {
+      // the check couldn't run, so say so and leave Save on, saving checks the text again before it writes anything
+      if (mine !== serial) return;
+      blocked = false;
+      save.disabled = editor.get() === original;
+      status.className = "editstatus bad";
+      status.textContent = "Couldn't check this, " + e.message;
+    }
   }
   async function saveNow() {
-    if (!canSave || !clean || editor.get() === original) return;
+    if (!canSave || blocked || editor.get() === original) return;
     save.disabled = true;
     try {
       const done = await api("/api/jots/save", { name: item.name, original, text: editor.get() });
       const renamed = done.name !== item.name;
       const where = renamed ? item.kind + ":" + done.name : key;
       savedNote = { key: where, text: (renamed ? "Renamed to " + done.name + " and saved to " : "Saved to ") + done.saved
-        + ". The agent reads it again when the application restarts." + (done.notes.length ? " Note that " + done.notes.join(", and ") + "." : "") };
+        + ". The agent reads it again when the application restarts."
+        + (done.reports.length ? " Reports changed to the new name are " + done.reports.join(", ") + "." : "")
+        + (done.notes.length ? " Note that " + done.notes.join(", and ") + "." : "") };
       if (renamed) {
         jotSelected = where;
         try { history.replaceState(null, "", "#" + currentPage + "/" + encodeURIComponent(done.name)); } catch (e) { /* ignore */ }
@@ -1277,8 +1281,8 @@ function jotEditor(item, canSave) {
   }
   save.addEventListener("click", saveNow);
   function changed(text) {
-    clean = false;
-    save.disabled = true;
+    blocked = false;
+    save.disabled = text === original;      // on as soon as there is something to save, a problem found by the check turns it off
     revert.hidden = text === original;
     status.className = "editstatus";
     status.textContent = text === original ? "" : "Checking";

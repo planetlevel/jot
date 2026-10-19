@@ -117,20 +117,15 @@ class App:
         """Write an edited sensor back into its .jot file, then read the files again so the page shows it."""
         if not self.editable:
             raise store.SaveError("saving is off, the dashboard is open to other machines", 403)
-        path = store.save_sensor(self.jot_paths, name, original, text)
+        path, reports = store.save_sensor(self.jot_paths, name, original, text)
         new_name = (yaml.safe_load(text) or {}).get("name") or name
         notes = []
-        if new_name != name:
-            # what still says the old name, so a rename doesn't quietly break it
-            reports = store.reports_using(self.jot_paths, name)
-            if reports:
-                notes.append("reports still using %s are %s" % (name, ", ".join(reports)))
-            if self.control is not None:
-                file = self.control.read()
-                if name in file["rules"] or name in file["enabled"]:
-                    notes.append("the control file still has a setting for %s" % name)
+        if new_name != name and self.control is not None:
+            file = self.control.read()
+            if name in file["rules"] or name in file["enabled"]:
+                notes.append("the control file still has a setting for %s" % name)
         self.reload_jots(force=True)
-        return {"saved": os.path.basename(path), "name": new_name, "notes": notes}
+        return {"saved": os.path.basename(path), "name": new_name, "reports": reports, "notes": notes}
 
     def reports(self):
         """The reports from the .jot files, each with the query that builds it and how to show it."""

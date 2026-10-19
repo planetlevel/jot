@@ -56,7 +56,7 @@ shown at the far right as an exit. Lines get wider with the number of events, an
 
 Click a node to follow its paths, everything that does not lead to or from it fades. The panel beside the graph shows
 what the node captured, where it comes from and where it leads, and **Show these events** opens them in a search.
-A picked node has its own address, like `#graph/effect%3Aget-ciphers`. The Route box shows the paths of one route.
+A picked node has its own address, like `#graph/effect%3Acrypto-cipher`. The Route box shows the paths of one route.
 
 Only your application's code is drawn, as set by `app:` in the jots file, so the JDK, the server and libraries don't clutter it. Sensors
 that only describe the request, like who the user was, are left out unless you tick **Include request details**. The
@@ -73,7 +73,7 @@ The search box under the question box finds individual events, newest first, and
 Every word has to match somewhere in the event, in its capture, message, sensor, call site or stack, so `rsa`
 finds anything with RSA in it and `hash jar` needs both. Put quotes around a phrase, and a leading `-` leaves out
 what follows, like `-jasper`. A `field:value` narrows to one field. The fields are `sensor` (contains), `action`,
-`origin`, `app`, `run` and `host` (exact), `route` (the route the request came in at, exact), and `trace` and `pid` (a number). For example `sensor:get-hashes action:observed -jasper`.
+`origin`, `app`, `run` and `host` (exact), `route` (the route the request came in at, exact), and `trace` and `pid` (a number). For example `sensor:crypto-hash action:observed -jasper`.
 The search honors Clear, App events only, Blocked and Monitored, and says how many more matches the filter left out.
 
 **Refresh** fetches the latest events now, and the time beside it says when the page last fetched. With
@@ -159,8 +159,9 @@ A sensor's drawer on the JOTs page shows it as it is written in its file, commen
 checked as you type, with the problems marked on their lines. Save, or Ctrl or Cmd S, writes the new text into the `.jot`
 file that has the sensor and changes nothing else in that file, so the comments and the other sensors in a bundle stay as they
 were. The agent reads its `.jot` files when the application starts, so a saved change applies at the next restart.
-The name can be changed, to one that no sensor has, and the drawer says which reports and control file settings still use
-the old name. A save is refused, and nothing is written, if the text has a problem, if the new name is taken, or if the
+The name can be changed, to one that no sensor has, and every report that uses the old name in its `rows` or `cols`, in
+any loaded file, is changed to the new one, with the comments and layout around it left as written. The drawer says which
+reports changed, and if the control file still has a setting for the old name. A save is refused, and nothing is written, if the text has a problem, if the new name is taken, or if the
 file changed since the drawer was opened. Saving is switched off when the dashboard is started with `--allow-remote`.
 
 ## Access
