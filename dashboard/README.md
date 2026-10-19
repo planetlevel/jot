@@ -26,7 +26,7 @@ Without a key the dashboard still works. The preset views and the SQL box don't 
 | `--log` | JSON event log to follow. May be a glob such as `'logs/*.jsonl'`, and may be given more than once. Default `jot-events.jsonl` |
 | `--jots` | The jots file that lists the JOTs and the control file. Start each agent with `-javaagent:jot.jar=<this path>`, so the agent and the dashboard use the same definitions |
 | `--db` | SQLite file that holds the events. Default `jot-dashboard.db`. Delete it to start fresh |
-| `--app` | A package of your application, like `com.acme`. May be given more than once, and adds to the `app:` list in the jots file. See App events only below |
+| `--app` | A package of your application, like `com.acme`. May be given more than once, and adds to `app: packages:` in the jots file. See App events only below |
 | `--since` | Show only events from this time on. `now`, or a date and time like `2026-10-16T09:30`. Nothing is deleted |
 | `--port`, `--host` | Where to listen. Default `127.0.0.1:8765`. `--allow-remote` is needed for any other host, see the note on access below |
 
@@ -58,7 +58,7 @@ Click a node to follow its paths, everything that does not lead to or from it fa
 what the node captured, where it comes from and where it leads, and **Show these events** opens them in a search.
 A picked node has its own address, like `#graph/effect%3Acrypto-cipher`. The Route box shows the paths of one route.
 
-Only your application's code is drawn, as set by `app:` in the jots file, so the JDK, the server and libraries don't clutter it. Sensors
+Only your application's code is drawn, as set by `app: packages:` in the jots file, so the JDK, the server and libraries don't clutter it. Sensors
 that only describe the request, like who the user was, are left out unless you tick **Include request details**. The
 graph follows Clear and App events only, and it redraws by itself when new events arrive. The stack of an event is cut
 at `jot.output.stack` frames, 25 by default, so an older event may be missing the outer methods. TicketBook records 500.
@@ -106,7 +106,8 @@ Each event is tagged as it is stored, so the filter is cheap and the model and t
 | `origin` | `app` when a frame is application code, `library` when the stack has libraries but nothing of yours, `platform` when it is all JDK and server, `none` when the event has no stack |
 | `app_frame` | The innermost frame of the application, like `com.acme.Ticket.encrypt(Ticket.java:125)` |
 
-Which code is yours comes from the `app:` list in the jots file, for example `com.acme` and `org.apache.jsp` (Tomcat compiles a page to
+Calls made by class loading and page compiling are left out by the agent, using the `ignore:` list in the jots file, and the dashboard
+uses the same list for events that an older agent didn't leave out. Which code is yours comes from `app: packages:` in the jots file, for example `com.acme` and `org.apache.jsp` (Tomcat compiles a page to
 `org.apache.jsp`, which is your code). Without it, anything that isn't the JDK or the server counts as yours, and
 nothing is tagged `library`. A servlet's `service` method counts as the application, since the container calls it
 on the application's behalf, which keeps the route and user sensors. Blocked and reported events are never left out.
@@ -138,7 +139,7 @@ and says so when no agent has confirmed picking up the settings, which it knows 
 
 The JOTs tab is one list with a line for every sensor and rule. Every sensor and rule has an enabled switch on its left. A sensor that isn't enabled
 records nothing and a rule that isn't enabled neither blocks nor reports. The switch writes `enabled` under the sensor's
-name in the control file, and puts it back to what the .jot file says when you switch it to that. A rule, meaning a sensor that has an `exception`, also has
+name in the control file, and puts it back to what the .jot file says when you switch it to that. A rule, meaning a sensor that has a `block-when`, also has
 a slider on its right between Monitor and Protect for that rule alone. Reports are on their own tab.
 
 The panel that opens over a JOT or an event has Previous and Next buttons that go through the list it was opened from,
@@ -152,6 +153,26 @@ change is logged with before and after in `<control file>.audit`.
 The panel shows what the file says. An agent started with `-Djot.protect=false` ignores the file, and the agent reports that
 at startup in `jot-config` events, so the panel shows it as locked to monitor and disables the switches. The same events
 say which JOTs the agent loaded, and a rule the agent didn't load is marked as such.
+
+## Drafting a JOT
+
+New JOT, on the JOTs tab, opens a chat. Say what you want a JOT to watch or stop, like "block any request that creates an RSA
+key under 2048 bits", and the model drafts one, with a few sentences about what it watches and what to check. The draft
+opens in the same editor as an existing sensor, so you can read it, change it and see its problems as you type. You can ask for
+changes afterward, like "make it only report", and the draft is sent along so it changes and doesn't start again.
+
+A draft is never saved by itself. Add to file puts it after the last JOT in the file you pick, or in a new file in the first
+directory of the jots file, and leaves everything else in the file as it was. A rule always starts with `protect: false`, so it
+only reports until you switch it on. Before you see a draft the dashboard checks it the way the editor does, and also that it is one
+JOT, that its name is free, that a sensor records something, that a rule has a description, and that no expression uses `T(` or
+`new`. A draft with a problem goes back to the model with it, up to two more times, and one that is still wrong comes back with
+its problems shown so you can fix it. Under the draft is a note saying which of the methods it watches have been seen in your log,
+and which haven't, since a model can get a name wrong.
+
+It needs `ANTHROPIC_API_KEY`, like the question box, and is off without it. A request sends the model your text, the names and
+descriptions of the JOTs, and the names of the methods the application's JOTs were seen watching, by count. It never sends what was
+captured. Adding to a file needs the dashboard to be able to write files, so it is off with `--allow-remote`. The model can get the
+logic wrong, an argument number for one, even when the YAML is fine, so read a draft before you add it.
 
 ## Editing a sensor
 

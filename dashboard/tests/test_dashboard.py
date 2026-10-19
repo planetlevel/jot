@@ -115,12 +115,12 @@ class IngestTests(unittest.TestCase):
         jot = os.path.join(self.env.dir, "a.jot")
         with open(jot, "w") as f:
             f.write("sensors:\n- name: 'crypto-cipher'\n  description: 'Identifies ciphers'\n  methods:\n"
-                    "  - 'javax.crypto.Cipher.getInstance'\n- name: 'block-it'\n  exception: 'no'\n")
+                    "  - 'javax.crypto.Cipher.getInstance'\n- name: 'block-it'\n  block-when: true\n")
         self.assertEqual(2, store.load_sensors(self.env.ingestor.db, [self.env.dir]))
         app = server.App(self.env.db, self.env.ingestor)
         by_name = {s["name"]: s for s in app.sensors()}
         self.assertEqual("Identifies ciphers", by_name["crypto-cipher"]["description"])
-        self.assertEqual("no", by_name["block-it"]["blocks"])
+        self.assertEqual("true", by_name["block-it"]["blocks"], "block-when: true is a rule that blocks every call")
 
 
 class QueryTests(unittest.TestCase):
@@ -368,7 +368,7 @@ class AskTests(unittest.TestCase):
              {"name": "blocker", "description": None, "methods": [], "scopes": ["a.B.c"], "blocks": "denied"}],
             [{"question": "before", "sql": "SELECT 1"}], error="boom")
         for text in ("crypto-cipher: Identifies ciphers", "watches javax.crypto.Cipher.getInstance",
-                     "only inside a.B.c", "blocks, message: denied", "Q: before", "SQL: SELECT 1",
+                     "only inside a.B.c", "a rule, blocks when: denied", "Q: before", "SQL: SELECT 1",
                      "Question: q?", "boom"):
             self.assertIn(text, prompt)
 
@@ -454,6 +454,30 @@ class ModelApiTests(unittest.TestCase):
         for text in ("which ciphers?", "CREATE TABLE events", "- s: d", "SQL: SELECT 2"):
             self.assertIn(text, prompt)
 
+    def test_a_jot_is_drafted_with_the_documented_request_and_reads_the_draft_tool_result(self):
+        fake = self.fake(reply={"content": [{"type": "tool_use", "name": "draft", "input": {"yaml": GOOD_DRAFT, "explanation": "Watches keys."}}]})
+        out = llm.draft_jot("block weak keys", [{"name": "crypto-cipher", "description": "Records ciphers", "methods": ["a.B.c"]}],
+                            ["javax.crypto.Cipher.getInstance"], [{"request": "before", "yaml": "name: x"}], ["name is used"])
+        self.assertEqual({"yaml": GOOD_DRAFT.strip("\n"), "explanation": "Watches keys."}, out)
+        headers, body = fake.requests[0]
+        self.assertEqual("test-key", headers["x-api-key"])
+        self.assertEqual("draft", body["tools"][0]["name"])
+        self.assertIn("block-when", body["system"], "the model is told the whole format")
+        self.assertIn("Never capture secrets", body["system"])
+        prompt = body["messages"][0]["content"]
+        for text in ("crypto-cipher: Records ciphers", "javax.crypto.Cipher.getInstance", "Request: before", "Request: block weak keys", "name is used"):
+            self.assertIn(text, prompt)
+        self.assertNotIn("AES", prompt, "no captured values are ever sent")
+
+    def test_a_reply_with_no_draft_is_an_error_and_a_missing_key_is_said_plainly(self):
+        self.fake(reply={"content": [{"type": "text", "text": "hello"}]})
+        with self.assertRaises(llm.LLMError):
+            llm.draft_jot("x", [], [])
+        os.environ.pop("ANTHROPIC_API_KEY")
+        with self.assertRaises(llm.LLMError) as e:
+            llm.draft_jot("x", [], [])
+        self.assertIn("ANTHROPIC_API_KEY is not set", str(e.exception))
+
     def test_a_bad_chart_type_falls_back_to_table(self):
         self.fake(reply=self.tool_reply(title="t", sql="SELECT 1", chart="pie", explanation=""))
         self.assertEqual("table", llm.generate("q", "s", [])["chart"])
@@ -531,9 +555,9 @@ RULES_JOT = """
 sensors:
 - name: 'rule-a'
   description: 'blocks a'
-  exception: 'no a'
+  block-when: true
 - name: 'rule-b'
-  exception: 'no b'
+  block-when: true
   protect: false
 - name: 'just-watching'
 """
@@ -556,7 +580,7 @@ sensors:
   description: 'No processes'
   methods: ['java.lang.ProcessBuilder.<init>']
   scopes: ['javax.servlet.Servlet.service']
-  exception: 'no processes'
+  block-when: true
 - name: 'example'
   methods: ['a.b.c.Class.method']
 reports:
@@ -576,7 +600,7 @@ sensors:
   methods: ['x.Y.z']
 - name: 'block-staged'
   methods: ['java.net.Socket.<init>']
-  exception: 'no sockets'
+  block-when: true
   protect: false
 """
 
@@ -621,7 +645,7 @@ class JotsViewTests(unittest.TestCase):
     def test_rules_show_their_mode_and_a_staged_rule_is_monitor(self):
         self.assertEqual(("rule", "block"), (self.by_name["block-exec"]["kind"], self.by_name["block-exec"]["mode"]))
         self.assertEqual("monitor", self.by_name["block-staged"]["mode"])
-        self.assertEqual("no processes", self.by_name["block-exec"]["exception"])
+        self.assertEqual("true", self.by_name["block-exec"]["block_when"])
 
     def test_activity_counts(self):
         routes = self.by_name["http-route"]
@@ -638,7 +662,7 @@ class JotsViewTests(unittest.TestCase):
         self.assertIn("'not a method'", texts)
         self.assertIn("report Routes by users uses auth-user, which no loaded sensor defines", texts)
         self.assertIn("Old series is type series", texts)
-        self.assertIn("mystery, which isn't in the loaded .jot files", texts)
+        self.assertFalse([t for t in texts if "mystery" in t or "isn't in the loaded" in t], "events from a name that isn't loaded are history, not a problem")
         self.assertNotIn("jot-control", texts)          # the agent's own events aren't a sensor
         self.assertNotIn("example", " ".join(self.by_name))   # the placeholder is skipped
 
@@ -689,6 +713,7 @@ class JotsViewTests(unittest.TestCase):
         self.assertNotIn(">Mode<", table)
         self.assertNotIn("modeswitch", table, "no Monitor and Protect words around the toggle")
         self.assertEqual(3, table.count('class="sortable"') + table.count(' sortable"'), "Name, Location and File can be sorted")
+        self.assertNotIn('id="jotKind"', page, "there is no Sensors and rules filter, they are the same thing")
         for gone in (">Kind<", ">Last hour<", ">Total<", ">Last fired<"):
             self.assertNotIn(gone, table)
 
@@ -1054,14 +1079,14 @@ class ControlStoreTests(unittest.TestCase):
         with open(self.path) as f:
             self.assertEqual({"rule-a": {"protect": True, "enabled": False}}, yaml.safe_load(f)["sensors"])
 
-    def test_the_older_rules_map_is_still_read_and_is_rewritten_under_the_sensors(self):
+    def test_a_rules_map_is_no_longer_read_and_is_dropped_when_the_file_is_written(self):
         with open(self.path, "w") as f:
             f.write("v: 1\nprotect: true\nrules:\n  rule-a: false\n")
-        self.assertEqual({"rule-a": False}, self.control.read()["rules"])
+        self.assertEqual({}, self.control.read()["rules"], "the agent refuses a file like this, so it isn't taken as a setting")
         self.control.write(enabled={"rule-b": False}, known_rules=self.known)
         with open(self.path) as f:
             doc = yaml.safe_load(f)
-        self.assertEqual({"rule-a": {"protect": False}, "rule-b": {"enabled": False}}, doc["sensors"])
+        self.assertEqual({"rule-b": {"enabled": False}}, doc["sensors"])
         self.assertNotIn("rules", doc)
 
     def test_bad_enabled_values_are_refused_and_change_nothing(self):
@@ -1513,6 +1538,322 @@ class SaveJotTests(unittest.TestCase):
         self.assertEqual(["bundle.jot"], [f for f in os.listdir(self.env.dir) if f.endswith(".jot") or f.endswith(".saving")])
 
 
+class CveStatusViewTests(unittest.TestCase):
+    def test_a_cve_is_active_when_its_active_sensor_has_events_and_the_rule_counts_requests(self):
+        page = open(os.path.join(os.path.dirname(__file__), "..", "static", "index.html")).read()
+        sql = json.loads('"' + re.search(r'label: "CVE status".*?sql: "(.*?)" \},', page, re.S).group(1) + '"')
+        env = Env()
+        env.write(event(1, sensor="cve-1-active", capture="reached", trace=1), event(2, sensor="cve-1-active", capture="reached", trace=2),
+                  event(3, sensor="cve-1-blocked", action="blocked", capture="[ls]", trace=2),
+                  event(4, sensor="cve-1-blocked", action="blocked", capture="[id]", trace=2),
+                  event(5, sensor="cve-2-monitored", action="monitored", capture="[ls]", trace=3))
+        env.ingestor.poll()
+        rows = {r[0]: r[1:] for r in server.App(env.db, env.ingestor).sql(sql)["rows"]}
+        self.assertEqual(["active", 2, 1, 0], rows["cve-1"], "active, run twice, blocked in one request")
+        self.assertEqual(["not seen", 0, 0, 1], rows["cve-2"], "a rule fired but the vulnerable code was never seen running")
+
+
+GOOD_DRAFT = """name: crypto-weak-key
+description: A key shorter than 2048 bits was generated
+methods:
+- java.security.KeyPairGenerator.initialize
+captures:
+- '#P0'
+block-when: '#P0 < 2048'
+"""
+
+
+# the draft a model really produced for "identify log library use", which could not work
+LOG_DRAFT_AS_WRITTEN = """name: file-log-write
+description: Code opened a log file for writing
+methods:
+  - java.io.FileOutputStream.<init>
+  - java.io.FileWriter.<init>
+  - static java.nio.file.Files.newBufferedWriter
+  - static java.nio.file.Files.newOutputStream
+  - static java.nio.file.Files.write
+captures:
+  - '#P0'
+matchers:
+  - '(?i)\\.log(\\.\\d+)?$'
+"""
+
+
+class JotPromptTests(unittest.TestCase):
+    def examples(self):
+        text = llm.JOT_SYSTEM[llm.JOT_SYSTEM.index("Examples that were run"):llm.JOT_SYSTEM.index("Always answer by calling")]
+        return [e.strip("\n") for e in re.split(r"\n\n(?=name: )", text[text.index("name: "):]) if e.strip()]
+
+    def test_the_draft_that_could_not_work_is_refused_and_says_why(self):
+        problems = store.check_draft(LOG_DRAFT_AS_WRITTEN)
+        said = " ".join(problems)
+        self.assertIn("static java.nio.file.Files.newBufferedWriter", said)
+        self.assertIn("with no static or other modifiers", said)
+        self.assertEqual(3, sum("isn't a method name" in p for p in problems), "each of the three static methods")
+
+    def test_the_prompt_never_teaches_static_and_says_not_to_use_it(self):
+        text = llm.JOT_SYSTEM
+        self.assertNotRegex(text, r"(?m)^\s*-\s+static ", "no example has it")
+        self.assertIn("Never write\n                static", text)
+
+    def test_every_example_in_the_prompt_passes_the_checks_a_draft_must_pass(self):
+        found = self.examples()
+        self.assertEqual(["file-log-write", "http-cookie-set", "native-process"], [yaml.safe_load(e)["name"] for e in found])
+        for example in found:
+            self.assertEqual([], store.check_draft(example), example)
+        self.assertIs(False, yaml.safe_load(found[2])["protect"], "the example rule is staged, like every drafted rule")
+
+    def test_the_log_example_matches_what_the_agent_records_for_every_way_of_writing_a_file(self):
+        matcher = yaml.safe_load(self.examples()[0])["matchers"][0]
+        for captured in ("/var/log/app.log", "/var/log/app.LOG", "logs/app.log.1", "C:\\logs\\app.log.12"):
+            self.assertTrue(re.search(matcher, captured, flags=0) or re.search(matcher.replace("(?i)", ""), captured, re.I), captured)
+        for captured in ("/var/log/app.txt", "/var/data/blog.html", "/var/log/app.log.bak", "{class java.io.File:/var/log/app.log}"):
+            self.assertFalse(re.search(matcher.replace("(?i)", ""), captured, re.I), captured)
+
+    def test_the_prompt_says_how_a_capture_looks_to_a_matcher_and_which_method_to_watch(self):
+        for text in ("recorded as its plain text", "{class the.Name:its text}", "Watch the lowest-level method", "Files.newOutputStream"):
+            self.assertIn(text, llm.JOT_SYSTEM)
+
+
+class DraftJotTests(unittest.TestCase):
+    def setUp(self):
+        self.env = Env()
+        with open(os.path.join(self.env.dir, "a.jot"), "w") as f:
+            f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n  - '#P0'\n")
+        store.load_sensors(self.env.ingestor.db, [self.env.dir])
+        self.env.write(event(1, method_name="javax.crypto.Cipher.getInstance"), event(2, method_name="javax.crypto.Cipher.getInstance"))
+        self.env.ingestor.poll()
+        self.calls = []
+
+    def app(self, *replies, editable=True):
+        replies = list(replies)
+        def fake(request, sensors, methods, history, problems):
+            self.calls.append({"request": request, "sensors": [x["name"] for x in sensors], "methods": methods, "history": history, "problems": problems})
+            return replies.pop(0) if len(replies) > 1 else replies[0]
+        return server.App(self.env.db, self.env.ingestor, jot_paths=[self.env.dir], editable=editable, draft=fake)
+
+    def test_a_good_draft_comes_back_with_what_the_model_was_told_and_which_hooks_the_log_has_seen(self):
+        app = self.app({"yaml": GOOD_DRAFT, "explanation": "Watches key generation."})
+        out = app.draft_jot("block weak RSA keys")
+        self.assertEqual([], out["problems"])
+        self.assertTrue(out["rule"])
+        self.assertIn("protect: false", out["yaml"], "a new rule only reports until it is turned on")
+        self.assertEqual("Watches key generation.", out["explanation"])
+        self.assertEqual([{"method": "java.security.KeyPairGenerator.initialize", "seen": 0}], out["hooks"], "never seen in the log")
+        call = self.calls[0]
+        self.assertEqual(["crypto-cipher"], call["sensors"], "the existing JOTs, so it doesn't repeat a name")
+        self.assertEqual(["javax.crypto.Cipher.getInstance"], call["methods"], "only the names of instrumented methods, never captured values")
+        self.assertIsNone(call["problems"])
+
+    def test_the_hooks_that_the_log_has_seen_are_counted(self):
+        draft = "name: crypto-cipher-use\ndescription: Cipher use\nmethods:\n- javax.crypto.Cipher.getInstance\n- javax.crypto.Cipher.other\ncaptures:\n- '#P0'\n"
+        out = self.app({"yaml": draft, "explanation": "x"}).draft_jot("ciphers")
+        self.assertEqual([("javax.crypto.Cipher.getInstance", 2), ("javax.crypto.Cipher.other", 0)], [(h["method"], h["seen"]) for h in out["hooks"]])
+        self.assertFalse(out["rule"])
+
+    def test_a_draft_with_problems_goes_back_to_the_model_with_them_and_the_repair_is_used(self):
+        bad = "name: crypto-cipher\nmethods:\n- a.b.C.m\ncaptures:\n- '#P0 + T(java.lang.Runtime).getRuntime()'\n"
+        app = self.app({"yaml": bad, "explanation": "first"}, {"yaml": GOOD_DRAFT, "explanation": "second"})
+        out = app.draft_jot("something")
+        self.assertEqual([], out["problems"])
+        self.assertEqual("second", out["explanation"])
+        self.assertEqual(2, len(self.calls))
+        said = " ".join(self.calls[1]["problems"])
+        self.assertIn("already used", said)
+        self.assertIn("T( or new", said)
+
+    def test_a_draft_that_stays_wrong_is_returned_with_its_problems_for_the_person_to_fix(self):
+        bad = "name: crypto-cipher\nmethods:\n- a.b.C.m\n"
+        out = self.app({"yaml": bad, "explanation": "tried"}).draft_jot("x")
+        self.assertEqual(server.MAX_REPAIRS + 1, len(self.calls), "it was asked again, up to the limit")
+        self.assertTrue(out["problems"])
+        self.assertEqual(bad.strip("\n"), out["yaml"])
+
+    def test_a_request_the_model_says_cannot_be_a_jot_comes_back_empty_with_the_reason(self):
+        out = self.app({"yaml": "", "explanation": "That needs the application's source."}).draft_jot("fix my bug")
+        self.assertEqual(("", "That needs the application's source.", []), (out["yaml"], out["explanation"], out["problems"]))
+
+    def test_the_conversation_is_sent_back_so_a_follow_up_changes_the_draft(self):
+        app = self.app({"yaml": GOOD_DRAFT, "explanation": "x"})
+        app.draft_jot("make it report only", [{"request": "block weak keys", "yaml": GOOD_DRAFT}] * 5)
+        history = self.calls[0]["history"]
+        self.assertEqual(3, len(history), "the last few turns")
+        self.assertEqual("block weak keys", history[0]["request"])
+
+    def test_an_empty_or_huge_request_is_refused(self):
+        app = self.app({"yaml": GOOD_DRAFT, "explanation": "x"})
+        for request in ("", "   ", "x" * 2001):
+            with self.assertRaises(store.QueryError):
+                app.draft_jot(request)
+        self.assertEqual([], self.calls)
+
+    def test_a_drafted_jot_is_added_after_the_last_one_in_the_file_and_the_page_has_it(self):
+        app = self.app({"yaml": GOOD_DRAFT, "explanation": "x"})
+        out = app.draft_jot("weak keys")
+        self.assertEqual({"added": "crypto-weak-key", "file": "a.jot"}, app.add_jot("a.jot", out["yaml"]))
+        with open(os.path.join(self.env.dir, "a.jot")) as f:
+            saved = yaml.safe_load(f)
+        self.assertEqual(["crypto-cipher", "crypto-weak-key"], [x["name"] for x in saved["sensors"]])
+        self.assertFalse(saved["sensors"][1]["protect"])
+        self.assertEqual("rule", next(x for x in app.jots()["sensors"] if x["name"] == "crypto-weak-key")["kind"])
+
+    def test_a_new_file_is_made_when_the_name_is_not_loaded_and_nothing_else_is_touched(self):
+        app = self.app({"yaml": GOOD_DRAFT, "explanation": "x"})
+        before = open(os.path.join(self.env.dir, "a.jot")).read()
+        self.assertEqual("weak-keys.jot", app.add_jot("weak-keys.jot", GOOD_DRAFT)["file"])
+        self.assertEqual(before, open(os.path.join(self.env.dir, "a.jot")).read())
+        self.assertIn("crypto-weak-key", {x["name"] for x in app.jots()["sensors"]})
+        for bad in ("../x.jot", "x.txt", ".hidden.jot", ""):
+            with self.assertRaises(store.SaveError):
+                app.add_jot(bad, GOOD_DRAFT.replace("crypto-weak-key", "other-name"))
+
+    def test_adding_refuses_a_taken_name_a_bad_draft_and_a_dashboard_that_may_not_write(self):
+        app = self.app({"yaml": GOOD_DRAFT, "explanation": "x"})
+        with self.assertRaises(store.SaveError) as e:
+            app.add_jot("a.jot", GOOD_DRAFT.replace("crypto-weak-key", "crypto-cipher"))
+        self.assertIn("already used", str(e.exception))
+        with self.assertRaises(store.SaveError):
+            app.add_jot("a.jot", "name: x\nmethods:\n- nope\n")
+        with self.assertRaises(store.SaveError) as e:
+            self.app({"yaml": GOOD_DRAFT, "explanation": "x"}, editable=False).add_jot("a.jot", GOOD_DRAFT)
+        self.assertEqual(403, e.exception.status)
+
+    def test_over_http_the_model_failing_is_a_502_and_a_bad_request_is_a_400(self):
+        def broken(*a):
+            raise llm.LLMError("ANTHROPIC_API_KEY is not set")
+        app = server.App(self.env.db, self.env.ingestor, jot_paths=[self.env.dir], editable=True, draft=broken)
+        httpd = server.make_server(app, "127.0.0.1", 0)
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        def post(path, body):
+            req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), data=json.dumps(body).encode(), method="POST",
+                                         headers={"Host": "127.0.0.1:%d" % port, "Content-Type": "application/json", "X-JOT-Dashboard": "1"})
+            return urllib.request.urlopen(req)
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            post("/api/jots/draft", {"request": "weak keys"})
+        self.assertEqual(502, e.exception.code)
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            post("/api/jots/draft", {"request": ""})
+        self.assertEqual(400, e.exception.code)
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            post("/api/jots/add", {"file": "a.jot", "text": "name: x\nmethods:\n- nope\n"})
+        self.assertEqual(400, e.exception.code)
+
+
+class DraftUiTests(unittest.TestCase):
+    CHROME = next((c for c in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium",
+                               "/usr/bin/chromium-browser") if os.path.exists(c)), None)
+
+    # runs in the page. It uses the New JOT chat the way a person does, then writes what it saw into the page
+    SCRIPT = """
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const until = async (f, ms = 5000) => { const t = Date.now(); while (Date.now() - t < ms) { const v = f(); if (v) return v; await wait(40); } return null; };
+      const button = (text) => [...document.querySelectorAll("#jotDetail button")].find((b) => b.textContent === text);
+      const out = {};
+      try {
+        location.hash = "#jots";
+        await until(() => document.querySelector("#jotList table"));
+        document.getElementById("newJot").click();
+        const box = await until(() => document.getElementById("draftRequest"));
+        out.opened = !!box && !document.getElementById("jotDetail").hidden;
+        box.value = "block weak keys";
+        button("Draft").click();
+        await until(() => document.querySelector("#jotDetail .bot") && document.querySelector("#jotDetail .cm-content"));
+        await until(() => /No problems found/.test((document.querySelector("#jotDetail .editstatus.ok") || {}).textContent || ""));
+        out.bot = document.querySelector("#jotDetail .bot").innerText;
+        out.draft = document.querySelector("#jotDetail .cm-content").innerText;
+        out.files = [...document.querySelectorAll("#jotDetail select option")].map((o) => o.value);
+        out.addEnabled = !button("Add to file").disabled;
+        button("Add to file").click();
+        await until(() => (document.querySelector("#jotDetail h2") || {}).textContent === "crypto-weak-key");
+        await until(() => /Added to a.jot/.test(document.getElementById("jotDetail").innerText));
+        out.drawer = document.getElementById("jotDetail").innerText;
+        out.listed = document.getElementById("jotList").innerText.indexOf("crypto-weak-key") >= 0;
+      } catch (e) { out.error = String(e); }
+      const pre = document.createElement("pre"); pre.id = "testResult"; pre.textContent = JSON.stringify(out); document.body.append(pre);
+    })();
+    """
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_a_person_describes_a_jot_reads_the_draft_and_adds_it_to_a_file(self):
+        env = Env()
+        path = os.path.join(env.dir, "a.jot")
+        with open(path, "w") as f:
+            f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n  - '#P0'\n")
+        store.load_sensors(env.ingestor.db, [env.dir])
+        app = server.App(env.db, env.ingestor, jot_paths=[env.dir], editable=True,
+                         draft=lambda *a: {"yaml": GOOD_DRAFT, "explanation": "Watches key generation."})
+        script = self.SCRIPT
+
+        class Injected(server.Handler):
+            def do_GET(self):
+                if self.path.split("?")[0] in ("/", "/index.html"):
+                    with open(os.path.join(server.HERE, "static", "index.html"), encoding="utf-8") as fh:
+                        html = fh.read().replace("</body>", "<script>" + script + "</script></body>")
+                    return self._send(200, html.encode(), "text/html; charset=utf-8")
+                return super().do_GET()
+
+        httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), type("H", (Injected,), {"app": app, "port": 0, "enforce_host": True}))
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        profile = tempfile.mkdtemp()
+        done = subprocess.run([self.CHROME, "--headless=new", "--disable-gpu", "--no-first-run", "--user-data-dir=" + profile,
+                               "--virtual-time-budget=20000", "--dump-dom", "http://127.0.0.1:%d/" % port],
+                              capture_output=True, text=True, timeout=120)
+        found = re.search(r'<pre id="testResult">(.*?)</pre>', done.stdout, re.S)
+        self.assertIsNotNone(found, done.stdout[-600:])
+        import html as htmllib
+        out = json.loads(htmllib.unescape(found.group(1)))
+        self.assertNotIn("error", out, out)
+        self.assertTrue(out["opened"])
+        self.assertIn("Watches key generation.", out["bot"])
+        self.assertIn("It is a rule", out["bot"], "the person is told it only reports until switched on")
+        self.assertIn("Not seen in your log yet", out["bot"])
+        self.assertIn("name: crypto-weak-key", out["draft"])
+        self.assertIn("protect: false", out["draft"])
+        self.assertEqual(["a.jot", ""], out["files"])
+        self.assertTrue(out["addEnabled"])
+        self.assertIn("crypto-weak-key", out["drawer"])
+        self.assertIn("Added to a.jot", out["drawer"])
+        self.assertTrue(out["listed"])
+        with open(path) as f:
+            saved = yaml.safe_load(f)
+        self.assertEqual(["crypto-cipher", "crypto-weak-key"], [x["name"] for x in saved["sensors"]])
+
+
+class AgentProblemsTests(unittest.TestCase):
+    def test_what_the_agent_left_out_is_listed_with_the_issues(self):
+        env = Env()
+        env.write(event(1, sensor="jot-config", capture="lock=none", trace=None),
+                  event(2, sensor="jot-config", capture="loaded=http-route", trace=None),
+                  event(3, sensor="jot-config", capture="problem=old.jot old-rule exception is no longer a setting, use block-when", trace=None))
+        env.ingestor.poll()
+        app = server.App(env.db, env.ingestor)
+        self.assertEqual(["old.jot old-rule exception is no longer a setting, use block-when"], app.agent_state()["problems"])
+        texts = [i["text"] for i in app.jots()["issues"]]
+        self.assertIn("the agent left something out, old.jot old-rule exception is no longer a setting, use block-when", texts)
+
+
+class BlockWhenStoreTests(unittest.TestCase):
+    def test_the_condition_of_a_rule_is_kept_and_a_sensor_has_none(self):
+        env = Env()
+        with open(os.path.join(env.dir, "r.jot"), "w") as f:
+            f.write("sensors:\n- name: always\n  methods:\n  - a.b.C.m\n  block-when: true\n"
+                    "- name: small\n  methods:\n  - a.b.C.n\n  block-when: '#P0 < 2048'\n"
+                    "- name: plain\n  methods:\n  - a.b.C.p\n")
+        store.load_sensors(env.ingestor.db, [env.dir])
+        rows = dict(store.run_query(env.db, "SELECT name, blocks FROM sensors")["rows"])
+        self.assertEqual({"always": "true", "small": "#P0 < 2048", "plain": None}, rows)
+        app = server.App(env.db, env.ingestor)
+        kinds = {s["name"]: (s["kind"], s["block_when"]) for s in app.jots()["sensors"]}
+        self.assertEqual({"always": ("rule", "true"), "small": ("rule", "#P0 < 2048"), "plain": ("sensor", None)}, kinds)
+
+
 class CheckJotTests(unittest.TestCase):
     ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 
@@ -1539,12 +1880,35 @@ class CheckJotTests(unittest.TestCase):
 
     def test_a_missing_quote_that_changes_the_meaning_is_found(self):
         text = ("name: ok\nmethods:\n- a.b.C.m\ncaptures:\n- #P0\n- !null\n- 123\n- yes\nmatchers:\n- null\n"
-                "- '!null'\n- \"#P0\"\ndescription: 5\nexception: true\n")
+                "- '!null'\n- \"#P0\"\ndescription: 5\n")
         problems = store.check_jot_text(text)
-        self.assertEqual({5, 6, 7, 8, 10, 13, 14}, {p["line"] for p in problems}, "the quoted ones on lines 11 and 12 are fine")
+        self.assertEqual({5, 6, 7, 8, 10, 13}, {p["line"] for p in problems}, "the quoted ones on lines 11 and 12 are fine")
         self.assertTrue(all("quotes" in p["message"] for p in problems))
         with self.assertRaises(store.SaveError):
             store.save_sensor([], "ok", text, text)
+
+    def test_block_when_is_a_rule_whether_true_or_an_expression(self):
+        for text in ("name: r\nmethods:\n- a.b.C.m\nblock-when: true\n",
+                     "name: r\nmethods:\n- a.b.C.m\ncaptures:\n- '#P0'\nblock-when: '#P0 < 2048'\nprotect: false\n"):
+            self.assertEqual([], store.check_jot_text(text), text)
+        for text, line in (("name: r\nmethods:\n- a.b.C.m\nblock-when:\n", 4), ("name: r\nmethods:\n- a.b.C.m\nblock-when: 5\n", 4),
+                           ("name: r\nmethods:\n- a.b.C.m\nprotect: false\n", 4)):
+            problems = store.check_jot_text(text)
+            self.assertEqual([line], [p["line"] for p in problems], text)
+
+    def test_the_removed_exception_key_is_flagged_in_the_editor_and_when_loading(self):
+        text = "name: r\nmethods:\n- a.b.C.m\nexception: Not allowed\n"
+        problems = store.check_jot_text(text)
+        self.assertEqual([4], [p["line"] for p in problems], "the editor won't save it")
+        self.assertIn("exception isn't something a sensor has", problems[0]["message"])
+        env = Env()
+        with open(os.path.join(env.dir, "old.jot"), "w") as f:
+            f.write("sensors:\n- name: old-rule\n  methods:\n  - a.b.C.m\n  exception: Not allowed\n")
+        store.load_sensors(env.ingestor.db, [env.dir])
+        issues = [t for (t,) in store.run_query(env.db, "SELECT text FROM jot_issues")["rows"]]
+        self.assertTrue(any("old-rule has exception, which is no longer a setting" in t and "block-when" in t for t in issues), issues)
+        rule = next(s for s in server.App(env.db, env.ingestor).jots()["sensors"] if s["name"] == "old-rule")
+        self.assertEqual("sensor", rule["kind"], "it only observes, as the agent will treat it")
 
     def test_problems_are_found_on_their_lines(self):
         problems = store.check_jot_text("name: Bad_Name\nmethods:\n- foo\nmatchers:\n- '(open'\nenabled: maybe\ncolour: red\n")
@@ -1601,6 +1965,46 @@ class OriginTests(unittest.TestCase):
         self.assertEqual(c(CLASSLOAD_AFTER_LIBRARY)[0], "app", "a library's own code ran first, so it is not just the platform")
         self.assertEqual(c(CLASSLOAD_AFTER_APP)[0], "app", "the application's class initializer ran first")
         self.assertEqual(c(CLASSLOAD_AFTER_APP)[1], "com.acme.ticketbook.Ticket.<clinit>(Ticket.java:12)")
+
+    def test_the_ignore_list_from_the_jots_file_says_what_counts_as_platform_work(self):
+        self.addCleanup(store.set_ignore, None)
+        c = lambda stack: store.classify(stack, ["com.acme"])
+        self.assertEqual("platform", c(CLASSLOAD)[0], "the default list")
+        store.set_ignore(["javax.vendor"])
+        self.assertNotEqual("platform", c(CLASSLOAD)[0], "a list replaces the default")
+        store.set_ignore([])
+        self.assertNotEqual("platform", c(CLASSLOAD)[0], "an empty list ignores nothing")
+        store.set_ignore(None)
+        self.assertEqual("platform", c(CLASSLOAD)[0])
+        # an entry matches itself and what is inside it, not a name that merely starts the same
+        store.set_ignore(["java.lang.ClassLoader"])
+        self.assertTrue(store._is_work("java.lang.ClassLoader.loadClass"))
+        self.assertTrue(store._is_work("java.lang.ClassLoader$Inner.run"))
+        self.assertFalse(store._is_work("java.lang.ClassLoaderHelper.load"))
+
+    def test_read_ignore_gives_the_list_or_none_so_the_default_is_used(self):
+        with tempfile.TemporaryDirectory() as d:
+            def write(text):
+                path = os.path.join(d, "jots.yaml")
+                with open(path, "w") as f:
+                    f.write(text)
+                return path
+            self.assertEqual(["a.B", "c.D.e"], store.read_ignore(write("jots: []\nignore:\n- a.B\n- ' c.D.e '\n")))
+            self.assertEqual([], store.read_ignore(write("ignore: []\n")))
+            self.assertIsNone(store.read_ignore(write("jots: []\n")), "no list is the default")
+            self.assertIsNone(store.read_ignore(write("ignore: a.B\n")), "not a list, the agent says so and uses the default")
+            self.assertIsNone(store.read_ignore(write("ignore:\n- 5\n")))
+
+    def test_changing_the_ignore_list_tags_the_stored_events_again(self):
+        self.addCleanup(store.set_ignore, None)
+        env = Env()
+        env.write(event(1, sensor="crypto-hash", capture="SHA-256", stack=CLASSLOAD))
+        env.ingestor.poll()
+        origin = lambda: store.run_query(env.db, "SELECT origin FROM events_raw")["rows"][0][0]
+        self.assertEqual("platform", origin())
+        store.set_ignore([])
+        store.retag(env.ingestor.db, ["com.acme"])
+        self.assertNotEqual("platform", origin(), "what was ignored before no longer is")
 
     def test_tls_the_application_started_stays_but_tls_for_class_loading_does_not(self):
         c = lambda stack: store.classify(stack, self.PREFIXES)
@@ -2105,7 +2509,9 @@ class GraphTests(unittest.TestCase):
 
     def test_rule_events_count_against_their_rule(self):
         self.assertEqual("cve-x", store.rule_name("cve-x-blocked"))
-        self.assertEqual("cve-x", store.rule_name("cve-x-entered"))
+        self.assertEqual("cve-x", store.rule_name("cve-x-blocked"))
+        self.assertEqual("cve-x", store.rule_name("cve-x-monitored"))
+        self.assertEqual("cve-x", store.rule_name("cve-x-active"), "a JOT reports its scope being active under its own name")
         self.assertEqual("crypto-cipher", store.rule_name("crypto-cipher"))
 
     def test_over_http(self):
@@ -2142,12 +2548,27 @@ class JotsFileTests(unittest.TestCase):
                     fh.write("sensors: []\n")
             jots_file = os.path.join(d, "jots.yaml")
             with open(jots_file, "w") as fh:
-                fh.write("jots:\n- base.jot\n- rules\ncontrol: ctl.json\napp:\n- com.acme\n- org.apache.jsp\n")
+                fh.write("jots:\n- base.jot\n- rules\ncontrol: ctl.json\napp:\n  entry:\n  - javax.servlet.Servlet.service\n  packages:\n  - com.acme\n  - org.apache.jsp\n")
             jots, ctl, app = store.read_jots_file(jots_file)
             self.assertEqual(os.path.join(d, "ctl.json"), ctl)
-            self.assertEqual(["com.acme", "org.apache.jsp"], app)
+            self.assertEqual(["com.acme", "org.apache.jsp"], app, "the packages, and the entry points are the agent's")
             self.assertEqual([os.path.join(d, "base.jot"), os.path.join(d, "rules", "deep", "r.jot")],
                              store.jot_files(jots))
+            self.assertEqual([], store.jots_file_problems(jots_file))
+
+    def test_the_old_list_under_app_has_no_packages_and_is_said_out_loud(self):
+        with tempfile.TemporaryDirectory() as d:
+            def check(text):
+                path = os.path.join(d, "jots.yaml")
+                with open(path, "w") as fh:
+                    fh.write(text)
+                return store.read_jots_file(path)[2], store.jots_file_problems(path)
+            packages, problems = check("jots: []\napp:\n- com.acme\n")
+            self.assertEqual([], packages)
+            self.assertTrue(any("app must be a mapping with packages and entry" in p for p in problems), problems)
+            packages, problems = check("jots: []\napp:\n  packages: com.acme\n  entrys: []\nignorr: []\n")
+            self.assertEqual(["com.acme"], packages, "one package can be written without a list")
+            self.assertTrue(any("entrys" in p for p in problems) and any("ignorr is not a setting" in p for p in problems), problems)
 
 
 if __name__ == "__main__":

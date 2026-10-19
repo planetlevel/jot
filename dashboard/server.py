@@ -64,7 +64,8 @@ class App:
     """Everything the dashboard does, apart from HTTP. The generate function is a parameter so tests
     can run without a model."""
 
-    def __init__(self, db_path, ingestor, generate=llm.generate, control=None, jot_paths=(), editable=False):
+    def __init__(self, db_path, ingestor, generate=llm.generate, control=None, jot_paths=(), editable=False, draft=llm.draft_jot):
+        self.draft = draft          # writes a JOT for a request, a parameter so tests can run without a model
         self.db_path = db_path
         self.jot_paths = list(jot_paths)   # where the .jot files are, which is where an edited sensor is saved
         self.editable = editable
@@ -112,6 +113,58 @@ class App:
                 db.close()
             self._jot_seen = now
             return True
+
+    def draft_jot(self, request, history=()):
+        """Writes a JOT for what the person asked, with the model, and checks it the way the editor does and a little more. A draft
+        with problems goes back to the model with them, as a question's SQL does. Returns {"yaml", "explanation", "problems",
+        "rule", "hooks"}. Nothing is saved. The model is sent the names and descriptions of the JOTs, the instrumented methods the
+        application was seen calling, and the request, never what was captured."""
+        request = (request or "").strip()
+        if not request:
+            raise store.QueryError("say what the JOT should do")
+        if len(request) > 2000:
+            raise store.QueryError("that is too long, a few sentences are enough")
+        sensors = self.sensors()
+        taken = {x["name"] for x in sensors}
+        seen = store.run_query(self.db_path, """
+            SELECT method_name, COUNT(*) AS n FROM events_raw WHERE method_name IS NOT NULL AND sensor NOT LIKE 'jot-%'
+            GROUP BY method_name ORDER BY n DESC LIMIT 80""")["rows"]
+        past = [{"request": str(h.get("request", ""))[:2000], "yaml": str(h.get("yaml", ""))[:6000]}
+                for h in (history or [])[-3:] if isinstance(h, dict)]
+        problems, out, text = None, {"explanation": ""}, ""
+        for attempt in range(MAX_REPAIRS + 1):
+            out = self.draft(request, sensors, [m for m, _ in seen], past, problems)
+            text = (out.get("yaml") or "").strip("\n")
+            if not text:
+                return {"yaml": "", "explanation": out.get("explanation") or "", "problems": [], "rule": False, "hooks": []}
+            text = store.stage_rule(text)
+            problems = store.check_draft(text, taken)
+            if not problems:
+                break
+        doc = {}
+        try:
+            doc = yaml.safe_load(text) or {}
+        except yaml.YAMLError:
+            pass
+        doc = doc if isinstance(doc, dict) else {}
+        counts = dict(seen)
+        wanted = [str(m).replace("static ", "").lstrip("!").strip() for m in doc.get("methods") or []]
+        exact = {}
+        if wanted:
+            rows = store.run_query(self.db_path, "SELECT method_name, COUNT(*) FROM events_raw WHERE method_name IN (%s) GROUP BY method_name"
+                                   % ", ".join(store._lit(m) for m in wanted))["rows"]
+            exact = dict(rows)
+        hooks = [{"method": m, "seen": exact.get(m, counts.get(m, 0))} for m in wanted]
+        return {"yaml": text, "explanation": out.get("explanation") or "", "problems": problems or [],
+                "rule": "block-when" in doc, "hooks": hooks}
+
+    def add_jot(self, file, text):
+        """Adds a new JOT to a file and reads the files again. Like a save, it needs the dashboard to be allowed to write."""
+        if not self.editable:
+            raise store.SaveError("saving is off, the dashboard is open to other machines", 403)
+        path = store.add_sensor(self.jot_paths, file, text)
+        self.reload_jots(force=True)
+        return {"added": (yaml.safe_load(text) or {}).get("name"), "file": os.path.basename(path)}
 
     def save_jot(self, name, original, text):
         """Write an edited sensor back into its .jot file, then read the files again so the page shows it."""
@@ -178,15 +231,13 @@ class App:
                 "name": name, "kind": "rule" if rule else "sensor", "mode": mode, "description": description,
                 "methods": json.loads(methods or "[]"), "scopes": json.loads(scopes or "[]"),
                 "captures": json.loads(captures or "[]"), "matchers": json.loads(matchers or "[]"),
-                "excludes": json.loads(excludes or "[]"), "exception": blocks, "file": source,
+                "excludes": json.loads(excludes or "[]"), "block_when": blocks, "file": source,
                 "definition": definition, "jot_enabled": jot_enabled != "false",
                 **stats.get(name, {"events": 0, "last_ts": None, "last_hour": 0, "blocked": 0, "monitored": 0})})
 
-        known = {x["name"] for x in sensors}
-        for sensor in sorted(set(stats) - known - {"jot-control", "jot-config"}):
-            issues.append({"level": "info", "file": None,
-                           "text": "the log has %d events from %s, which isn't in the loaded .jot files"
-                                   % (stats[sensor]["events"], sensor)})
+        # a sensor or rule the agent left out because its file said something wrong
+        for text in self.agent_state().get("problems", []):
+            issues.append({"level": "warning", "file": None, "text": "the agent left something out, " + text})
 
         sql_by_name = {r["name"]: r["sql"] for r in self.reports()}
         reports = [{"name": n, "type": t, "rows": r, "cols": c, "file": f, "sql": sql_by_name.get(n)}
@@ -313,7 +364,7 @@ class App:
             return [c[len(key) + 1:] for c in said if c.startswith(key + "=")]
         return {"known": True, "run": run, "host": host, "app": app, "started": ts,
                 "locked": "monitor" in values("lock"), "jots": (values("jots") or [None])[0],
-                "control": (values("control") or [None])[0], "loaded": values("loaded")}
+                "control": (values("control") or [None])[0], "loaded": values("loaded"), "problems": values("problem")}
 
     def control_state(self):
         """What the Protection panel shows. Each rule's setting is what the control file says, or else what its
@@ -527,6 +578,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.ask(body.get("question"), body.get("history") or []))
             if url.path == "/api/sql":
                 return self._send(200, self.app.sql(body.get("sql"), body.get("limit")))
+            if url.path == "/api/jots/draft":
+                return self._send(200, self.app.draft_jot(body.get("request"), body.get("history") or []))
+            if url.path == "/api/jots/add":
+                return self._send(200, self.app.add_jot(body.get("file"), body.get("text")))
             if url.path == "/api/jots/save":
                 return self._send(200, self.app.save_jot(body.get("name"), body.get("original"), body.get("text")))
             if url.path == "/api/jots/check":
@@ -605,6 +660,9 @@ def main(argv=None):
         print("  read %s from %s" % (", ".join(loaded_env), args.env))
 
     jot_paths, control_path, jots_app = store.read_jots_file(args.jots) if args.jots else ([], None, [])
+    for problem in (store.jots_file_problems(args.jots) if args.jots else []):
+        print("  jots file, %s" % problem, file=sys.stderr)
+    store.set_ignore(store.read_ignore(args.jots) if args.jots else None)   # before the events are tagged, the agent reads the same list
 
     ingestor = store.Ingestor(args.db, args.log or ["jot-events.jsonl"], app_prefixes=list(dict.fromkeys((jots_app or []) + (args.app or []))))
     loaded = store.load_sensors(ingestor.db, jot_paths)
@@ -625,8 +683,9 @@ def main(argv=None):
     if control:
         print("  protection can be changed, agents read %s. Every change is logged in %s" % (control.path, control.audit_path))
     if llm.configured():
-        print("  questions go to %s. Only the table definitions, sensor descriptions and your questions are sent."
-              % llm.model())
+        print("  questions go to %s. Only the table definitions, sensor descriptions and your questions are sent. "
+              "A request for a new JOT also sends the JOT names and descriptions, and the names of the methods JOTs watch that "
+              "the application was seen calling." % llm.model())
     else:
         print("  ANTHROPIC_API_KEY is not set. Natural language is off, SQL still works.")
     try:

@@ -26,7 +26,7 @@ class ControlStore:
     def read(self):
         """The settings in the file. A missing or unreadable file means the defaults. rules is each rule's protect
         setting and enabled is whether each sensor or rule runs, both by name, and a name that isn't there is left to
-        its .jot file. Settings are written under each sensor's name, and the older rules map is still read."""
+        its .jot file. Settings are written under each sensor's name."""
         state = {"protect": True, "rules": {}, "enabled": {}, "updated": None, "by": None, "exists": False}
         try:
             with open(self.path) as f:
@@ -38,8 +38,6 @@ class ControlStore:
         state["exists"] = True
         if isinstance(doc.get("protect"), bool):
             state["protect"] = doc["protect"]
-        if isinstance(doc.get("rules"), dict):
-            state["rules"] = {k: v for k, v in doc["rules"].items() if isinstance(v, bool)}
         if isinstance(doc.get("sensors"), dict):
             for name, settings in doc["sensors"].items():
                 if not isinstance(settings, dict):

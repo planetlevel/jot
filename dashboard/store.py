@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS sensors (
   methods TEXT,         -- JSON array
   scopes TEXT,          -- JSON array. The sensor only fires inside these methods
   captures TEXT,        -- JSON array of expressions
-  blocks TEXT,          -- the exception message if the sensor is a rule, otherwise null
+  blocks TEXT,          -- the block-when condition if the sensor is a rule, true for every call, otherwise null
   protect TEXT,         -- 'false' if the .jot file stages the rule as report only, otherwise null
   enabled TEXT,         -- 'false' if the .jot file writes enabled: false, otherwise null
   source TEXT,          -- the .jot file it came from
@@ -104,9 +104,9 @@ CREATE TABLE IF NOT EXISTS sources (
 # bytes from the start of a log kept to recognise it again
 HEAD_BYTES = 256
 
-# A rule names its events for what it did, cve-x-entered, cve-x-blocked or cve-x-monitored. This is the rule's own
-# name in SQL, so what a rule did can be counted against the rule.
-RULE_SUFFIXES = ("-entered", "-blocked", "-monitored")
+# A JOT names the events it reports about itself, cve-x-active when its scope is first entered, and a rule names what it did,
+# cve-x-blocked or cve-x-monitored. This is the JOT's own name in SQL, so what happened can be counted against the JOT.
+RULE_SUFFIXES = ("-active", "-blocked", "-monitored")
 
 
 def rule_name(sensor):
@@ -116,7 +116,7 @@ def rule_name(sensor):
     return sensor
 
 
-JOT_NAME_SQL = ("CASE WHEN sensor LIKE '%-entered' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 8) "
+JOT_NAME_SQL = ("CASE WHEN sensor LIKE '%-active' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 7) "
                 "WHEN sensor LIKE '%-blocked' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 8) "
                 "WHEN sensor LIKE '%-monitored' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 10) ELSE sensor END")
 
@@ -146,16 +146,28 @@ PLATFORM_PREFIXES = ("java.", "javax.", "jdk.", "sun.", "com.sun.", "jakarta.", 
 
 
 # raise this when classify changes, so events stored under the old rules are tagged again
-CLASSIFIER_VERSION = 5
+CLASSIFIER_VERSION = 6
 SERVLET_API = ("javax.servlet.", "jakarta.servlet.")
 
 # The platform doing work that nothing in the application asked for. Loading a class opens jars to check their
 # signatures, and compiling a page reads and parses source. What they do along the way isn't the application's.
 # Work the application starts, like fetching an https address, is left out on purpose, it stays whatever the
 # platform does to carry it out.
-PLATFORM_WORK_PREFIXES = ("java.lang.ClassLoader.", "java.net.URLClassLoader.", "jdk.internal.loader.",
-                          "org.apache.catalina.loader.", "org.apache.jasper.compiler.", "org.apache.jasper.JspCompilationContext.compile",
-                          "org.eclipse.jdt.")
+# The jots file's ignore list says what counts as that work, and the agent reads the same list, so it leaves out the
+# same calls. An entry is a package, a class or a class and method and matches itself and everything inside it.
+DEFAULT_IGNORE = ["java.lang.ClassLoader", "java.net.URLClassLoader", "jdk.internal.loader", "org.apache.catalina.loader",
+                  "org.apache.jasper.compiler", "org.apache.jasper.JspCompilationContext.compile", "org.eclipse.jdt"]
+IGNORE = list(DEFAULT_IGNORE)
+
+
+def set_ignore(entries):
+    """Use this ignore list, from the jots file. None is the default and an empty list ignores nothing."""
+    global IGNORE
+    IGNORE = list(DEFAULT_IGNORE) if entries is None else list(entries)
+
+
+def _is_work(name):
+    return any(name == e or name.startswith(e + ".") or name.startswith(e + "$") for e in IGNORE)
 
 
 def frame_kind(frame, app_prefixes=()):
@@ -189,7 +201,7 @@ def classify(stack, app_prefixes=()):
     for position, frame in enumerate(stack):
         kind = frame_kind(frame, app_prefixes)
         if kind == "platform":
-            if only_platform and position > 0 and (frame_name(frame) or "").startswith(PLATFORM_WORK_PREFIXES):
+            if only_platform and position > 0 and _is_work(frame_name(frame) or ""):
                 return "platform", None
         else:
             only_platform = False
@@ -228,7 +240,7 @@ def init(db):
 def retag(db, app_prefixes):
     """Work out the origin of every stored event again. Done when the application packages change and for events that
     were stored before the origin was recorded. Returns the number of events tagged."""
-    wanted = json.dumps([CLASSIFIER_VERSION] + sorted(app_prefixes))
+    wanted = json.dumps([CLASSIFIER_VERSION] + sorted(app_prefixes) + ["ignore"] + sorted(IGNORE))
     row = db.execute("SELECT value FROM settings WHERE key = 'app_prefixes'").fetchone()
     where = "WHERE origin IS NULL" if row and row[0] == wanted else ""
     rows = db.execute("SELECT pk, stack FROM events_raw %s" % where).fetchall()
@@ -338,9 +350,20 @@ class Ingestor:
             self._thread.join(2)
 
 
+def read_ignore(path):
+    """The ignore list of the jots file, or None when it has none, which is the default list. An entry that isn't text,
+    or a list that isn't one, is not used, and the agent says so."""
+    with open(path) as fh:
+        doc = yaml.safe_load(fh) or {}
+    entries = doc.get("ignore") if isinstance(doc, dict) else None
+    if not isinstance(entries, list) or not all(isinstance(e, str) and e.strip() for e in entries):
+        return None
+    return [e.strip() for e in entries]
+
+
 def read_jots_file(path):
     """The jots file the agent also reads. Returns (jot paths, control file path or None, application packages).
-    Every entry is included. Relative paths are relative to the jots file. The packages are the app: list, which the
+    Every entry is included. Relative paths are relative to the jots file. The packages are app: packages:, which the
     agent ignores."""
     with open(path) as fh:
         doc = yaml.safe_load(fh) or {}
@@ -353,9 +376,30 @@ def read_jots_file(path):
         if p:
             jots.append(resolve(p))
     control = doc.get("control")
-    app = doc.get("app") or []
-    app = [app] if isinstance(app, str) else [str(a) for a in app]
-    return jots, resolve(control) if control else None, app
+    # the application's own packages. The entry points in the same mapping are the agent's, the dashboard has no use for them
+    app = doc.get("app")
+    packages = app.get("packages") if isinstance(app, dict) else None
+    packages = [packages] if isinstance(packages, str) else [str(a) for a in packages or []]
+    return jots, resolve(control) if control else None, packages
+
+
+JOTS_FILE_KEYS = ("jots", "control", "app", "ignore")
+
+
+def jots_file_problems(path):
+    """Mistakes in the jots file that the agent says out loud as well, as messages, so the dashboard can too. The old list under
+    app: has no packages in it now, they are under app: packages:."""
+    with open(path) as fh:
+        doc = yaml.safe_load(fh) or {}
+    if not isinstance(doc, dict):
+        return ["the jots file must be a mapping"]
+    problems = ["%s is not a setting of a jots file, the settings are %s" % (k, ", ".join(JOTS_FILE_KEYS)) for k in doc if k not in JOTS_FILE_KEYS]
+    app = doc.get("app")
+    if app is not None and not isinstance(app, dict):
+        problems.append("app must be a mapping with packages and entry, so no packages are used and the agent uses its default entry points")
+    elif isinstance(app, dict):
+        problems += ["app has %s, which is not a setting, the settings are packages and entry" % k for k in app if k not in ("packages", "entry")]
+    return problems
 
 
 def jot_files(paths):
@@ -368,8 +412,8 @@ def jot_files(paths):
     return files
 
 
-SENSOR_KEYS = ("name", "description", "methods", "scopes", "excludes", "captures", "matchers", "exception", "protect",
-               "enabled", "debug")
+SENSOR_KEYS = ("name", "description", "methods", "scopes", "excludes", "captures", "matchers", "block-when",
+               "protect", "enabled", "debug")
 _SENSOR_NAME = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 _LISTS = ("methods", "scopes", "excludes", "captures", "matchers")
 _BOOLEANS = ("protect", "enabled", "debug")
@@ -391,7 +435,7 @@ def _pattern_problem(pattern):
     return None
 
 
-_TEXTS = ("name", "description", "exception")
+_TEXTS = ("name", "description")
 _NOT_TEXT = {"null": "empty", "bool": "true or false", "int": "a number", "float": "a number", "timestamp": "a date"}
 
 
@@ -480,10 +524,12 @@ def check_jot_text(text):
         if "methods" in keys and isinstance(keys["methods"][1], yaml.SequenceNode):
             if not keys["methods"][1].value:
                 add(keys["methods"][0], "has no methods, so it can never fire")
-            for m in keys["methods"][1].value + (keys["scopes"][1].value if isinstance(keys.get("scopes", (0, 0))[1], yaml.SequenceNode) else []):
-                value = (text_of(m) or "").strip()
-                if not _METHOD.match(value):
-                    add(m, "%r doesn't look like Class.method" % value)
+            scopes = keys["scopes"][1].value if isinstance(keys.get("scopes", (0, 0))[1], yaml.SequenceNode) else []
+            for ok, items in ((True, keys["methods"][1].value), (False, scopes)):
+                for m in items:
+                    problem = method_problem(text_of(m), annotation_ok=ok)
+                    if problem:
+                        add(m, problem)
         elif "methods" not in keys:
             add(node, "needs methods, the calls it watches")
         if "matchers" in keys and isinstance(keys["matchers"][1], yaml.SequenceNode):
@@ -492,8 +538,13 @@ def check_jot_text(text):
                 problem = _pattern_problem(value[1:] if value.startswith("!") else value)
                 if problem:
                     add(m, "isn't a valid pattern, %s" % problem)
-        if "protect" in keys and "exception" not in keys:
-            add(keys["protect"][0], "protect only matters for a rule, which has an exception message")
+        if "block-when" in keys:
+            node = keys["block-when"][1]
+            kind = node.tag.rsplit(":", 1)[-1] if isinstance(node, yaml.ScalarNode) else None
+            if kind not in ("bool", "str") or (kind == "str" and not node.value.strip()):
+                add(node, "must be true, or an expression for when the call is blocked, like #P0 < 2048")
+        if "protect" in keys and "block-when" not in keys:
+            add(keys["protect"][0], "protect only matters for a rule, which has a block-when")
     return problems
 
 
@@ -506,7 +557,20 @@ def _read_jot(path):
         return {}
 
 
-_METHOD = re.compile(r"^(static )?!?[\w$]+(\.[\w$<>]+)+$")
+_METHOD = re.compile(r"^!?[\w$]+(\.[\w$]+)*\.(<init>|[\w$]+)$")
+_ANNOTATION = re.compile(r"^@[\w$]+(\.[\w$]+)*$")
+
+
+def method_problem(value, annotation_ok=False):
+    """Why a method of a JOT can't be matched by the agent, or None. A method is package.Class.method, with <init> for a
+    constructor, and nothing else. Static, parameters and a return type are not part of the name, and a method is matched whether it
+    is static or not. In methods, @package.Annotation names every method that carries it. A scope can't be an annotation."""
+    value = (value or "").strip()
+    bare = value[1:] if value.startswith("!") else value
+    if _METHOD.match(value) or (annotation_ok and _ANNOTATION.match(bare)):
+        return None
+    return ("%r isn't a method name, write package.Class.method with no static or other modifiers, parameters or return type, "
+            "and <init> for a constructor%s" % (value, ", or @package.Annotation" if annotation_ok else ""))
 
 
 def _issue(db, level, text, source):
@@ -602,6 +666,136 @@ def _report_uses(doc, rename=None):
     return out
 
 
+_FORBIDDEN_IN_EXPRESSIONS = re.compile(r"\bT\(|\bnew\s")
+
+
+def check_draft(text, taken=()):
+    """What is wrong with a JOT a model wrote, as messages. The checks of the editor, and more. It must be one JOT and not a file
+    with a sensors list, its name must be free, a sensor must record something, a rule needs a message, and an expression
+    can't reach out with T( or new."""
+    problems = ["line %d %s" % (p["line"], p["message"]) for p in check_jot_text(text)]
+    try:
+        doc = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return problems or ["isn't valid YAML"]
+    if not isinstance(doc, dict):
+        return problems or ["must be one JOT, a mapping with a name and methods"]
+    if "sensors" in doc or "reports" in doc:
+        problems.append("must be one JOT, not a file with a sensors list")
+        return problems
+    if doc.get("name") in set(taken):
+        problems.append("the name %s is already used by another JOT" % doc["name"])
+    expressions = [str(c) for c in doc.get("captures") or []]
+    if doc.get("block-when") not in (None, True, False):
+        expressions.append(str(doc["block-when"]))
+    if any(_FORBIDDEN_IN_EXPRESSIONS.search(e) for e in expressions):
+        problems.append("an expression can't use T( or new")
+    if "block-when" in doc:
+        if not doc.get("description"):
+            problems.append("a rule needs a description, it is the message")
+    elif not doc.get("captures"):
+        problems.append("a sensor needs at least one capture, or it records nothing")
+    return problems
+
+
+def stage_rule(text):
+    """A drafted rule starts with protect: false, so it only reports until someone turns it on. Written into the text,
+    with everything else as it was."""
+    try:
+        doc = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return text
+    if not isinstance(doc, dict) or "block-when" not in doc or doc.get("protect") is False:
+        return text
+    lines = text.split("\n")
+    if "protect" in doc:
+        return "\n".join("protect: false" if re.match(r"^protect\s*:", l) else l for l in lines)
+    for i, line in enumerate(lines):
+        if re.match(r"^block-when\s*:", line):
+            return "\n".join(lines[:i + 1] + ["protect: false"] + lines[i + 1:])
+    return text
+
+
+def add_sensor(paths, file, text):
+    """Adds a JOT to a file, after the last one in it, and leaves everything else in the file as it was. file is the name of a file
+    that is loaded. A name that isn't loaded and ends in .jot makes a new file in the first directory that was listed. Returns the
+    path written."""
+    names = set()
+    sources = {}
+    for path in jot_files(paths):
+        with open(path, encoding="utf-8") as fh:
+            for found in sensor_spans(fh.read()):
+                names.add(found)
+                sources.setdefault(found, os.path.basename(path))
+    problems = check_draft(text, names)
+    if problems:
+        raise SaveError("not added, " + problems[0])
+    written = yaml.safe_load(text)
+    new_text = text.strip("\n") + "\n"
+
+    matches = [p for p in jot_files(paths) if os.path.basename(p) == file]
+    if len(matches) > 1:
+        raise SaveError("not added, %s names more than one file, add it by hand" % file)
+    if not matches:
+        if not file or not file.endswith(".jot") or os.sep in file or file.startswith("."):
+            raise SaveError("not added, %r isn't a loaded file, and a new file needs a plain name ending in .jot" % file)
+        directory = next((p for p in paths if os.path.isdir(p)), None)
+        if directory is None:
+            raise SaveError("not added, there is no directory in the jots file to put a new file in")
+        target = os.path.join(directory, file)
+        if os.path.exists(target):
+            raise SaveError("not added, %s already exists but isn't loaded" % target, 409)
+        result = "sensors:\n" + "- " + new_text.replace("\n", "\n  ").rstrip(" ")
+        if yaml.safe_load(result) != {"sensors": [written]}:
+            raise SaveError("not added, the new file would not have said what was meant")
+        with open(target, "x", encoding="utf-8") as fh:
+            fh.write(result)
+        return target
+
+    path = matches[0]
+    with open(path, encoding="utf-8") as fh:
+        text_before = fh.read()
+    before = yaml.safe_load(text_before) or {}
+    if not isinstance(before, dict):
+        raise SaveError("not added, %s isn't a file of sensors and reports" % file)
+    root = yaml.compose(text_before) if text_before.strip() else None
+    items = None
+    if isinstance(root, yaml.MappingNode):
+        for key, value in root.value:
+            if key.value == "sensors" and isinstance(value, yaml.SequenceNode) and value.value:
+                items = value.value
+    if items:
+        last = items[-1]
+        line_start = text_before.rfind("\n", 0, last.start_mark.index) + 1
+        prefix = text_before[line_start:last.start_mark.index]
+        if not re.match(r"^\s*-\s+$", prefix):
+            raise SaveError("not added, the sensors in %s aren't written as a block list, add it by hand" % file)
+        pad = " " * len(prefix)
+        lines = new_text.rstrip("\n").split("\n")
+        block = prefix + lines[0] + "".join("\n" + (pad + l if l.strip() else l) for l in lines[1:]) + "\n"
+        end = _last_end(last)
+        eol = text_before.find("\n", end)
+        at = len(text_before) if eol < 0 else eol + 1
+        lead = "" if eol >= 0 else "\n"
+        result = text_before[:at] + lead + "\n" + block + text_before[at:]
+    elif isinstance(root, yaml.MappingNode) and "sensors" in before:
+        raise SaveError("not added, the sensors list in %s is empty or written inline, add it by hand" % file)
+    else:
+        base = text_before if not text_before.strip() else text_before.rstrip("\n") + "\n\n"
+        result = base + "sensors:\n- " + new_text.replace("\n", "\n  ").rstrip(" ")
+    after = yaml.safe_load(result) or {}
+    if after.get("sensors") != (before.get("sensors") or []) + [written] or \
+            {k: v for k, v in after.items() if k != "sensors"} != {k: v for k, v in before.items() if k != "sensors"}:
+        raise SaveError("not added, putting this in %s would have changed something else in it" % file)
+    mode = os.stat(path).st_mode
+    tmp = path + ".saving"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(result)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+    return path
+
+
 def save_sensor(paths, name, original, new_text):
     """Writes the new text of one sensor into the .jot file that has it, leaving everything else in the file as it was,
     comments and the other sensors included. original is what the editor started from. If the file no longer says that,
@@ -662,6 +856,14 @@ def save_sensor(paths, name, original, new_text):
     raise SaveError("not saved, no loaded file has a sensor called %s" % name, 404)
 
 
+def _block_condition(sensor):
+    """The condition of a rule as text, true for every call, or None for a sensor."""
+    value = sensor.get("block-when")
+    if value is None:
+        return None
+    return str(value).lower() if isinstance(value, bool) else str(value)
+
+
 def load_sensors(db, paths):
     """Read sensor definitions from .jot files, or directories of them, so the model knows what they mean and
     the JOTs view can show them. Like the agent, the first definition of a name wins and a later one is skipped."""
@@ -684,18 +886,23 @@ def load_sensors(db, paths):
                 _issue(db, "warning", "%s is defined again in %s, the agent skips it and keeps the one in %s"
                        % (name, source, first[0]), source)
                 continue
+            for key in s:
+                if key not in SENSOR_KEYS:
+                    _issue(db, "warning", ("%s has exception, which is no longer a setting. Use block-when, until then it only observes"
+                                           if key == "exception" else "%s has " + key + ", which is not a setting and is ignored") % name, source)
             methods = s.get("methods") or []
             if not methods:
                 _issue(db, "warning", "%s has no methods, so it can never fire" % name, source)
-            for m in list(methods) + list(s.get("scopes") or []):
-                if not _METHOD.match(str(m).strip()):
-                    _issue(db, "warning", "%s has %r, which doesn't look like Class.method" % (name, m), source)
+            for ok, items in ((True, methods), (False, s.get("scopes") or [])):
+                for m in items:
+                    if method_problem(str(m), annotation_ok=ok):
+                        _issue(db, "warning", "%s has %r, which isn't a method name the agent can match" % (name, m), source)
             staged = "false" if s.get("protect") is False else None
             off = "false" if s.get("enabled") is False else None
             db.execute("""INSERT INTO sensors (name, description, methods, scopes, captures, blocks, protect, enabled, source, path,
                                                matchers, excludes, definition) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
                 name, s.get("description"), json.dumps(methods), json.dumps(s.get("scopes") or []),
-                json.dumps(s.get("captures") or []), s.get("exception"), staged, off, source, f,
+                json.dumps(s.get("captures") or []), _block_condition(s), staged, off, source, f,
                 json.dumps(s.get("matchers") or []), json.dumps(s.get("excludes") or []),
                 (written.get(name) or {}).get("text")
                 or yaml.safe_dump(s, sort_keys=False, default_flow_style=False, allow_unicode=True).rstrip()))
