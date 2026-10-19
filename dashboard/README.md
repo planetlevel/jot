@@ -41,8 +41,8 @@ minute?". The dashboard shows the result, a one line explanation, and the SQL th
 can edit and run again. A question you have asked appears as a button, and clicking it re-runs its saved SQL
 without asking the model again.
 
-Turn on **Live** and the current result refreshes every few seconds, along with the event feed on the right.
-Turn it off and the view stays put while you look at it.
+The current result refreshes every 3 seconds on its own, along with the event feed on the right. A result whose SQL you have open
+to edit is left alone until you close it.
 
 Events from several applications can share one dashboard. Each event records its host, process and
 application, and events with the same `run` and `trace` came from the same request.
@@ -67,7 +67,7 @@ at `jot.output.stack` frames, 25 by default, so an older event may be missing th
 
 **JOT control events** shows the events the agent writes when a rule is switched between monitor and protect. They are left out by default. The Protection panel still lists the latest changes whatever this is set to.
 
-## Searching and refreshing
+## Searching
 
 The search box under the question box finds individual events, newest first, and each row opens in the event viewer.
 Every word has to match somewhere in the event, in its capture, message, sensor, call site or stack, so `rsa`
@@ -76,9 +76,7 @@ what follows, like `-jasper`. A `field:value` narrows to one field. The fields a
 `origin`, `app`, `run` and `host` (exact), `route` (the route the request came in at, exact), and `trace` and `pid` (a number). For example `sensor:crypto-hash action:observed -jasper`.
 The search honors Clear, App events only, Blocked and Monitored, and says how many more matches the filter left out.
 
-**Refresh** fetches the latest events now, and the time beside it says when the page last fetched. With
-**Refresh every 3 seconds** ticked, which is the default, the current view and the counts are fetched every 3 seconds.
-With it unticked only the counts update, every 6 seconds, and the view waits for the button.
+The page fetches the latest events and counts every 3 seconds, and there is nothing to switch on or press for it.
 
 ## Clearing
 

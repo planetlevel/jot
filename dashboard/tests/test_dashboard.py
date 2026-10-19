@@ -1826,6 +1826,82 @@ class DraftUiTests(unittest.TestCase):
         self.assertEqual(["crypto-cipher", "crypto-weak-key"], [x["name"] for x in saved["sensors"]])
 
 
+class JotEventsLinkTests(unittest.TestCase):
+    CHROME = DraftUiTests.CHROME
+
+    SCRIPT = """
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const until = async (f, ms = 5000) => { const t = Date.now(); while (Date.now() - t < ms) { const v = f(); if (v) return v; await wait(40); } return null; };
+      const out = {};
+      try {
+        location.hash = "#jots/crypto-cipher";
+        await until(() => (document.querySelector("#jotDetail h2") || {}).textContent === "crypto-cipher");
+        [...document.querySelectorAll("#jotDetail button")].find((b) => b.textContent === "Show its events").click();
+        // the events page already lists recent events, so wait for the result this button asked for
+        await until(() => (document.querySelector("#results h2") || {}).textContent === "Events from crypto-cipher");
+        out.rows = document.querySelectorAll("#results tr").length - 1;
+        out.clickable = document.querySelectorAll("#results tr.clickable").length;
+        out.columns = [...document.querySelectorAll("#results th")].map((th) => th.textContent);
+        document.querySelector("#results tr.clickable").click();
+        await until(() => location.hash.indexOf("#event/") === 0);
+        await until(() => { const d = document.getElementById("eventDrawer"); return d && !d.hidden && d.innerText.indexOf("crypto-cipher") >= 0; });
+        out.hash = location.hash;
+        out.drawer = document.getElementById("eventDrawer").innerText;
+      } catch (e) { out.error = String(e); }
+      const pre = document.createElement("pre"); pre.id = "testResult"; pre.textContent = JSON.stringify(out); document.body.append(pre);
+    })();
+    """
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_show_its_events_lists_events_that_open_the_event_drawer_when_clicked(self):
+        env = Env()
+        with open(os.path.join(env.dir, "a.jot"), "w") as f:
+            f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n  - '#P0'\n")
+        store.load_sensors(env.ingestor.db, [env.dir])
+        env.write(event(1, capture="AES"), event(2, capture="DES"))
+        env.ingestor.poll()
+        app = server.App(env.db, env.ingestor, jot_paths=[env.dir])
+        script = self.SCRIPT
+
+        class Injected(server.Handler):
+            def do_GET(self):
+                if self.path.split("?")[0] in ("/", "/index.html"):
+                    with open(os.path.join(server.HERE, "static", "index.html"), encoding="utf-8") as fh:
+                        html = fh.read().replace("</body>", "<script>" + script + "</script></body>")
+                    return self._send(200, html.encode(), "text/html; charset=utf-8")
+                return super().do_GET()
+
+        httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), type("H", (Injected,), {"app": app, "port": 0, "enforce_host": True}))
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        done = subprocess.run([self.CHROME, "--headless=new", "--disable-gpu", "--no-first-run", "--user-data-dir=" + tempfile.mkdtemp(),
+                               "--virtual-time-budget=20000", "--dump-dom", "http://127.0.0.1:%d/" % port],
+                              capture_output=True, text=True, timeout=120)
+        found = re.search(r'<pre id="testResult">(.*?)</pre>', done.stdout, re.S)
+        self.assertIsNotNone(found, done.stdout[-600:])
+        import html as htmllib
+        out = json.loads(htmllib.unescape(found.group(1)))
+        self.assertNotIn("error", out, out)
+        self.assertEqual(2, out["rows"], "the two events of that sensor")
+        self.assertEqual(2, out["clickable"], "every row opens its event")
+        self.assertNotIn("pk", out["columns"], "the id is used and not shown")
+        self.assertTrue(out["hash"].startswith("#event/"))
+        self.assertIn("crypto-cipher", out["drawer"])
+
+
+class AlwaysCurrentTests(unittest.TestCase):
+    def test_the_page_refreshes_itself_every_three_seconds_with_nothing_to_switch_on_or_press(self):
+        with open(os.path.join(server.HERE, "static", "index.html"), encoding="utf-8") as fh:
+            page = fh.read()
+        for gone in ('id="refreshBtn"', 'id="live"', 'id="updated"', 'id="graphRefresh"', "Refresh every 3 seconds", ">Refresh<", "jot-live"):
+            self.assertNotIn(gone, page)
+        self.assertIn("timer = setInterval(tick, 3000);", page)
+        self.assertNotIn("setInterval(tick, 6000)", page)
+
+
 class AgentProblemsTests(unittest.TestCase):
     def test_what_the_agent_left_out_is_listed_with_the_issues(self):
         env = Env()

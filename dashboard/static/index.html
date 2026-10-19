@@ -216,7 +216,6 @@
   #reportResult .explain { margin: 10px 0 12px; }
   .pager { display: inline-flex; align-items: center; gap: 4px; }
   .pager .pos { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 52px; text-align: center; }
-  .updated { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
   tr.clickable { cursor: pointer; }
   tr.clickable:hover td { background: var(--code); }
   tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -298,11 +297,6 @@
       <label class="refresh" title="Show the events the agent writes when a rule is switched between monitor and protect. They are left out unless you tick this.">
         <input type="checkbox" id="showJotControl"> JOT control events
       </label>
-      <span class="updated" id="updated" title="When the page last fetched new data"></span>
-      <button type="button" class="small" id="refreshBtn" title="Fetch the latest events now">Refresh</button>
-      <label class="refresh" title="Run the current view again every 3 seconds, so new events show up on their own">
-        <input type="checkbox" id="live"> Refresh every 3 seconds
-      </label>
     </div>
   </div>
 </div>
@@ -335,7 +329,6 @@
       <label>Route <select id="graphRoute" aria-label="Route"><option value="">All routes</option></select></label>
       <label title="Also show the sensors that only describe the request, like who the user was and which parameters it had"><input type="checkbox" id="graphDetails"> Include request details</label>
       <label title="Fold a straight run of methods of one class, like a static initializer, constructor and init, into one node. A run that branches stays open"><input type="checkbox" id="graphCollapse" checked> Collapse setup chains</label>
-      <button type="button" class="small" id="graphRefresh">Refresh</button>
       <span class="hint" id="graphSummary"></span>
     </div>
     <div class="legend">
@@ -1199,7 +1192,8 @@ function drawJotDetail(i) {
   const showEvents = () => {
     closeDetail();
     location.hash = "#events";
-    runSql("SELECT datetime(ts/1000, 'unixepoch', 'localtime') AS time, sensor, action, call_site_name AS call_site, capture\nFROM events WHERE sensor IN ('"
+    // pk comes first, which makes each row open that event
+    runSql("SELECT pk, datetime(ts/1000, 'unixepoch', 'localtime') AS time, sensor, action, call_site_name AS call_site, capture\nFROM events WHERE sensor IN ('"
       + ["", "-active", "-blocked", "-monitored"].map((x) => (i.name + x).replace(/'/g, "''")).join("', '") + "') ORDER BY ts DESC LIMIT 200", { title: "Events from " + i.name, chart: "table" });
   };
   d.replaceChildren(...[
@@ -1618,60 +1612,33 @@ function openSearch(query) {
 $("graphRoute").addEventListener("change", () => { graphPicked = graphPanel = null; history.replaceState(null, "", "#graph"); loadGraph(); });
 $("graphDetails").addEventListener("change", loadGraph);
 $("graphCollapse").addEventListener("change", loadGraph);
-$("graphRefresh").addEventListener("click", loadGraph);
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && graphPicked && currentPage === "graph") pickNode(null); });
 
 // ---- keeping things current
 function setTimer() {
   clearInterval(timer);
-  const fast = currentPage === "events" && $("live").checked;
-  timer = setInterval(tick, fast ? 3000 : 6000);
+  timer = setInterval(tick, 3000);
 }
 
-function stamp() { $("updated").textContent = "updated " + clock(Date.now()); }
 
-// fetch everything again right now, whether or not Refresh every 3 seconds is on
-async function refreshNow() {
-  const button = $("refreshBtn");
-  button.disabled = true;
+
+async function tick() {
   try {
     await Promise.all([refreshStatus(), refreshControl()]);
     if (currentPage === "jots" || currentPage === "reports") {
       await loadJots();
       if (currentPage === "reports") await runReport({ quiet: true });
-    }
-    else if (currentPage === "graph") await loadGraph();
-    else if (current && !busy) {
-      const r = await api("/api/sql", { sql: current.sql, limit: current.chart === "grid" ? 5000 : undefined });
-      show(current, r);
-    }
-    stamp();
-  } catch (e) { showError(e.message); } finally { button.disabled = false; }
-}
-$("refreshBtn").addEventListener("click", refreshNow);
-
-async function tick() {
-  try {
-    await Promise.all([refreshStatus(), refreshControl()]);
-    stamp();
-    if (currentPage === "jots" || currentPage === "reports") {
-      await loadJots();
-      if (currentPage === "reports" && $("live").checked) await runReport({ quiet: true });
       return;
     }
     if (currentPage === "graph") { if (lastStatus && lastStatus.last_pk !== graphAt) await loadGraph(); return; }
     // refresh the current view, unless someone is editing its SQL
-    if ($("live").checked && current && !busy && !$("results").querySelector("details[open]")) {
+    if (current && !busy && !$("results").querySelector("details[open]")) {
       const r = await api("/api/sql", { sql: current.sql, limit: current.chart === "grid" ? 5000 : undefined });
       show(current, r);
     }
   } catch (e) { /* the server may be restarting, try again next tick */ }
 }
 
-$("live").addEventListener("change", (ev) => {
-  try { localStorage.setItem("jot-live", ev.target.checked ? "1" : "0"); } catch (e) { /* ignore */ }
-  setTimer();
-});
 // ---- search. The server turns the words into SQL, which then runs like any other view.
 async function search(query) {
   if (busy || !query.trim()) return;
@@ -1690,7 +1657,6 @@ $("reportSelect").addEventListener("change", (ev) => {
 });
 
 try { asked = JSON.parse(localStorage.getItem("jot-history") || "[]"); } catch (e) { asked = []; }
-try { $("live").checked = localStorage.getItem("jot-live") !== "0"; } catch (e) { $("live").checked = true; }
 drawPicker(); drawRecent();
 // ---- the event viewer. #event/<pk> opens it, so an event can be linked to.
 let shownEvent = null;
