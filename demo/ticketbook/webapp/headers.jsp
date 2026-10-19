@@ -53,43 +53,45 @@
 				</div>
 				<div class="panel-body">
 					<%
-					if ( request.getParameter( "cc" ) != null ) {
+					// the parameters of the request, read once
+					Map<String, String[]> params = request.getParameterMap();
+					if ( params.containsKey( "cc" ) ) {
 						response.setHeader( "Cache-Control","no-cache, no-store, must-revalidate");
 						out.println( "<li>Cache-Control" + "=" + "no-cache, no-store, must-revalidate</li>");
 					}
-					if ( request.getParameter( "csp" )  != null ) {
+					if ( params.containsKey( "csp" ) ) {
 						response.setHeader( "Content-Security-Policy", "default-src 'self'" );
 						out.println( "<li>Content-Security-Policy" + "=" + "default-src 'self'</li>" );
 					}
-					if ( request.getParameter( "ct" )  != null ) {
+					if ( params.containsKey( "ct" ) ) {
 						response.setHeader( "Content-Type", "text/html;charset=utf-8");
 						out.println( "<li>Content-Type" + "=" + "text/html;charset=utf-8</li>");
 					}
-					if ( request.getParameter( "ex" )  != null ) {
+					if ( params.containsKey( "ex" ) ) {
 						response.setHeader( "Expires", "-1");
 						out.println( "<li>Expires" + "=" + "-1</li>");
 					}
-					if ( request.getParameter( "pr" )  != null ) {
+					if ( params.containsKey( "pr" ) ) {
 						response.setHeader( "Pragma", "no-cache");
 						out.println( "<li>Pragma" + "=" + "no-cache</li>");
 					}
-					if ( request.getParameter( "sc" )  != null ) {
+					if ( params.containsKey( "sc" ) ) {
 						response.setHeader( "Set-Cookie", "name=value; path=/; secure; httponly");
 						out.println( "<li>Set-Cookie" + "=" + "name=value; path=/; secure; httponly</li>");
 					}
-					// if ( request.getParameter( "sts" )  != null ) {
+					// if ( params.containsKey( "sts" ) ) {
 					//	response.setHeader( "Strict-Transport-Security", "max-age=0; includeSubDomains");
 					//	out.println( "<li>Strict-Transport-Security" + "=" + "max-age=0; includeSubDomains</li>");
 					// }
-					if ( request.getParameter( "xct" )  != null ) {
+					if ( params.containsKey( "xct" ) ) {
 						response.setHeader( "X-Content-Type-Options", "nosniff");
 						out.println( "<li>X-Content-Type-Options" + "=" + "nosniff</li>");
 					}
-					if ( request.getParameter( "xfo" )  != null ) {
+					if ( params.containsKey( "xfo" ) ) {
 						response.setHeader( "X-Frame-Options", "deny");
 						out.println( "<li>X-Frame-Options" + "=" + "deny</li>");
 					}
-					if ( request.getParameter( "xss" )  != null ) {
+					if ( params.containsKey( "xss" ) ) {
 						response.setHeader( "X-XSS-Protection", "1; mode=block");
 						out.println( "<li>X-XSS-Protection" + "=" + "1; mode=block</li>");
 					}

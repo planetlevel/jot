@@ -14,8 +14,9 @@ javac -d $OUT Demo.java
 java -Djot.output=json -Djot.output.file=$OUT/events.jsonl -javaagent:$JAR=jots.yaml -cp $OUT Demo 2>/dev/null
 
 count() { grep -c "\"sensor\":\"$1\"" $OUT/events.jsonl || true; }
-in_app=$(count file-in-app); digests=$(count digest-in-app); anywhere=$(count file-anywhere)
+in_app=$(count file-in-app); digests=$(count digest-in-app); anywhere=$(count file-anywhere); entries=$(count on-entry)
 printf "  %-16s %s   (inside only, a call and a helper call, in each of two entries)\n" file-in-app "$in_app"
 printf "  %-16s %s   (the SHA-256 inside, not the MD5 before)\n" digest-in-app "$digests"
 printf "  %-16s %s   (also the startup and after calls)\n" file-anywhere "$anywhere"
-[ "$in_app" = 4 ] && [ "$digests" = 2 ] && [ "$anywhere" = 6 ] && echo "PASS" || { echo "FAIL" >&2; exit 1; }
+printf "  %-16s %s   (a JOT on the entry point itself, once for each call)\n" on-entry "$entries"
+[ "$in_app" = 4 ] && [ "$digests" = 2 ] && [ "$anywhere" = 6 ] && [ "$entries" = 2 ] && echo "PASS" || { echo "FAIL" >&2; exit 1; }

@@ -23,3 +23,10 @@ sensors:
   - "#P0"
   matchers:
   - ^(inside|outside)/
+# on the entry point itself. The call that starts the application is the application, so this applies, which is how the route
+# sensor of a web application can see where each request came in
+- name: on-entry
+  methods:
+  - '@Demo$Entry'
+  captures:
+  - "#P0"

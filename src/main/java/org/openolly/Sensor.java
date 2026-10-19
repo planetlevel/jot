@@ -199,7 +199,7 @@ public class Sensor {
 				if ( !inScope ) return results;
 			}
 			// no scopes of its own means the application is its scope, and nothing outside it counts
-			else if ( appScope && AppScope.configured() && !AppScope.active() ) return results;
+			else if ( appScope && AppScope.configured() && !AppScope.active() && !watchesAnEntryPoint() ) return results;
 	
 			if ( stack == null && ( !captures.isEmpty() || isRule() ) ) stack = currentStack();
 
@@ -354,6 +354,23 @@ public class Sensor {
 		MethodLocator loc = new MethodLocator( value, negative );
 		scopes.add( loc );
 		loc.setIndex( scopes.indexOf( loc ) );
+	}
+
+	/**
+	 * True if one of the methods this JOT watches is an entry point of the application. The call that starts the application
+	 * is the application at work, but a JOT on it runs as the call begins, before the thread is counted as inside, so it must not
+	 * be held back for that. This is what lets a JOT record the route a request came in at.
+	 */
+	private boolean watchesAnEntryPoint() {
+		for ( MethodLocator mine : methods ) {
+			for ( MethodLocator entry : AppScope.entries() ) {
+				if ( mine.isAnnotation() || entry.isAnnotation() ) {
+					if ( mine.isAnnotation() && entry.isAnnotation() && mine.annotationName().equals( entry.annotationName() ) ) return true;
+				}
+				else if ( mine.className().equals( entry.className() ) && mine.methodName().equals( entry.methodName() ) ) return true;
+			}
+		}
+		return false;
 	}
 
 	/** No list leaves the application as the scope. A list, even an empty one, is the JOT's own, and empty means anywhere. */

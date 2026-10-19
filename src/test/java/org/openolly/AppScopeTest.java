@@ -87,6 +87,22 @@ class AppScopeTest {
 	}
 
 	@Test
+	void aJotOnTheEntryPointItselfAppliesAsTheApplicationStarts() {
+		// the route sensor watches Servlet.service, which is also where the application starts. Its advice runs as the call begins,
+		// before the thread counts as inside, and it must not be held back for that
+		AppScope.configure( List.of( "a.b.Entry.handle", "@a.b.Marker" ) );
+		Sensor route = new Sensor().name( "as-route" ).method( "a.b.Entry.handle" ).capture( "#P0" );
+		Sensor marked = new Sensor().name( "as-marked" ).method( "@a.b.Marker" ).capture( "#P0" );
+		Sensor elsewhere = new Sensor().name( "as-elsewhere" ).method( "a.b.Class.method" ).capture( "#P0" );
+		Recorder r = run( () -> {
+			Assertions.assertEquals( 1, fire( route ).size(), "outside, but it is on the entry point" );
+			Assertions.assertEquals( 1, fire( marked ).size(), "the same for an annotation entry point" );
+			Assertions.assertEquals( 0, fire( elsewhere ).size(), "a JOT on some other method still waits for the application" );
+		} );
+		Assertions.assertEquals( List.of( "as-route", "as-marked" ), r.events.stream().map( Event::getRule ).toList() );
+	}
+
+	@Test
 	void withNoEntryPointsThereIsNoApplicationScopeAndEverythingApplies() {
 		Sensor s = new Sensor().name( "as-none" ).method( "a.b.Class.method" ).capture( "#P0" );
 		run( () -> Assertions.assertEquals( 1, fire( s ).size(), "nothing configured" ) );
