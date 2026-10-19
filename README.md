@@ -83,7 +83,7 @@ Choose where events go with system properties.
 | `jot.output.file` | `jot-events.jsonl` | File for the `json` output |
 | `jot.events` | `all` | `all`, or `violations` to only report monitored and blocked events |
 | `jot.queue.size` | `10000` | Events to buffer. If the queue fills up, new events are dropped and counted. |
-| `jot.protect` | `true` | `false` makes every rule with an `exception` only report, see below |
+| `jot.protect` | `true` | `false` makes every rule only report, see below |
 | `jot.retransform` | `true` | Also instruments classes the JVM had already loaded when JOT started. `false` turns it off, see below |
 | `jot.control` | none | Control file the agent polls to switch rules between monitor and block while running, see below |
 | `jot.output.stack` | `25` | Stack frames to include in each `json` event. `0` leaves the stack out. |
@@ -102,7 +102,7 @@ about the event.
 | `trace` | Events with the same `trace` and `run` came from the same request, or from the same thread outside a request |
 | `thread`, `thread_id` | The thread that triggered it |
 | `sensor`, `action` | The sensor name, and `observed`, `monitored` or `blocked` |
-| `capture`, `message` | What the sensor captured, and for blocks the sensor's exception message |
+| `capture`, `message` | What the sensor captured, and for monitored and blocked events the rule's message, its description and condition |
 | `method` | The instrumented method that was called |
 | `call_site` | The code that called it |
 | `stack` | The stack from the instrumented method up to `jot.output.stack` frames |
@@ -112,17 +112,24 @@ The `dashboard` directory has a web app that loads the `json` event log into SQL
 about it in plain English, as live or historical tables and charts. See [dashboard/README.md](dashboard/README.md).
 
 ## Observe, Monitor and Block
-A sensor with no `exception` observes. It records what it sees and the call carries on. This is how you build an
+A sensor with no `block-when` observes. It records what it sees and the call carries on. This is how you build an
 inventory such as routes, ciphers or roles, and it is what the reports use.
 
-A sensor with an `exception` is a rule. The `exception` text is its verdict, saying why the call is bad. Whether
-the rule stops the call depends on whether it protects.
+A sensor with a `block-when` is a rule. Its `block-when` says when the call is bad, `true` for every call that gets
+that far or an expression over the same variables as a capture, like `#P0 < 2048`. The rule's `description` is its
+message, so write it to say what happened, in words that are as true in monitor as in protect, like "A web request
+started a process". When the condition is an expression the message is the description and then the condition, like
+"A key shorter than 2048 bits was generated: #P0 < 2048". Whether the rule stops the call depends on whether it protects.
 
-| Rule has an `exception` | Protects | Event | Call stopped |
+| Rule has a `block-when` | Protects | Event | Call stopped |
 |---|---|---|---|
 | no | not applicable | `observed` | no |
 | yes | no | `monitored` | no |
 | yes | yes | `blocked` | yes |
+
+An expression that can't be read, or that fails when it runs, counts as false, so a mistake in a condition never blocks
+anything. A setting the agent doesn't know, including the old `exception`, is logged and ignored, so a rule that still
+says `exception` only observes until it says `block-when`.
 
 By default rules protect. To try a rule without risking your application, report only. A `monitored` event
 carries the same message, captures and stack as a `blocked` one would, so you can see everything the rule would
@@ -130,7 +137,8 @@ have stopped and check it for false positives before turning it on.
 
     # one rule only reports, the others still block
     - name: "cve-log4shell-no-exec"
-      exception: "CVE-2021-44228 blocked process execution"
+      description: "CVE-2021-44228 microsandbox, a process was started"
+      block-when: true
       protect: false
 
     # every rule only reports
@@ -162,9 +170,9 @@ no connections, so nothing can reach into it.
 settings for that sensor or rule. Its `protect` is `false` to report only and `true` to block, and it takes priority over
 the rule's own `protect:` in its .jot file. Its `enabled` is `false` to switch it off and `true` to switch on one that the
 .jot file wrote with `enabled: false`. A setting that isn't listed goes back to its .jot setting, and a rule keeps its
-`protect` setting while it is off. An older file with a `rules` map, a rule name and `true` or `false` for protect, is
-still read. `-Djot.protect=false` can't be overridden by the file. Any other setting under a sensor makes the file
-invalid, so a typo like `enable:` is caught, not ignored.
+`protect` setting while it is off. `-Djot.protect=false` can't be overridden by the file. Any other setting under a sensor makes the file
+invalid, so a typo like `enable:` is caught, not ignored. So does a top-level `rules` map, which older versions used and
+which is no longer read.
 
 The agent fails safe. A file that is missing, unreadable, over 64 KB or invalid changes nothing, and the last good
 settings stay in force. Each change is logged as an event from the sensor `jot-control`. Because anyone who can write
@@ -214,8 +222,33 @@ Directories are searched recursively, so organize your JOTs however you like.
     - ciphers.jot
     - rules                    # directories are searched recursively
     control: jot-control.yaml
-    app:                       # your application's packages, used only by the dashboard
-    - com.acme
+    app:
+      entry:                   # where your application starts running, a JOT with no scopes applies only inside these
+      - javax.servlet.Servlet.service
+      - "@dev.langchain4j.agent.tool.Tool"
+      packages:                # your application's own code, used only by the dashboard
+      - com.acme
+    ignore:                    # calls made inside these are left out of what sensors report
+    - java.lang.ClassLoader
+    - org.apache.jasper.compiler
+
+The `app` entry points are the application as a scope. A JOT that doesn't write `scopes:` of its own applies only while one of
+them is running on the thread, so it leaves out startup, background threads and anything else that isn't your application at work.
+An entry is a method, or an annotation, written `"@the.Annotation"`, which is every method that carries it and every method of a
+class that does, so a framework's tool, listener or scheduled-job annotation can mark the places your code is called. A JOT that
+writes `scopes:` uses those instead, and `scopes: []` means anywhere, for a JOT that should see startup too. Without an entry list
+the servlet `service` methods are used, and `entry: []` leaves no application scope, so every JOT applies everywhere. The scope
+follows the thread, so work a request hands to another thread isn't covered. The application scope is not mentioned in the
+events, a JOT with its own scopes still says once that its scope is active. See demo/app-scope.
+
+The `ignore` list is for the platform doing work nothing in your application asked for. Loading a class makes the JVM
+open jars and check signatures, and compiling a page reads and parses its source, and in a servlet container both
+happen in the middle of requests. A sensor that observes leaves out a call when the way from it out to one of these is
+nothing but JDK and server code. Your code and your libraries still count when they are closer in, a class initializer
+for one, and so does work you asked for, like a page fetching an https address. An entry is a package, a class or a class
+and method, and matches itself and everything inside it. Without an `ignore` list the standard class loaders, the Tomcat
+class loader, the page compiler and the Eclipse compiler are used, and `ignore: []` leaves out nothing. Rules are not
+affected, they see everything. The dashboard reads the same list.
 
 Relative paths are relative to the jots file. The dashboard reads the same file with "--jots", so the agent
 and the dashboard always use the same definitions. See demo/ticketbook/jots.yaml. If two JOTs define a sensor
@@ -275,16 +308,24 @@ sensors to perform limited actions within an application.
 	  - "a.b.c.Class.method"
 	  - "d.e.f.Class.method"
 	  - "@a.b.c.Annotation"                  # every method carrying this annotation, see below
+	  # A method is package.Class.method, and <init> is a constructor. Never static, a parameter list or a return type, they
+	  # are not part of the name, and every overload of a static or instance method is matched. A JOT that has a mistake in
+	  # it is not loaded and the agent says so.
 	  
-	  # Scopes allow you to limit when a sensor will fire.
+	  # Scopes allow you to limit when a sensor will fire. With none, a sensor applies while the application is running,
+	  # see app: entry: in the jots file. scopes: [] means anywhere.
 	  # A sensor will fire if it is invoked while "inside" one of the scopes. That is,
 	  # when any of these methods is on the stack.
 	  # You can define negative scopes using !scope, so that this sensor will only fire outside the scope
-	  # For static methods you need to prefix the method with "static"
+	  # A scope is written like a method, package.Class.method, with no static or other modifiers. It can't be an annotation.
+	  # A JOT with scopes also says that its scope is active, once, the first time one of them is entered. It is an event
+	  # named for the JOT and -active, like cve-2021-44228-active, with the scope method as what it saw. It is sent once
+	  # in the life of the JVM, not once for each call or each request, so it only answers whether the code the scope
+	  # names ever runs. For a CVE rule that is whether the CVE is active in the application.
 	  scopes: 
 	  - "a.b.c.Class.method"                 # matches only if inside method
 	  - "!a.b.c.Class.method"                # matches only if NOT inside method
-	  - "static a.b.c.Class.method"          # matches if inside static method
+	  - "a.b.c.Class.<init>"                 # matches if inside a constructor
 	  
 	  # Excludes allow you to prevent data from being gathered from any
 	  # classes that starts with any of these patterns or are "isAssignableFrom" these classes
@@ -315,13 +356,13 @@ sensors to perform limited actions within an application.
 	  - "!^\\[foo"                           # matches anything that doesn't start with foo
 	  - "!null"                              # hide empty results from output
 	  
-	  # Exceptions are a way to change the behavior of an application.
-	  # If the sensor fires (capture occurs and matchers fire) then JOT will
-	  # throw a SensorException.
-	  # The message should be appropriate for end user, JOT will log all the relevant details.
-	  # Note that generally you don't want to use #RET in your capture if you're throwing an exception,
+	  # block-when makes this a rule, which can change the behavior of an application.
+	  # true blocks every call where a capture occurs and the matchers fire. An expression, like #P0 < 2048,
+	  # blocks only when it is true, and it can use the same variables as a capture. If the mode is monitor it
+	  # only reports. JOT throws a SensorException whose message is the description, then the condition.
+	  # Note that generally you don't want to use #RET in your capture if you're blocking,
 	  # because it will throw at the end of the method, which is probably too late.
-	  exception: "Message"
+	  block-when: true
 	
 	  # Debug mode will generate extra logging for this rule only
 	  debug: "false"
@@ -354,9 +395,10 @@ A rule can use the same capture and a matcher to stop a call based on what the a
       - "@javax.annotation.security.RolesAllowed"
       captures:
       - "#ANNOTATION.value"
+      description: "An auditor called a method that auditors may not call"
       matchers:
       - "auditor"
-      exception: "auditors may not call this"
+      block-when: true
 
 A few things to know. An annotation is matched by the name it is written with, so list both spellings for an annotation that Jakarta EE renamed.
 The annotation must be kept at runtime, so annotations with source retention, like Lombok's, can't be used. Only the
