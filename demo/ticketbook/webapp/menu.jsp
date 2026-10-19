@@ -40,6 +40,7 @@
 		{ "Register", "/ticketbook/profile", "profile" },
 		{ "List", "/ticketbook/list.jsp", "list" },
 		{ "Architecture", "/ticketbook/architecture.jsp", "architecture" },
+		{ "Exercise", "/ticketbook/exercise.jsp", "exercise" },
 		{ "-", "Request handling" },
 		{ "Check", "/ticketbook/check.jsp", "check" },
 		{ "Request", "/ticketbook/request.jsp", "request" },

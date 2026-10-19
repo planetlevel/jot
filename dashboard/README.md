@@ -67,7 +67,13 @@ that only describe the request, like who the user was, are left out unless you t
 graph follows Clear and App events only, and it redraws by itself when new events arrive. The stack of an event is cut
 at `jot.output.stack` frames, 25 by default, so an older event may be missing the outer methods. TicketBook records 500.
 
-**Blocked** and **Monitored** in the toolbar limit the page to events where a rule blocked a call, or where a rule reported that it would have and let the call go ahead. Tick one, or both to see both. With neither ticked everything shows. They apply to the views, the search and the counts, and they are off until you tick them.
+## Filters
+
+The **Filters** button on the Events and Graph pages opens a drawer with the filters, App events only, Blocked, Monitored, JOT control events and a list of JOTs to show or hide. The button shows how many filters are on. They apply to the events, the graph, the views, the search and the counts, and nothing is deleted.
+
+**JOTs** lists every JOT with a checkbox, ticked meaning shown. Unticking one leaves out what it observed, and ticking it brings that back. Tick all and Untick all work on the ones the search box has narrowed the list to. What a hidden rule blocked or reported still shows. A rule and its `-active`, `-blocked` and `-monitored` events are one JOT here.
+
+**Blocked** and **Monitored** limit the page to events where a rule blocked a call, or where a rule reported that it would have and let the call go ahead. Tick one, or both to see both. With neither ticked everything shows. They apply to the views, the search and the counts, and they are off until you tick them.
 
 **JOT control events** shows the events the agent writes when a rule is switched between monitor and protect. They are left out by default. The Protection panel still lists the latest changes whatever this is set to.
 
@@ -84,7 +90,7 @@ The page fetches the latest events and counts every 3 seconds, and there is noth
 
 ## Clearing
 
-The **Clear** button on the Events page hides everything recorded so far, so the views, charts, reports, rule counts
+The **Clear** button next to Filters hides everything recorded so far, so the views, charts, reports, rule counts
 and questions only reflect what happens from that moment on. **Show all** brings it back. The stats line says when
 you cleared and how many earlier events are hidden.
 

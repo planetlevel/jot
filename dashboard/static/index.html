@@ -158,16 +158,16 @@
   .fact b { display: block; font-size: 18px; }
   .fact span { color: var(--muted); font-size: 12px; }
   /* the event viewer and the sensor, rule and report viewer, panels that slide over the page */
-  #eventBackdrop, #jotBackdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 40; }
-  #eventDrawer, #jotDetail { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100vw); background: var(--panel);
+  #eventBackdrop, #jotBackdrop, #filterBackdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 40; }
+  #eventDrawer, #jotDetail, #filterDrawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100vw); background: var(--panel);
     border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0,0,0,.35); z-index: 41; overflow-y: auto; padding: 16px 20px 32px; }
-  #eventDrawer .top, #jotDetail .top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  #eventDrawer .top .spacer, #jotDetail .top .spacer { flex: 1; }
-  #eventDrawer h2, #jotDetail h2 { margin: 0; font-size: 18px; overflow-wrap: anywhere; }
+  #eventDrawer .top, #jotDetail .top, #filterDrawer .top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  #eventDrawer .top .spacer, #jotDetail .top .spacer, #filterDrawer .top .spacer { flex: 1; }
+  #eventDrawer h2, #jotDetail h2, #filterDrawer h2 { margin: 0; font-size: 18px; overflow-wrap: anywhere; }
   #eventDrawer h2 a { color: inherit; text-decoration: none; }
   #eventDrawer h2 a:hover, #eventDrawer dd a:hover { text-decoration: underline; }
   #eventDrawer dd a { color: var(--accent); text-decoration: none; }
-  #eventDrawer h4, #jotDetail h4 { margin: 18px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  #eventDrawer h4, #jotDetail h4, #filterDrawer h4 { margin: 18px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
   #eventDrawer .when, #jotDetail .when { color: var(--muted); font-size: 13px; margin-top: 4px; }
   #eventDrawer pre.value, #jotDetail pre.value { margin: 0; padding: 10px 12px; background: var(--code); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere;
     font-size: 13px; max-height: 260px; overflow: auto; }
@@ -198,6 +198,14 @@
   #jotDetail li { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
   #eventDrawer dl { display: grid; grid-template-columns: 120px 1fr; gap: 4px 14px; margin: 0; font-size: 13px; }
   #eventDrawer dt { color: var(--muted); }
+#filterDrawer { width: min(440px, 100vw); }
+#filterDrawer .opt { display: block; margin: 8px 0 2px; }
+#filterDrawer .opt input { margin-right: 8px; }
+#filterDrawer .why { color: var(--muted); font-size: 12px; margin: 0 0 6px 24px; }
+#filterDrawer .jotlist { margin-top: 8px; max-height: 340px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; }
+#filterDrawer .jotlist label { display: flex; gap: 8px; align-items: center; padding: 3px 0; font-size: 13px; }
+#filterDrawer .jotlist .n { margin-left: auto; color: var(--muted); font-size: 12px; }
+#filterDrawer input[type=search] { width: 100%; box-sizing: border-box; }
 #eventDrawer dl.fields dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
   #eventDrawer dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
   #eventDrawer .frames { margin: 0; padding: 0; list-style: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
@@ -286,18 +294,7 @@
     <div class="toolbar-right">
       <button type="button" class="small" id="clearBtn" title="Hide everything recorded so far, so the page only shows what happens from now on. The events stay in the log, and Show all brings them back.">Clear</button>
       <button type="button" class="small" id="showAllBtn" title="Show everything again, including what was hidden by Clear" hidden>Show all</button>
-      <label class="refresh" title="Leave out what the JDK and the application server do on their own. An event stays if any frame of its stack is the application, even when libraries are in between. Blocked and reported events always show.">
-        <input type="checkbox" id="appOnly"> App events only
-      </label>
-      <label class="refresh" title="Show only events where a rule blocked a call. Tick Monitored as well to see both. With neither ticked everything shows.">
-        <input type="checkbox" id="filterBlocked"> Blocked
-      </label>
-      <label class="refresh" title="Show only events where a rule reported that it would have blocked a call, and let it through. Tick Blocked as well to see both. With neither ticked everything shows.">
-        <input type="checkbox" id="filterMonitored"> Monitored
-      </label>
-      <label class="refresh" title="Show the events the agent writes when a rule is switched between monitor and protect. They are left out unless you tick this.">
-        <input type="checkbox" id="showJotControl"> JOT control events
-      </label>
+      <button type="button" class="small" id="filtersBtn" title="Choose what the events, the graph and the views show">Filters</button>
     </div>
   </div>
 </div>
@@ -395,6 +392,32 @@
 <aside id="jotDetail" role="dialog" aria-label="Sensor, rule or report details" hidden></aside>
 <div id="eventBackdrop" hidden></div>
 <aside id="eventDrawer" role="dialog" aria-label="Event details" hidden></aside>
+<div id="filterBackdrop" hidden></div>
+<aside id="filterDrawer" role="dialog" aria-label="Filters" hidden>
+  <div class="top">
+    <h2>Filters</h2>
+    <span class="spacer"></span>
+    <button type="button" class="small" id="filtersClose" title="Escape">Close</button>
+  </div>
+  <p class="hint">These apply to the events, the graph and the views. The events stay in the log, nothing is deleted.</p>
+
+  <h4>What to show</h4>
+  <label class="opt"><input type="checkbox" id="appOnly">App events only</label>
+  <p class="why">Leave out what the JDK and the application server do on their own. An event stays if any frame of its stack is the application, even when libraries are in between. Blocked and reported events always show.</p>
+  <label class="opt"><input type="checkbox" id="filterBlocked">Blocked</label>
+  <p class="why">Show only events where a rule blocked a call. Tick Monitored as well to see both. With neither ticked everything shows.</p>
+  <label class="opt"><input type="checkbox" id="filterMonitored">Monitored</label>
+  <p class="why">Show only events where a rule reported that it would have blocked a call, and let it through.</p>
+  <label class="opt"><input type="checkbox" id="showJotControl">JOT control events</label>
+  <p class="why">The events the agent writes when a rule is switched between monitor and protect. They are left out unless you tick this.</p>
+
+  <h4>JOTs</h4>
+  <p class="why" style="margin-left:0">Untick a JOT to hide what it observed. What a hidden rule blocked or reported still shows.</p>
+  <input type="search" id="jotFilter" autocomplete="off" aria-label="Find a JOT" placeholder="Find a JOT">
+  <p><button type="button" class="small" id="jotsAll">Tick all</button> <button type="button" class="small" id="jotsNone">Untick all</button>
+    <span class="hint">the ones listed</span></p>
+  <div class="jotlist" id="jotList"></div>
+</aside>
 <script src="/dom.js"></script>
 <script src="/grid.js"></script>
 <script src="/recent.js"></script>
@@ -484,6 +507,7 @@ function showPage(address) {
   $("reportsPage").hidden = currentPage !== "reports";
   if (currentPage !== before) hideJotDetail();     // the panel belongs to the page that opened it
   $("sharedBar").hidden = currentPage === "jots" || currentPage === "reports";
+  closeFilters();
   $("navEvents").className = currentPage === "events" ? "active" : "";
   $("navGraph").className = currentPage === "graph" ? "active" : "";
   $("navJots").className = currentPage === "jots" ? "active" : "";
@@ -586,6 +610,8 @@ async function refreshStatus() {
       text: "showing since " + clock(s.since) + ", " + s.hidden.toLocaleString() + " earlier hidden" }) : null,
   ].filter(Boolean));
   $("showAllBtn").hidden = !s.since;
+  const active = (s.since ? 1 : 0) + (s.app_only ? 0 : 1) + (s.filter.blocked || s.filter.monitored ? 1 : 0) + (s.show_jot_control ? 1 : 0) + s.hidden_jots.length;
+  $("filtersBtn").textContent = active ? "Filters (" + active + ")" : "Filters";
   $("appOnly").checked = s.app_only;
   $("filterBlocked").checked = s.filter.blocked;
   $("filterMonitored").checked = s.filter.monitored;
@@ -593,6 +619,46 @@ async function refreshStatus() {
   $("notice").replaceChildren(...(s.llm ? [] : [el("div", { class: "notice",
     text: "Natural language is off because ANTHROPIC_API_KEY isn't set. The views and the SQL box still work." })]));
 }
+
+// ---- the filter drawer
+let jotNames = [];
+function listedJots() {
+  const find = $("jotFilter").value.trim().toLowerCase();
+  return jotNames.filter((j) => !find || j.name.toLowerCase().includes(find));
+}
+function drawJotList() {
+  const hidden = new Set((lastStatus && lastStatus.hidden_jots) || []);
+  const shown = listedJots();
+  $("jotList").replaceChildren(...(shown.length ? shown.map((j) => {
+    const box = el("input", { type: "checkbox", checked: hidden.has(j.name) ? null : "", onchange: () => setJotsShown([j.name], box.checked) });
+    return el("label", { title: j.events.toLocaleString() + " events recorded" }, box, el("span", { text: j.name }),
+      el("span", { class: "n", text: j.events.toLocaleString() }));
+  }) : [el("div", { class: "hint", text: "No JOT matches" })]));
+}
+// show is true to show these JOTs and false to hide them
+async function setJotsShown(names, show) {
+  const hidden = new Set((lastStatus && lastStatus.hidden_jots) || []);
+  for (const name of names) { if (show) hidden.delete(name); else hidden.add(name); }
+  try {
+    await api("/api/hidden-jots", { names: [...hidden] });
+    await filtersChanged();
+    drawJotList();
+  } catch (e) { showError(e.message); drawJotList(); }
+}
+async function openFilters() {
+  $("filterBackdrop").hidden = false;
+  $("filterDrawer").hidden = false;
+  try { jotNames = await api("/api/filter-jots"); } catch (e) { jotNames = []; }
+  drawJotList();
+}
+function closeFilters() { $("filterBackdrop").hidden = true; $("filterDrawer").hidden = true; }
+$("filtersBtn").addEventListener("click", openFilters);
+$("filtersClose").addEventListener("click", closeFilters);
+$("filterBackdrop").addEventListener("click", closeFilters);
+$("jotFilter").addEventListener("input", drawJotList);
+$("jotsAll").addEventListener("click", () => setJotsShown(listedJots().map((j) => j.name), true));
+$("jotsNone").addEventListener("click", () => setJotsShown(listedJots().map((j) => j.name), false));
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !$("filterDrawer").hidden) closeFilters(); });
 
 // ---- clearing. This sets a start time, nothing is deleted.
 async function setSince(value) {

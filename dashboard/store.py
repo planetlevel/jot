@@ -51,12 +51,14 @@ CREATE TABLE IF NOT EXISTS settings (
 -- Unless the app_only setting is 0, an observed event that has no frame from the application is left out.
 -- Blocked and reported events are never left out by that. If filter_blocked or filter_monitored is 1, only events
 -- of the ticked kinds are kept. The agent's own jot-control events, which record a rule being switched, are left out
--- unless the show_jot_control setting is 1.
+-- unless the show_jot_control setting is 1. Observed events of a JOT in the hidden_jots setting, a JSON list of JOT names, are left
+-- out as well, and what a hidden rule blocked or reported still shows.
 CREATE VIEW IF NOT EXISTS events AS
   SELECT * FROM events_raw
   WHERE ts >= COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'since'), 0)
     AND (COALESCE((SELECT value FROM settings WHERE key = 'app_only'), '1') <> '1'
          OR origin IS NULL OR origin IN ('app', 'none') OR action <> 'observed')
+    AND (action <> 'observed' OR (CASE WHEN sensor LIKE '%-active' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 7) WHEN sensor LIKE '%-blocked' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 8) WHEN sensor LIKE '%-monitored' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 10) ELSE sensor END) NOT IN (SELECT value FROM json_each(COALESCE((SELECT value FROM settings WHERE key = 'hidden_jots'), '[]'))))
     AND ((COALESCE((SELECT value FROM settings WHERE key = 'filter_blocked'), '0') <> '1'
           AND COALESCE((SELECT value FROM settings WHERE key = 'filter_monitored'), '0') <> '1')
          OR (action = 'blocked' AND COALESCE((SELECT value FROM settings WHERE key = 'filter_blocked'), '0') = '1')
@@ -1369,6 +1371,28 @@ def get_show_jot_control(db_path):
         return bool(row) and row[0] == "1"
     finally:
         db.close()
+
+
+def get_hidden_jots(db_path):
+    """The names of the JOTs whose observed events are left out, as a list."""
+    db = sqlite3.connect(db_path)
+    try:
+        row = db.execute("SELECT value FROM settings WHERE key = 'hidden_jots'").fetchone()
+        return json.loads(row[0]) if row else []
+    finally:
+        db.close()
+
+
+def set_hidden_jots(db, names):
+    """Leave out the observed events of these JOTs, by name, or show everything again with an empty list."""
+    names = sorted({str(n) for n in names})
+    if len(names) > 1000 or any(len(n) > 200 for n in names):
+        raise ValueError("too many or too long")
+    if names:
+        db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('hidden_jots', ?)", (json.dumps(names),))
+    else:
+        db.execute("DELETE FROM settings WHERE key = 'hidden_jots'")
+    db.commit()
 
 
 def set_show_jot_control(db, on):

@@ -316,6 +316,21 @@ class App:
                                     None if monitored is None else bool(monitored))
         return self.status()
 
+    def set_hidden_jots(self, names):
+        """Leave out the observed events of these JOTs from every view. What a hidden rule blocked or reported still shows."""
+        if not isinstance(names, list):
+            raise ValueError("names must be a list")
+        with self.ingestor.lock:
+            store.set_hidden_jots(self.ingestor.db, names)
+        return self.status()
+
+    def filter_jots(self):
+        """Every JOT there is to hide, from the files and from the events, with how many events each has recorded."""
+        counts = dict(store.run_query(self.db_path, "SELECT %s AS jot, COUNT(*) FROM events_raw GROUP BY jot" % store.JOT_NAME_SQL,
+                                      limit=5000)["rows"])
+        names = {s["name"] for s in self.sensors()} | set(counts) | set(store.get_hidden_jots(self.db_path))
+        return [{"name": n, "events": counts.get(n, 0)} for n in sorted(names) if n != "jot-control"]
+
     def set_show_jot_control(self, on):
         """Show or leave out the agent's own jot-control events, which record a rule being switched."""
         with self.ingestor.lock:
@@ -434,6 +449,7 @@ class App:
         status["app_only"] = store.get_app_only(self.db_path)
         status["filter"] = store.get_action_filter(self.db_path)
         status["show_jot_control"] = store.get_show_jot_control(self.db_path)
+        status["hidden_jots"] = store.get_hidden_jots(self.db_path)
         status["filtered"] = counts[1] - status["events"]  # JDK and server events left out
         status["llm"] = llm.configured()
         status["model"] = llm.model() if llm.configured() else None
@@ -546,6 +562,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.control_state())
             if url.path == "/api/sensors":
                 return self._send(200, self.app.sensors())
+            if url.path == "/api/filter-jots":
+                return self._send(200, self.app.filter_jots())
             if url.path == "/api/graph":
                 q = parse_qs(url.query)
                 return self._send(200, self.app.graph(q.get("route", [""])[0], q.get("details", [""])[0] == "1",
@@ -590,6 +608,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"problems": store.check_jot_text(body.get("text"))})
             if url.path == "/api/since":
                 return self._send(200, self.app.set_since(body.get("since")))
+            if url.path == "/api/hidden-jots":
+                return self._send(200, self.app.set_hidden_jots(body.get("names")))
             if url.path == "/api/jot-control-events":
                 return self._send(200, self.app.set_show_jot_control(body.get("on")))
             if url.path == "/api/action-filter":

@@ -1860,6 +1860,128 @@ class DraftUiTests(unittest.TestCase):
         self.assertEqual(["crypto-cipher", "crypto-weak-key"], [x["name"] for x in saved["sensors"]])
 
 
+class HiddenJotTests(unittest.TestCase):
+    def setUp(self):
+        self.env = Env()
+        self.env.write(
+            event(1, sensor="http-cache-header", capture="no-store", trace=1),
+            event(2, sensor="crypto-hash", capture="MD5", trace=1),
+            event(3, sensor="native-process-active", capture="x", trace=1),
+            event(4, sensor="native-process-blocked", capture="id", action="blocked", trace=1),
+            event(5, sensor="jot-control", capture="protect=off", trace=1))
+        self.env.ingestor.poll()
+        self.app = server.App(self.env.db, self.env.ingestor)
+
+    def seen(self):
+        return sorted(r[0] for r in store.run_query(self.env.db, "SELECT sensor FROM events")["rows"])
+
+    def test_a_hidden_jot_shows_nothing_it_observed_but_what_it_blocked(self):
+        self.assertEqual(["crypto-hash", "http-cache-header", "native-process-active", "native-process-blocked"], self.seen())
+        status = self.app.set_hidden_jots(["http-cache-header", "native-process"])
+        self.assertEqual(["http-cache-header", "native-process"], status["hidden_jots"])
+        self.assertEqual(["crypto-hash", "native-process-blocked"], self.seen(), "its -active event is hidden, its block is not")
+        self.assertEqual(5, store.run_query(self.env.db, "SELECT COUNT(*) FROM events_raw")["rows"][0][0], "nothing is deleted")
+        self.assertEqual([], self.app.set_hidden_jots([])["hidden_jots"])
+        self.assertEqual(4, len(self.seen()))
+
+    def test_the_list_of_jots_has_what_is_in_the_files_and_the_events_with_counts(self):
+        with open(os.path.join(self.env.dir, "a.jot"), "w") as f:
+            f.write("sensors:\n- name: never-fires\n  methods:\n  - a.b.C.m\n")
+        store.load_sensors(self.env.ingestor.db, [self.env.dir])
+        jots = {j["name"]: j["events"] for j in self.app.filter_jots()}
+        self.assertEqual(0, jots["never-fires"])
+        self.assertEqual(2, jots["native-process"], "its -active and -blocked events are one JOT")
+        self.assertEqual(1, jots["http-cache-header"])
+        self.assertNotIn("jot-control", jots)
+
+    def test_bad_names_are_refused(self):
+        with self.assertRaises(ValueError):
+            self.app.set_hidden_jots("http-cache-header")
+        with self.assertRaises(ValueError):
+            self.app.set_hidden_jots(["x" * 300])
+
+    def test_it_is_remembered_across_a_restart(self):
+        self.app.set_hidden_jots(["crypto-hash"])
+        again = store.Ingestor(self.env.db, [self.env.log])
+        self.assertEqual(["crypto-hash"], store.get_hidden_jots(self.env.db))
+        self.assertNotIn("crypto-hash", self.seen())
+
+
+class FilterDrawerTests(unittest.TestCase):
+    CHROME = DraftUiTests.CHROME
+
+    SCRIPT = """
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const until = async (f, ms = 5000) => { const t = Date.now(); while (Date.now() - t < ms) { const v = f(); if (v) return v; await wait(40); } return null; };
+      const out = {};
+      try {
+        await until(() => document.getElementById("filtersBtn"));
+        out.barHasFilters = !!document.querySelector("#sharedBar #appOnly");
+        out.barHasClear = !!document.querySelector("#sharedBar #clearBtn");
+        out.startsClosed = document.getElementById("filterDrawer").hidden;
+        document.getElementById("filtersBtn").click();
+        await until(() => document.querySelectorAll("#jotList label").length >= 2);
+        out.open = !document.getElementById("filterDrawer").hidden;
+        out.listed = [...document.querySelectorAll("#jotList label span:not(.n)")].map((x) => x.textContent);
+        const box = [...document.querySelectorAll("#jotList label")].find((l) => l.textContent.indexOf("http-cache-header") >= 0).querySelector("input");
+        out.allTicked = [...document.querySelectorAll("#jotList input")].every((b) => b.checked);
+        box.click();
+        await until(() => document.getElementById("filtersBtn").textContent === "Filters (1)");
+        out.button = document.getElementById("filtersBtn").textContent;
+        document.getElementById("jotFilter").value = "hash";
+        document.getElementById("jotFilter").dispatchEvent(new Event("input"));
+        out.found = [...document.querySelectorAll("#jotList label span:not(.n)")].map((x) => x.textContent);
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+        out.closedByEscape = document.getElementById("filterDrawer").hidden;
+        location.hash = "#graph";
+        await wait(300);
+      } catch (e) { out.error = String(e); }
+      const pre = document.createElement("pre"); pre.id = "testResult"; pre.textContent = JSON.stringify(out); document.body.append(pre);
+    })();
+    """
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_the_filters_are_in_a_drawer_and_a_jot_can_be_hidden_from_it(self):
+        env = Env()
+        env.write(event(1, sensor="http-cache-header", capture="no-store"), event(2, sensor="crypto-hash", capture="MD5"))
+        env.ingestor.poll()
+        app = server.App(env.db, env.ingestor)
+        script = self.SCRIPT
+
+        class Injected(server.Handler):
+            def do_GET(self):
+                if self.path.split("?")[0] in ("/", "/index.html"):
+                    with open(os.path.join(server.HERE, "static", "index.html"), encoding="utf-8") as fh:
+                        html = fh.read().replace("</body>", "<script>" + script + "</script></body>")
+                    return self._send(200, html.encode(), "text/html; charset=utf-8")
+                return super().do_GET()
+
+        httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), type("H", (Injected,), {"app": app, "port": 0, "enforce_host": True}))
+        port = httpd.server_address[1]
+        httpd.RequestHandlerClass.port = port
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        done = subprocess.run([self.CHROME, "--headless=new", "--disable-gpu", "--no-first-run", "--user-data-dir=" + tempfile.mkdtemp(),
+                               "--virtual-time-budget=20000", "--dump-dom", "http://127.0.0.1:%d/" % port],
+                              capture_output=True, text=True, timeout=120)
+        found = re.search(r'<pre id="testResult">(.*?)</pre>', done.stdout, re.S)
+        self.assertIsNotNone(found, done.stdout[-600:])
+        import html as htmllib
+        out = json.loads(htmllib.unescape(found.group(1)))
+        self.assertNotIn("error", out, out)
+        self.assertFalse(out["barHasFilters"], "the filters moved off the bar")
+        self.assertTrue(out["barHasClear"], "Clear stays on the bar")
+        self.assertTrue(out["startsClosed"])
+        self.assertTrue(out["open"])
+        self.assertEqual(["crypto-hash", "http-cache-header"], out["listed"])
+        self.assertTrue(out["allTicked"], "every JOT starts ticked, which is shown")
+        self.assertEqual("Filters (1)", out["button"], "the button says how many filters are on")
+        self.assertEqual(["crypto-hash"], out["found"])
+        self.assertTrue(out["closedByEscape"])
+        self.assertEqual(["http-cache-header"], store.get_hidden_jots(env.db))
+
+
 class JotEventsLinkTests(unittest.TestCase):
     CHROME = DraftUiTests.CHROME
 
