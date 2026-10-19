@@ -12,6 +12,7 @@ import org.openolly.reporting.EventBus;
  *   jots=PATH                   the jots file the agent was started with
  *   control=PATH | control=none the control file the agent polls
  *   loaded=NAME                 one for each sensor or rule that was loaded
+ *   problem=FILE NAME TEXT      one for each mistake in a .jot file, which left a sensor or rule out
  */
 public final class StartupReport {
 
@@ -27,6 +28,7 @@ public final class StartupReport {
 		for ( Sensor s : Sensor.getSensors() ) {
 			if ( s.getName() != null ) say( "loaded=" + s.getName() );
 		}
+		for ( String problem : ConfigReader.getProblems() ) say( "problem=" + problem );
 	}
 
 	private static void say( String what ) {

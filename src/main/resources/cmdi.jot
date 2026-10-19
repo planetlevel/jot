@@ -12,7 +12,7 @@ sensors:
   - "#P0.getRequestURI()"
 
 - name: native-process
-  description: Blocks attempts to start native processes
+  description: A web request started a process
   methods:
   - java.lang.ProcessBuilder.<init>
   scopes:
@@ -20,4 +20,4 @@ sensors:
   - jakarta.servlet.Servlet.service
   captures:
   - "#ARGS"
-  exception: Attempt to create ProcessBuilder from within Servlet.service() prevented 'native-process' JOT sensor
+  block-when: true

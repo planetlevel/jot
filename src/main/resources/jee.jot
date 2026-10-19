@@ -139,7 +139,7 @@ sensors:
 ##### detect attacks #####
 
 - name: expression-suspicious
-  description: Blocks expresssions containing dangerous patterns from being evaluated
+  description: An expression contained dangerous patterns
   methods:
   - javax.servlet.jsp.el.ExpressionEvaluator.evaluate
   - jakarta.servlet.jsp.el.ExpressionEvaluator.evaluate
@@ -148,11 +148,11 @@ sensors:
   - "#P0"
   matchers:
   - \.class
-  exception: Attack detected. Go away or I'm calling the FBI.
+  block-when: true
   
 
 - name: expression
-  description: Prevents harmful methods from being used during expresssion evaluation
+  description: An expression being evaluated used a harmful method
   methods:
   - java.lang.ProcessBuilder.<init>
   - java.io.Socket.<init>
@@ -162,5 +162,5 @@ sensors:
   - org.springframework.expression.parseExpression
   captures:
   - "#P0"
-  exception: Attack detected. Go away or I'm calling the FBI.
+  block-when: true
 

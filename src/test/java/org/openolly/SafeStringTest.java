@@ -12,6 +12,24 @@ import org.junit.jupiter.api.Test;
 class SafeStringTest {
 
 	@Test
+	void valuesThatAreTheirOwnTextAreRecordedAsThatText() {
+		Assertions.assertEquals( "/var/log/app.log", SafeString.format( new java.io.File( "/var/log/app.log" ), false ) );
+		Assertions.assertEquals( "/var/log/app.log", SafeString.format( java.nio.file.Paths.get( "/var/log/app.log" ), false ) );
+		Assertions.assertEquals( "2048", SafeString.format( 2048, false ) );
+		Assertions.assertEquals( "true", SafeString.format( Boolean.TRUE, false ) );
+		Assertions.assertEquals( "x", SafeString.format( 'x', false ) );
+		Assertions.assertEquals( "ab", SafeString.format( new StringBuilder( "ab" ), false ) );
+		Assertions.assertEquals( "RUNNABLE", SafeString.format( Thread.State.RUNNABLE, false ) );
+		Assertions.assertEquals( "http://x/y", SafeString.format( java.net.URI.create( "http://x/y" ), false ) );
+		Assertions.assertEquals( "[1, 2]", SafeString.format( new Integer[] { 1, 2 }, false ), "and inside an array" );
+	}
+
+	@Test
+	void anyOtherObjectIsStillShownWithItsClass() {
+		Assertions.assertTrue( SafeString.format( new java.util.Date( 0 ), false ).startsWith( "{class java.util.Date:" ) );
+	}
+
+	@Test
 	void testNull() {
         Assertions.assertEquals( "null" , SafeString.format(null,false));		
 	}

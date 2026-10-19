@@ -6,6 +6,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import org.openolly.AppScope;
+import org.openolly.PlatformWork;
 import org.openolly.Sensor;
 import org.openolly.reporting.EventBus;
 import org.openolly.reporting.Report;
@@ -88,6 +90,55 @@ public class ConfigReader {
 				paths.add( new File( path ).isAbsolute() ? path : new File( base, path ).getPath() );
 			}
 		}
+		if ( root != null && root.isObject() ) {
+			java.util.Iterator<String> keys = root.fieldNames();
+			while ( keys.hasNext() ) {
+				String key = keys.next();
+				if ( !JOTS_FILE_KEYS.contains( key ) ) problem( jotsFile, null, key + " is not a setting of a jots file, the settings are jots, control, app and ignore" );
+			}
+		}
+		// the application as a scope, and which of its code is its own
+		AppScope.configure( null );
+		if ( root != null && root.has( "app" ) ) {
+			JsonNode app = root.get( "app" );
+			if ( !app.isObject() ) {
+				problem( jotsFile, null, "app must be a mapping with packages and entry, so the default entry points are used" );
+			} else {
+				java.util.Iterator<String> names = app.fieldNames();
+				while ( names.hasNext() ) {
+					String key = names.next();
+					if ( !key.equals( "packages" ) && !key.equals( "entry" ) ) problem( jotsFile, null, "app has " + key + ", which is not a setting, the settings are packages and entry" );
+				}
+				if ( app.has( "entry" ) ) {
+					JsonNode entry = app.get( "entry" );
+					List<String> entries = new ArrayList<String>();
+					boolean fine = entry.isArray();
+					if ( fine ) {
+						for ( JsonNode item : entry ) {
+							String text = item.isTextual() ? item.asText().trim() : "";
+							if ( text.isEmpty() || ( !text.startsWith( "@" ) && text.lastIndexOf( '.' ) < 1 ) ) fine = false;
+							else entries.add( text );
+						}
+					}
+					if ( fine ) AppScope.configure( entries );
+					else problem( jotsFile, null, "app entry must be a list of methods like javax.servlet.Servlet.service or annotations like @org.example.Tool, so the default entry points are used" );
+				}
+			}
+		}
+		// the calls that sensors leave out, class loading and page compiling by default
+		if ( root != null && root.has( "ignore" ) ) {
+			JsonNode ignore = root.get( "ignore" );
+			List<String> entries = new ArrayList<String>();
+			boolean fine = ignore.isArray();
+			if ( fine ) {
+				for ( JsonNode item : ignore ) {
+					if ( item.isTextual() && !item.asText().trim().isEmpty() ) entries.add( item.asText().trim() );
+					else fine = false;
+				}
+			}
+			if ( fine ) PlatformWork.configure( entries );
+			else problem( jotsFile, null, "ignore must be a list of packages, classes or methods, so the default list is used" );
+		}
 		if ( root != null && root.hasNonNull( "control" ) && System.getProperty( "jot.control" ) == null ) {
 			String control = root.get( "control" ).asText();
 			System.setProperty( "jot.control", new File( control ).isAbsolute() ? control : new File( base, control ).getPath() );
@@ -115,7 +166,22 @@ public class ConfigReader {
 	}
 
 	
-	// Sensors are added to the Sensor class, reports are added to the EventBus as sinks
+	private static final java.util.Set<String> JOTS_FILE_KEYS = java.util.Set.of( "jots", "control", "app", "ignore" );
+
+	private static final List<String> problems = new ArrayList<String>();
+
+	/** What was wrong in the files that were read, one line for each, which is also why something wasn't loaded. */
+	public static List<String> getProblems() {
+		return problems;
+	}
+
+	private static void problem( File file, String name, String text ) {
+		logger.atSevere().log( "[JOT] ERROR: %s in %s %s.%s", name == null ? "the file" : name, file, text, name == null ? "" : " It was not loaded." );
+		problems.add( file.getName() + " " + ( name == null ? "" : name + " " ) + text );
+	}
+
+	// Sensors are added to the Sensor class, reports are added to the EventBus as sinks. A sensor or rule that says
+	// something wrong is left out and said so, see JotValidator, and the rest of the file is still read.
 	public static void load( File yaml ) throws IOException {
 		ConfigReader.yaml = yaml;
 		lastModified = yaml.lastModified();
@@ -123,38 +189,59 @@ public class ConfigReader {
 		// allow fields to be missing
 		ObjectMapper mapper = new ObjectMapper(new YAMLFactory())
 				.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-		
-		YAML config = mapper.readValue(yaml, YAML.class);
-				
-		if ( config.sensors != null ) {
-			for ( YAMLSensor entry : config.sensors )  {
-				if ( Sensor.exists( entry.name ) ) {
-					//System.err.println( "[JOT] WARNING: " + entry.name + " from " + yaml + " already loaded. Skipping." );
-					logger.atWarning().log("[JOT] WARNING: " + entry.name + " from " + yaml + " already loaded. Skipping." );
-				}
 
-				else if ( entry.name.equals("example")) {					
-					//System.err.println( "[JOT] WARNING: Found 'example' JOT in " + yaml + ". Skipping." );
+		JsonNode root;
+		try {
+			root = mapper.readTree( yaml );
+		} catch ( IOException e ) {
+			String why = e.getMessage() == null ? "" : e.getMessage().split( "\n" )[0];
+			problem( yaml, null, "is not valid YAML, nothing in it was loaded, " + why );
+			return;
+		}
+		for ( String text : JotValidator.fileProblems( root ) ) problem( yaml, null, text );
+		if ( root == null || !root.isObject() ) return;
+
+		JsonNode sensors = root.get( "sensors" );
+		if ( sensors != null && !sensors.isArray() ) {
+			problem( yaml, null, "sensors must be a list, with each sensor starting with - name:" );
+		}
+		else if ( sensors != null ) {
+			for ( JsonNode node : sensors )  {
+				String name = node.path( "name" ).isTextual() ? node.path( "name" ).asText() : null;
+				if ( "example".equals( name ) ) {
 					logger.atWarning().log("[JOT] WARNING: Found 'example' JOT in " + yaml + ". Skipping." );
+					continue;
 				}
-
-				else {
-					new Sensor()
-						.name( entry.name )
-						.description( entry.description )
-						.methods( entry.methods )
-						.scopes( entry.scopes )
-						.excludes( entry.excludes )
-						.captures( entry.captures )
-						.matchers( entry.matchers )
-						.exception( entry.exception )
-						.protect( entry.protect )
-						.enabled( entry.enabled )
-						.debug( entry.debug );
+				List<String> bad = JotValidator.sensorProblems( node );
+				if ( !bad.isEmpty() ) {
+					for ( String text : bad ) problem( yaml, name, text );
+					continue;
 				}
+				if ( Sensor.exists( name ) ) {
+					logger.atWarning().log("[JOT] WARNING: " + name + " from " + yaml + " already loaded. Skipping." );
+					continue;
+				}
+				YAMLSensor entry = mapper.treeToValue( node, YAMLSensor.class );
+				new Sensor()
+					.name( entry.name )
+					.description( entry.description )
+					.methods( entry.methods )
+					.scopes( entry.scopes )
+					.excludes( entry.excludes )
+					.captures( entry.captures )
+					.matchers( entry.matchers )
+					.blockWhen( entry.blockWhen )
+					.protect( entry.protect )
+					.enabled( entry.enabled )
+					.debug( entry.debug );
 			}
 		}
-		
+
+		// the reports are bound on their own, so a sensor that is wrong can't take them with it
+		com.fasterxml.jackson.databind.node.ObjectNode rest = ( (com.fasterxml.jackson.databind.node.ObjectNode) root ).deepCopy();
+		rest.remove( "sensors" );
+		YAML config = mapper.treeToValue( rest, YAML.class );
+
 		if ( config.reports != null ) {
 			for ( YAMLReport entry : config.reports ) {
 				if ( entry.name == null || entry.name.contentEquals( "example" ) ) continue;
@@ -197,11 +284,12 @@ public class ConfigReader {
 		public String name = null;
 		public String description = null;
 		public List<String> methods = new ArrayList<String>();
-		public List<String> scopes = new ArrayList<String>();
+		public List<String> scopes = null;     // none means the application, an empty list means anywhere
 		public List<String> excludes = new ArrayList<String>();
 		public List<String> captures = new ArrayList<String>();
 		public List<String> matchers = new ArrayList<String>();
-		public String exception = null;
+		@com.fasterxml.jackson.annotation.JsonProperty( "block-when" )
+		public String blockWhen = null;
 		public Boolean protect = null;
 		public Boolean enabled = null;
 		public boolean debug = false;

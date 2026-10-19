@@ -84,6 +84,9 @@ public class Instrumenter {
 				builder = sensor.instrument( builder );
 			}
 			
+			// the application's entry points, once for all the JOTs that are scoped to it
+			builder = AppScope.instrument( builder );
+
 			builder.installOn(inst);
 		} catch (Exception e) {
 			//e.printStackTrace();

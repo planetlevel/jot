@@ -58,12 +58,15 @@ public class Sensor {
 	private List<Expression> captures = new ArrayList<Expression>();
 	private List<Matcher> negativeMatchers = new ArrayList<Matcher>();
 	private List<Matcher> positiveMatchers = new ArrayList<Matcher>();
-	private String exception = null;
+	private String blockWhen = null;        // makes this a rule, true for every call or an expression that says when. block-when in the .jot file
+	private Expression blockCondition = null;   // blockWhen as an expression, null when it is true for every call
+	private boolean blockNever = false;
+	private boolean appScope = true;        // with no scopes of its own, this applies only while the application is running, see AppScope     // a condition that couldn't be read never blocks, a mistake must not block everything
 	private boolean debug = false;
 	// false stops this rule from protecting, so it only reports. Null leaves it to jot.protect
 	private Boolean protect = null;
 
-	// -Djot.protect=false makes every rule with an exception only report, nothing is stopped
+	// -Djot.protect=false makes every rule only report, nothing is stopped
 	private static volatile boolean protectAll = !"false".equalsIgnoreCase( System.getProperty( "jot.protect" ) );
 
 	// what the control file says, see ControlFile. The master switch, and this rule's own setting if it has one
@@ -80,7 +83,6 @@ public class Sensor {
 	private Pattern methodPattern = Pattern.compile( "^(!)?([\\p{L}_$][\\p{L}\\p{N}_$]*\\.)*(<init>|[\\p{L}_$][\\p{L}\\p{N}_$]*)$");
 	private Pattern annotationPattern = Pattern.compile( "^@([\\p{L}_$][\\p{L}\\p{N}_$]*\\.)*[\\p{L}_$][\\p{L}\\p{N}_$]*$");
 	private Pattern capturePattern = Pattern.compile( "^.*$");
-	private Pattern exceptionPattern = Pattern.compile( "^.*$");
 
 	public Sensor() {
 		sensors.add( this );
@@ -109,8 +111,14 @@ public class Sensor {
 	}
 
 	// a sensor that blocks reports the block, not each thing it captured on the way
+	/**
+	 * A sensor that observes leaves out what the platform did while loading classes or compiling pages, see PlatformWork.
+	 * A rule doesn't call this, it reports and blocks whatever it sees.
+	 */
 	private void publishObserved(Event event) {
-		if ( getException() == null ) EventBus.publish( event );
+		if ( isRule() ) return;
+		if ( PlatformWork.inside( event.getStack() ) ) return;
+		EventBus.publish( event );
 	}
 
 	/**
@@ -190,8 +198,10 @@ public class Sensor {
 				}
 				if ( !inScope ) return results;
 			}
+			// no scopes of its own means the application is its scope, and nothing outside it counts
+			else if ( appScope && AppScope.configured() && !AppScope.active() ) return results;
 	
-			if ( stack == null && ( !captures.isEmpty() || getException() != null ) ) stack = currentStack();
+			if ( stack == null && ( !captures.isEmpty() || isRule() ) ) stack = currentStack();
 
 			for (Expression capture : captures) {
 				try {
@@ -228,17 +238,17 @@ public class Sensor {
 				}
 			}
 
-			// if there are either results or zero captures, generate exceptions if any
-			if ( getException() != null ) {
-				if ( captures.isEmpty() || !results.isEmpty() ) {
+			// if there are either results or zero captures, block, or report, if this is a rule
+			if ( isRule() ) {
+				if ( ( captures.isEmpty() || !results.isEmpty() ) && blockHolds( obj, params, ret, caller, stack, annotation ) ) {
 					String details = results.stream().map( String::valueOf ).collect( Collectors.joining( " | " ) );
 					if ( isProtected() ) {
-						SensorException e = new SensorException( getException() );
-						EventBus.publish( new Event( getName() + "-blocked", details, stack, Event.Action.BLOCKED, getException() ) );
+						SensorException e = new SensorException( getRuleMessage() );
+						EventBus.publish( new Event( getName() + "-blocked", details, stack, Event.Action.BLOCKED, getRuleMessage() ) );
 						throw e;
 					}
 					// not protecting, so say what would have been stopped and let the call go ahead
-					EventBus.publish( new Event( getName() + "-monitored", details, stack, Event.Action.MONITORED, getException() ) );
+					EventBus.publish( new Event( getName() + "-monitored", details, stack, Event.Action.MONITORED, getRuleMessage() ) );
 				}
 			}			
 		} finally {
@@ -333,6 +343,7 @@ public class Sensor {
 			logger.atWarning().log( "[JOT %s] YAML error: malformed scope (" + value + ") must match " + methodPattern.pattern(), this );
 		}
 		addScope( value, negative );
+		appScope = false;
 		return this;
 	}
 
@@ -345,10 +356,12 @@ public class Sensor {
 		loc.setIndex( scopes.indexOf( loc ) );
 	}
 
+	/** No list leaves the application as the scope. A list, even an empty one, is the JOT's own, and empty means anywhere. */
 	public Sensor scopes( List<String> list ) {
-		if ( list == null || list.isEmpty() ) {
+		if ( list == null ) {
 			return this;
-		}		
+		}
+		appScope = false;
 		for ( String s : list ) {
 			scope( s );
 		}
@@ -434,17 +447,40 @@ public class Sensor {
 		return this;
 	}
 
-	public Sensor exception(String value) {
-		if ( value == null ) {
+	/**
+	 * Makes this a rule. true blocks every call that gets this far, anything else is a boolean expression over the same
+	 * variables as a capture, like #P0 < 2048, and the call is only stopped when it is true. Whether the rule really
+	 * stops the call or only reports it is up to the mode, see protectAll and protect. The message is the description,
+	 * then the condition.
+	 */
+	public Sensor blockWhen(String value) {
+		if ( value == null || value.trim().isEmpty() ) {
 			return this;
-		}		
-		if (!exceptionPattern.matcher(value).matches()) {
-			logger.atWarning().log( "[JOT %s] YAML error: malformed exception (" + value + ") must match " + exceptionPattern.pattern(), this );
 		}
-		exception = value;
+		blockWhen = value.trim();
+		blockCondition = null;
+		blockNever = false;
+		if ( blockWhen.equalsIgnoreCase( "true" ) ) {
+			return this;
+		}
+		try {
+			blockCondition = new Expression( blockWhen );
+		} catch ( Exception e ) {
+			logger.atWarning().log( "[JOT %s] YAML error: block-when (%s) is not an expression, so this rule will never block. %s", this, blockWhen, e.getMessage() );
+			blockNever = true;
+		}
 		return this;
 	}
-	
+
+	/** True if the condition holds for this call. An expression that fails counts as false, the application keeps running. */
+	private boolean blockHolds(Object obj, Object[] params, Object ret, String caller, StackTraceElement[] stack,
+			java.util.Map<String, Object> annotation) {
+		if ( blockNever ) return false;
+		if ( blockCondition == null ) return true;
+		Object o = blockCondition.execute( obj, params, ret, caller, stack, annotation );
+		return Boolean.TRUE.equals( o ) || ( o instanceof String && "true".equalsIgnoreCase( ( (String) o ).trim() ) );
+	}
+
 	public Sensor debug( boolean value ) {
 		debug = value;
 		return this;
@@ -553,12 +589,20 @@ public class Sensor {
 		return negativeMatchers;
 	}
 	
-	public String getException() {
-		return exception;
+	/** The message of a rule, or null for a sensor. It is the description, then the condition if there is one. */
+	public String getRuleMessage() {
+		if ( blockWhen == null ) return null;
+		String what = description != null ? description : ( name != null ? name : "JOT rule" );
+		return blockCondition == null && !blockNever ? what : what + ": " + blockWhen;
 	}
 
-	public boolean hasException() {
-		return exception != null;
+	public String getBlockWhen() {
+		return blockWhen;
+	}
+
+	/** A rule has a block-when, a sensor without one only observes. */
+	public boolean isRule() {
+		return blockWhen != null;
 	}
 	
 	public int getIndex() {
@@ -615,10 +659,6 @@ public class Sensor {
 		getSensor( sensorIndex ).enterScopeScope( scopeIndex );
 	}
 
-	public static void enterScopeScope( int sensorIndex, int scopeIndex, Object[] args ) {
-		getSensor( sensorIndex ).enterScopeScope( scopeIndex, args );
-	}
-	
 	public static void leaveScopeScope( int sensorIndex, int scopeIndex ) {
 		getSensor( sensorIndex ).leaveScopeScope( scopeIndex );
 	}
@@ -629,33 +669,27 @@ public class Sensor {
 	}
 
 	public void enterScopeScope(int scopeIndex) {
-		enterScopeScope( scopeIndex, null );
-	}
-
-	public void enterScopeScope(int scopeIndex, Object[] args) {
 		MethodLocator loc = scopes.get(scopeIndex);
 		if ( debug ) logger.atFine().log( "[JOT %s] SCOPE SCOPE" + loc.scopeValue() +" >> "+ getName(), this);
-		boolean first = getException() != null && !JotScope.active() && !inAnyScope();
 		loc.enterScope();
-		if ( first ) publishEntered( args );
+		if ( !scopeReported.get() && name != null && isEnabled() && !JotScope.active() && scopeReported.compareAndSet( false, true ) ) {
+			publishActive( loc );
+		}
 	}
 
-	private boolean inAnyScope() {
-		for ( MethodLocator loc : scopes ) if ( loc.scopeValue() > 0 ) return true;
-		return false;
-	}
+	// whether this JOT has said that its scope is active, which it does once and never again until the JVM is started again
+	private final java.util.concurrent.atomic.AtomicBoolean scopeReported = new java.util.concurrent.atomic.AtomicBoolean( false );
 
 	/**
-	 * A rule that sandboxes some code also says when that code was entered, as an observed event named
-	 * for the rule plus "-entered". The rule's other events are named the same way, "-blocked" when it stopped
-	 * the call and "-monitored" when it only reported. It is sent once for each outermost entry, whether or not the sandbox
-	 * then blocked anything, so there is a trail of exposure as well as of attacks.
+	 * A JOT with scopes says when one of them is first entered, with an observed event named for the JOT plus "-active", and
+	 * the scope method as what it saw. That is all, once for each JOT in the life of the JVM. It is how to tell that the
+	 * code a rule watches, like the vulnerable code of a CVE, is really running in an application. What happens inside the
+	 * scope is reported by the JOT as usual.
 	 */
-	private void publishEntered(Object[] args) {
+	private void publishActive(MethodLocator scope) {
 		JotScope.enter();
 		try {
-			String capture = args == null ? "" : StringUtils.normalizeSpace( SafeString.format( args, debug ) );
-			EventBus.publish( new Event( getName() + "-entered", capture, currentStack() ) );
+			EventBus.publish( new Event( getName() + "-active", scope.className() + "." + scope.methodName(), currentStack() ) );
 		} finally {
 			JotScope.exit();
 		}
@@ -674,7 +708,7 @@ public class Sensor {
 	
 
 	/** By class, which includes its subtypes, or for @the.Annotation the classes that carry it or have a method that does. */
-	private static ElementMatcher<TypeDescription> typeMatcher(MethodLocator method) {
+	static ElementMatcher<TypeDescription> typeMatcher(MethodLocator method) {
 		if ( !method.isAnnotation() ) return hasGenericSuperType(failSafe(named(method.className())));
 		ElementMatcher<TypeDescription> marked = named(method.annotationName());
 		ElementMatcher.Junction<TypeDescription> typeCarries = ElementMatchers.<TypeDescription>isAnnotatedWith(marked);
@@ -682,7 +716,7 @@ public class Sensor {
 	}
 
 	/** By method name, or for @the.Annotation the methods that carry it and the methods of a class that does. */
-	private static ElementMatcher<MethodDescription> methodMatcher(MethodLocator method) {
+	static ElementMatcher<MethodDescription> methodMatcher(MethodLocator method) {
 		if ( !method.isAnnotation() ) return named(method.methodName());
 		ElementMatcher<TypeDescription> marked = named(method.annotationName());
 		ElementMatcher.Junction<TypeDescription> typeCarries = ElementMatchers.<TypeDescription>isAnnotatedWith(marked);
@@ -716,8 +750,8 @@ public class Sensor {
 					builder.ignore(hasGenericSuperType(failSafe(named(eloc.className()))));
 				}
 				
-				// transform constructors with JOT exception rule (CE)
-				if ( method.isConstructor() && hasException() ) {
+				// transform constructors that are rules (CE)
+				if ( method.isConstructor() && isRule() ) {
 					builder = builder
 					.type(typeMatcher)
 					.transform((b, td, cl, m, pd) -> b.visit( Advice
@@ -728,7 +762,7 @@ public class Sensor {
 							.on( isConstructor())) );
 				}
 
-				// transform constructors with no JOT exception rule (CNE)
+				// transform constructors that are not rules (CNE)
 				else if ( method.isConstructor() ) {
 					builder = builder
 					.type(typeMatcher)
@@ -740,7 +774,7 @@ public class Sensor {
 							.on( isConstructor())) );
 				}
 				
-				// transform methods with a return but no JOT exception (MR)
+				// transform methods with a return that are not rules (MR)
 				else if ( hasReturn() ) {
 					builder = builder
 					.type(typeMatcher)
@@ -752,8 +786,8 @@ public class Sensor {
 							.on(methodMatcher) ) );
 				}
 				
-				// transform methods with no return and JOT exception rule (MVE)
-				else if ( hasException() ) {
+				// transform methods with no return that are rules (MVE)
+				else if ( isRule() ) {
 					builder = builder
 					.type(typeMatcher)
 					.transform((b, td, cl, m, pd) -> b.visit( Advice
@@ -764,7 +798,7 @@ public class Sensor {
 							.on(methodMatcher) ) );
 				}
 				
-				// transform methods with no return and no JOT exception (MVNE)
+				// transform methods with no return that are not rules (MVNE)
 				else {
 					builder = builder
 					.type(typeMatcher)

@@ -145,7 +145,7 @@ class EventBusTest {
 	void testBlockingSensorPublishesOneBlockedEventWithItsMessage() {
 		Recorder r = new Recorder();
 		EventBus.configure( List.of( r ), 10 );
-		Sensor s = new Sensor().method( "a.b.Class.method" ).capture( "#P0" ).exception( "Not allowed" );
+		Sensor s = new Sensor().method( "a.b.Class.method" ).capture( "#P0" ).description( "Not allowed" ).blockWhen( "true" );
 		Assertions.assertThrows( SensorException.class,
 				() -> s.execute( "test", "a.b.Class.Method", "foo", new String[] { "bar" }, "zoo" ) );
 		EventBus.shutdown();
@@ -216,11 +216,62 @@ class EventBusTest {
 	}
 
 	private Sensor rule() {
-		return new Sensor().method( "a.b.Class.method" ).capture( "#P0" ).exception( "Not allowed" );
+		return new Sensor().method( "a.b.Class.method" ).capture( "#P0" ).description( "Not allowed" ).blockWhen( "true" );
 	}
 
 	private List<Object> fire(Sensor s) {
 		return s.execute( "test", "a.b.Class.Method", "foo", new String[] { "bar" }, "zoo" );
+	}
+
+	private Sensor whenRule(String when) {
+		return new Sensor().name( "when-rule" ).description( "A key was too small" ).method( "a.b.Class.method" ).capture( "#P0" ).blockWhen( when );
+	}
+
+	@Test
+	void testBlockWhenTrueBlocksEveryCallAndTheMessageIsTheDescription() {
+		Sensor s = whenRule( "true" );
+		Assertions.assertTrue( s.isRule(), "block-when makes it a rule" );
+		Recorder r = run( () -> {
+			SensorException e = Assertions.assertThrows( SensorException.class, () -> fire( s ) );
+			Assertions.assertEquals( "A key was too small", e.getMessage() );
+		} );
+		Assertions.assertEquals( "when-rule-blocked", r.events.get( 0 ).getRule() );
+		Assertions.assertEquals( "A key was too small", r.events.get( 0 ).getMessage() );
+	}
+
+	@Test
+	void testBlockWhenAnExpressionOnlyBlocksWhenItIsTrueAndTheMessageSaysWhy() {
+		Sensor s = whenRule( "#P0.length() < 5" );
+		Recorder r = run( () -> {
+			SensorException e = Assertions.assertThrows( SensorException.class,
+				() -> s.execute( "test", "a.b.Class.Method", "foo", new String[] { "bar" }, "zoo" ) );
+			Assertions.assertEquals( "A key was too small: #P0.length() < 5", e.getMessage() );
+			Assertions.assertEquals( 1, s.execute( "test", "a.b.Class.Method", "foo", new String[] { "long enough" }, "zoo" ).size(),
+				"a call that fails the condition goes ahead" );
+		} );
+		Assertions.assertEquals( List.of( Event.Action.BLOCKED ), r.events.stream().map( Event::getAction ).toList(),
+			"and nothing is reported for it" );
+	}
+
+	@Test
+	void testBlockWhenOnlyReportsWhenNotProtecting() {
+		Sensor.protectAll( false );
+		Sensor s = whenRule( "#P0 == 'bar'" );
+		Recorder r = run( () -> fire( s ) );
+		Assertions.assertEquals( "when-rule-monitored", r.events.get( 0 ).getRule() );
+		Assertions.assertEquals( Event.Action.MONITORED, r.events.get( 0 ).getAction() );
+		Assertions.assertEquals( "A key was too small: #P0 == 'bar'", r.events.get( 0 ).getMessage() );
+	}
+
+	@Test
+	void testAConditionThatIsNotAnExpressionOrFailsNeverBlocks() {
+		Sensor broken = whenRule( "#P0 ==== (" );
+		Sensor failing = whenRule( "#P0.nosuchmethod() > 1" );
+		Recorder r = run( () -> {
+			Assertions.assertDoesNotThrow( () -> fire( broken ) );
+			Assertions.assertDoesNotThrow( () -> fire( failing ) );
+		} );
+		Assertions.assertTrue( r.events.isEmpty(), "a mistake in a condition can't block or report anything" );
 	}
 
 	@Test
@@ -287,39 +338,65 @@ class EventBusTest {
 
 	@Test
 	void testAReportOnlyRuleWithNoCapturesStillReports() {
-		Sensor s = new Sensor().method( "a.b.Class.method" ).exception( "No process creation" ).protect( false );
+		Sensor s = new Sensor().method( "a.b.Class.method" ).description( "No process creation" ).blockWhen( "true" ).protect( false );
 		Recorder r = run( () -> fire( s ) );
 		Assertions.assertEquals( 1, r.events.size() );
 		Assertions.assertEquals( Event.Action.MONITORED, r.events.get( 0 ).getAction() );
 	}
 
 	@Test
-	void testASandboxReportsOnceWhenItsScopeIsEntered() {
-		Sensor s = rule().scope( "a.b.Class.outer" ).scope( "a.b.Class.inner" );
+	void testAJotWithScopesSaysItsScopeIsActiveOnceAndNeverAgain() {
+		Sensor s = new Sensor().name( "scope-says" ).method( "a.b.Class.method" ).scope( "a.b.Class.outer" ).scope( "a.b.Class.inner" );
 		Recorder r = run( () -> {
-			s.enterScopeScope( 0, new Object[] { "x" } );
-			s.enterScopeScope( 1, new Object[] { "y" } );   // already inside, so not an entry
+			s.enterScopeScope( 0 );
+			s.enterScopeScope( 1 );         // nested
 			s.leaveScopeScope( 1 );
 			s.leaveScopeScope( 0 );
-			s.enterScopeScope( 1, new Object[] { "z" } );   // a second entry
+			s.enterScopeScope( 0 );         // entered again, later
+			s.leaveScopeScope( 0 );
+			s.enterScopeScope( 1 );         // the other scope
 			s.leaveScopeScope( 1 );
 		} );
-		Assertions.assertEquals( 2, r.events.size() );
-		Assertions.assertEquals( s.getName() + "-entered", r.events.get( 0 ).getRule() );
+		Assertions.assertEquals( 1, r.events.size(), "once, whatever scope and however often" );
+		Assertions.assertEquals( "scope-says-active", r.events.get( 0 ).getRule() );
 		Assertions.assertEquals( Event.Action.OBSERVED, r.events.get( 0 ).getAction() );
-		Assertions.assertEquals( "[x]", r.events.get( 0 ).getCapture() );
+		Assertions.assertEquals( "a.b.Class.outer", r.events.get( 0 ).getCapture(), "the scope that was entered" );
 	}
 
 	@Test
-	void testASensorWithNoExceptionDoesNotReportEnteringItsScope() {
-		Sensor s = new Sensor().method( "a.b.Class.method" ).scope( "a.b.Class.outer" );
-		Recorder r = run( () -> s.enterScopeScope( 0, null ) );
-		Assertions.assertEquals( 0, r.events.size() );
+	void testARuleSaysItsScopeIsActiveToo() {
+		Sensor s = whenRule( "true" ).name( "scoped-rule" ).scope( "a.b.Class.outer" );
+		Recorder r = run( () -> {
+			s.enterScopeScope( 0 );
+			s.leaveScopeScope( 0 );
+		} );
+		Assertions.assertEquals( List.of( "scoped-rule-active" ), r.events.stream().map( Event::getRule ).toList() );
+	}
+
+	@Test
+	void testNothingIsSaidWithoutAScopeOrWhenNotEnabledOrWithoutAName() {
+		Sensor unscoped = new Sensor().name( "no-scope" ).method( "a.b.Class.method" );
+		Sensor off = new Sensor().name( "scope-off" ).method( "a.b.Class.method" ).scope( "a.b.Class.outer" ).enabled( false );
+		Sensor unnamed = new Sensor().method( "a.b.Class.method" ).scope( "a.b.Class.outer" );
+		Recorder r = run( () -> {
+			off.enterScopeScope( 0 );
+			off.leaveScopeScope( 0 );
+			unnamed.enterScopeScope( 0 );
+			unnamed.leaveScopeScope( 0 );
+		} );
+		Assertions.assertTrue( r.events.isEmpty() );
+		Assertions.assertDoesNotThrow( () -> unscoped.execute( "test", "a.b.Class.Method", "foo", new String[] { "x" }, null ) );
+		Recorder later = run( () -> {
+			off.enabled( true );
+			off.enterScopeScope( 0 );
+			off.leaveScopeScope( 0 );
+		} );
+		Assertions.assertEquals( 1, later.events.size(), "a JOT that was off says it the first time it is on and entered" );
 	}
 
 	@Test
 	void testRuleThatDoesNotMatchReportsNothingInAnyMode() {
-		Sensor s = new Sensor().method( "a.b.Class.method" ).capture( "#P0" ).matcher( "nomatch" ).exception( "x" ).protect( false );
+		Sensor s = new Sensor().method( "a.b.Class.method" ).capture( "#P0" ).matcher( "nomatch" ).blockWhen( "true" ).protect( false );
 		Recorder r = run( () -> fire( s ) );
 		Assertions.assertTrue( r.events.isEmpty() );
 	}

@@ -37,8 +37,7 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
  * for that sensor or rule. protect is false to report only and true to block, for a rule, and it takes priority over
  * the rule's own protect in its .jot file. enabled is false to switch a sensor or rule off, so a sensor records
  * nothing and a rule neither blocks nor reports, and true to switch on one the .jot file wrote with enabled: false.
- * A setting that isn't listed goes back to its .jot file. The older rules map, a rule name and true or false for
- * protect, is still read. -Djot.protect=false can't be overridden from here.
+ * A setting that isn't listed goes back to its .jot file. -Djot.protect=false can't be overridden from here.
  *
  * It fails safe. A file that is missing, unreadable, too large or invalid changes nothing, and the last good
  * settings stay in force. Each change is published as an event from the sensor "jot-control" so the log
@@ -116,18 +115,7 @@ public final class ControlFile {
 			JsonNode e = root.get( "protect" );
 			if ( e != null && !e.isBoolean() ) throw new IllegalArgumentException( "protect must be true or false" );
 			newMaster = e == null || e.asBoolean();
-			JsonNode r = root.get( "rules" );
-			if ( r != null ) {
-				if ( !r.isObject() ) throw new IllegalArgumentException( "rules must be an object" );
-				java.util.Iterator<Map.Entry<String, JsonNode>> it = r.fields();
-				while ( it.hasNext() ) {
-					Map.Entry<String, JsonNode> entry = it.next();
-					if ( !entry.getValue().isBoolean() ) {
-						throw new IllegalArgumentException( "rule " + entry.getKey() + " must be true or false" );
-					}
-					newRules.put( entry.getKey(), entry.getValue().asBoolean() );
-				}
-			}
+			if ( root.has( "rules" ) ) throw new IllegalArgumentException( "rules is no longer a setting, write each rule's protect under sensors" );
 			JsonNode all = root.get( "sensors" );
 			if ( all != null ) {
 				if ( !all.isObject() ) throw new IllegalArgumentException( "sensors must be an object" );

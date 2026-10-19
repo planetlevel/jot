@@ -4,9 +4,9 @@
 sensors: 
 
 - name: banned-methods
-  description: Fails any JUnit tests that cause banned methods to be invoked
+  description: A banned method was called, banned methods are prohibited by Security Directive 27B/6
   methods:
   - java.lang.ProcessBuilder.<init>
   scopes:
   - org.junit.platform.commons.util.ReflectionUtils.invokeMethod
-  exception: Banned methods are prohibited by Security Directive 27B/6 
+  block-when: true 

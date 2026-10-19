@@ -12,7 +12,7 @@ sensors:
   - "#P0.getRequestURI()"
 
 - name: expression
-  description: Prevents harmful methods from being used during expresssion evaluation
+  description: An expression being evaluated used a harmful method
   methods:
   - java.lang.ProcessBuilder.<init>
   - java.io.Socket.<init>
@@ -21,4 +21,4 @@ sensors:
   - jakarta.el.ValueExpression.getValue
   captures:
   - "#P0"
-  exception: Attempt to escape expression language sandbox prevented by JST rule 'expression'
+  block-when: true

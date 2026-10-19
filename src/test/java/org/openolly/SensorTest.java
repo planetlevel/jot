@@ -64,7 +64,7 @@ class SensorTest {
 
 	@Test
 	void testException() {
-		Sensor s = new Sensor().method("a.b.Class.method").capture("#P0").exception("Exception");
+		Sensor s = new Sensor().method("a.b.Class.method").capture("#P0").description("Exception").blockWhen("true");
 
 		try {
 			Object ret = s.execute("test", "a.b.Class.Method", "foo", new String[] { "bar" }, "zoo",
@@ -220,7 +220,7 @@ class SensorTest {
 
 	@Test
 	void testGuardIsReleasedWhenASensorBlocks() {
-		Sensor blocker = new Sensor().capture("#P0").exception("blocked");
+		Sensor blocker = new Sensor().capture("#P0").description("blocked").blockWhen("true");
 		Assertions.assertThrows( SensorException.class,
 			() -> blocker.execute( "test", "sig", null, new Object[] { "x" }, null ) );
 		Assertions.assertFalse( JotScope.active() );

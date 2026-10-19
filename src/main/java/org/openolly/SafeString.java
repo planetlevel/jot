@@ -57,6 +57,11 @@ public class SafeString {
 		if ( o instanceof String ) {
 			return (String)o;
 		}
+		// values that are their own text, so a matcher can be written for what they say, like a path ending in .log
+		if ( o instanceof CharSequence || o instanceof Number || o instanceof Boolean || o instanceof Character || o instanceof Enum
+				|| o instanceof java.io.File || o instanceof java.nio.file.Path || o instanceof java.net.URI || o instanceof java.net.URL ) {
+			return o.toString();
+		}
 		if ( o instanceof Entry ) {
 			return formatMapEntry( (Entry)o );
 		}
