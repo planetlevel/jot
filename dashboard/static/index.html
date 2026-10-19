@@ -198,6 +198,7 @@
   #jotDetail li { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
   #eventDrawer dl { display: grid; grid-template-columns: 120px 1fr; gap: 4px 14px; margin: 0; font-size: 13px; }
   #eventDrawer dt { color: var(--muted); }
+#eventDrawer dl.fields dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
   #eventDrawer dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
   #eventDrawer .frames { margin: 0; padding: 0; list-style: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
   #eventDrawer .frames li { display: grid; grid-template-columns: 34px 1fr; padding: 2px 6px; border-radius: 4px; overflow-wrap: anywhere; }
@@ -1065,9 +1066,9 @@ let reportRun = 0;            // so a slow run can't replace a newer one
 
 function reportExplain(r) {
   return r.type === "list"
-    ? "One row per call site, with what " + r.cols + " captured there."
-    : "Rows are the captures of " + r.rows + ". " + (r.type === "compare"
-      ? "Columns come from the captures of " + r.cols + ", with an X where it was seen in the same request."
+    ? "One row per call site, with " + r.cols + " as captured there."
+    : "Rows are the values of " + r.rows + ". " + (r.type === "compare"
+      ? "Columns are the values of " + r.cols + ", holding " + (r.value || "an x") + " when seen in the same request."
       : "One column for each of " + r.cols + ", showing what it captured in the same request.");
 }
 
@@ -1721,7 +1722,10 @@ function drawEvent() {
       el("button", { class: "small", text: "Close", title: "Escape", onclick: () => { location.hash = "#events"; } })),
     el("div", { class: "when", text: when }),
     el("h4", { text: "Captured" }),
-    el("pre", { class: "value", text: e.capture || "(nothing captured)" }),
+    e.data && Object.keys(e.data).length
+      ? el("dl", { class: "fields" }, ...Object.entries(e.data).flatMap(([name, value]) => [el("dt", { text: name }),
+          el("dd", { text: Array.isArray(value) ? value.join("\n") : value === null ? "null" : String(value) })]))
+      : el("pre", { class: "value", text: e.capture || "(nothing captured)" }),
     e.message ? el("h4", { text: "Message" }) : null,
     e.message ? el("pre", { class: "value", text: e.message }) : null,
     el("h4", { text: "Details" }),

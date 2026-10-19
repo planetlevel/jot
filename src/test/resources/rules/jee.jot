@@ -10,7 +10,7 @@ sensors:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#P0.getRequestURI()"
+    path: "#P0.getRequestURI()"
 
   
 - name: auth-user
@@ -19,7 +19,7 @@ sensors:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#P0.getRemoteUser()==null ? \"Guest\" : #P0.getRemoteUser()"
+    user: '#P0.getRemoteUser()==null ? "Guest" : #P0.getRemoteUser()'
   
   
 - name: auth-role-check
@@ -28,10 +28,13 @@ sensors:
   - javax.servlet.ServletRequest.isUserInRole
   - jakarta.servlet.ServletRequest.isUserInRole
   captures:
-  - '#P0 + ": " + #RET'
+    role: "#P0"
+    allowed: "#RET"
   matchers:
-  - '!^null:'
-  - '!: null$'
+    role:
+      - "!null"
+    allowed:
+      - "!null"
     
   
 - name: http-parameter-received
@@ -40,9 +43,10 @@ sensors:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#P0.getParameterNames()"
+    name: "#P0.getParameterNames()"
   matchers:
-  - "!null"
+    name:
+      - "!null"
 
 
 - name: http-parameter-read
@@ -53,9 +57,10 @@ sensors:
   - javax.servlet.ServletRequest.getParameterValues
   - jakarta.servlet.ServletRequest.getParameterValues
   captures:
-  - "#P0"
+    name: "#P0"
   matchers:
-  - "!null"
+    name:
+      - "!null"
 
 
 - name: http-redirect
@@ -64,9 +69,10 @@ sensors:
   - javax.servlet.ServletResponse.sendRedirect
   - jakarta.servlet.ServletResponse.sendRedirect
   captures:
-  - "#P0"
+    url: "#P0"
   matchers:
-  - "!null"
+    url:
+      - "!null"
 
 
 - name: http-forward
@@ -77,9 +83,10 @@ sensors:
   - javax.servlet.ServletContext.getRequestDispatcher
   - jakarta.servlet.ServletContext.getRequestDispatcher
   captures:
-  - "#P0"
+    path: "#P0"
   matchers:
-  - "!null"
+    path:
+      - "!null"
 
 
 - name: http-filter-registered
@@ -88,9 +95,10 @@ sensors:
   - javax.servlet.ServletContext.addFilter
   - jakarta.servlet.ServletContext.addFilter
   captures:
-  - "#RET.getUrlPatternMappings()"
+    urls: "#RET.getUrlPatternMappings()"
   matchers:
-  - "!null"
+    urls:
+      - "!null"
 
 
 - name: http-servlet-registered
@@ -99,9 +107,10 @@ sensors:
   - javax.servlet.ServletContext.addServlet
   - jakarta.servlet.ServletContext.addServlet
   captures:
-  - "#RET.getMappings()"
+    urls: "#RET.getMappings()"
   matchers:
-  - "!null"
+    urls:
+      - "!null"
 
 
 - name: http-cache-header
@@ -110,9 +119,10 @@ sensors:
   - javax.servlet.ServletResponse.setHeader
   - jakarta.servlet.ServletResponse.setHeader
   captures:
-  - "#P0.equalsIgnoreCase(\"Cache-Control\")?#P1:null"
+    cache_control: '#P0.equalsIgnoreCase("Cache-Control")?#P1:null'
   matchers:
-  - "!null"
+    cache_control:
+      - "!null"
 
 
 - name: get-privacy
@@ -126,15 +136,16 @@ sensors:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#P0"
+    value: "#P0"
   matchers:
-  - (?!000|666)[0-8][0-9]{2}-(?!00)[0-9]{2}-(?!0000)[0-9]{4}
-  - (?<visa>4[0-9]{12}(?:[0-9]{3})?)
-  - (?<mastercard>5[1-5][0-9]{14})
-  - (?<discover>6(?:011|5[0-9]{2})[0-9]{12})
-  - (?<amex>3[47][0-9]{13})
-  - (?<diners>3(?:0[0-5]|[68][0-9])?[0-9]{11})
-  - (?<jcb>(?:2131|1800|35[0-9]{3})[0-9]{11})
+    value:
+      - (?!000|666)[0-8][0-9]{2}-(?!00)[0-9]{2}-(?!0000)[0-9]{4}
+      - (?<visa>4[0-9]{12}(?:[0-9]{3})?)
+      - (?<mastercard>5[1-5][0-9]{14})
+      - (?<discover>6(?:011|5[0-9]{2})[0-9]{12})
+      - (?<amex>3[47][0-9]{13})
+      - (?<diners>3(?:0[0-5]|[68][0-9])?[0-9]{11})
+      - (?<jcb>(?:2131|1800|35[0-9]{3})[0-9]{11})
   
 
 ##### detect attacks #####
@@ -146,9 +157,10 @@ sensors:
   - jakarta.servlet.jsp.el.ExpressionEvaluator.evaluate
   - org.springframework.expression.parseExpression
   captures:
-  - "#P0"
+    expression: "#P0"
   matchers:
-  - \.class
+    expression:
+      - \.class
   block-when: true
   
 
@@ -162,6 +174,6 @@ sensors:
   - jakarta.servlet.jsp.el.ExpressionEvaluator.evaluate
   - org.springframework.expression.parseExpression
   captures:
-  - "#P0"
+    expression: "#P0"
   block-when: true
 

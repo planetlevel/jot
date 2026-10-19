@@ -66,6 +66,14 @@ class IngestTests(unittest.TestCase):
         r = store.run_query(self.env.db, "SELECT method_name, call_site_name, stack FROM events")
         self.assertEqual(["javax.crypto.Cipher.getInstance", "com.acme.Ticket.encrypt", '["a", "b"]'], r["rows"][0])
 
+    def test_the_named_values_are_kept_and_can_be_read_with_json_extract(self):
+        self.env.write(event(1, data={"algorithm": "AES", "bits": 128, "modes": ["CBC", "GCM"]}), event(2))
+        self.env.ingestor.poll()
+        rows = store.run_query(self.env.db, "SELECT json_extract(data, '$.algorithm'), json_extract(data, '$.bits'), "
+                               "json_extract(data, '$.modes[1]') FROM events WHERE data IS NOT NULL")["rows"]
+        self.assertEqual([["AES", 128, "GCM"]], rows)
+        self.assertEqual(1, store.run_query(self.env.db, "SELECT COUNT(*) FROM events WHERE data IS NULL")["rows"][0][0])
+
     def test_reads_only_what_is_new(self):
         self.env.write(event(1))
         self.env.ingestor.poll()
@@ -184,19 +192,20 @@ sensors:
 reports:
 - name: 'Access Control Matrix'
   type: 'compare'
-  rows: 'http-route'
-  cols: 'auth-role-check'
+  rows: 'http-route.path'
+  cols: 'auth-role-check.role'
 - name: 'Test Coverage Matrix'
   type: 'compare'
-  rows: 'http-route'
-  cols: 'auth-user'
+  rows: 'http-route.path'
+  cols: 'auth-user.user'
+  value: 'auth-user.roles'
 - name: 'Encryption Usage'
   type: 'list'
-  cols: 'crypto-cipher'
+  cols: 'crypto-cipher.algorithm'
 - name: 'Cipher Table'
   type: 'table'
-  rows: 'http-route'
-  cols: 'crypto-cipher, crypto-hash'
+  rows: 'http-route.path'
+  cols: 'crypto-cipher.algorithm, crypto-hash.algorithm'
 - name: 'Old Timeseries'
   type: 'series'
   rows: 'x'
@@ -219,16 +228,16 @@ class ReportTests(unittest.TestCase):
         self.app = server.App(self.env.db, self.env.ingestor)
         # two requests. /buy has two roles and a cipher, /home has one role and none
         self.env.write(
-            event(1, sensor="http-route", capture="/buy", trace=7),
-            event(2, sensor="auth-role-check", capture="RoleA", trace=7),
-            event(3, sensor="auth-role-check", capture="RoleB", trace=7),
-            event(4, sensor="auth-role-check", capture="RoleB", trace=7),
-            event(5, sensor="crypto-cipher", capture="DES", trace=7),
-            event(6, sensor="http-route", capture="/home", trace=8),
-            event(7, sensor="auth-role-check", capture="RoleA", trace=8),
-            event(8, sensor="auth-user", capture="alice:Role1", trace=8),
-            event(9, sensor="http-route", capture="/other", trace=9, run="r2"),
-            event(10, sensor="auth-role-check", capture="RoleC", trace=9, run="r1"))  # a different run, must not join
+            event(1, sensor="http-route", capture="/buy", trace=7, data={"path": "/buy"}),
+            event(2, sensor="auth-role-check", capture="RoleA", trace=7, data={"role": "RoleA"}),
+            event(3, sensor="auth-role-check", capture="RoleB", trace=7, data={"role": "RoleB"}),
+            event(4, sensor="auth-role-check", capture="RoleB", trace=7, data={"role": "RoleB"}),
+            event(5, sensor="crypto-cipher", capture="DES", trace=7, data={"algorithm": "DES"}),
+            event(6, sensor="http-route", capture="/home", trace=8, data={"path": "/home"}),
+            event(7, sensor="auth-role-check", capture="RoleA", trace=8, data={"role": "RoleA"}),
+            event(8, sensor="auth-user", capture="alice", trace=8, data={"user": "alice", "roles": ["Role1", "Role2"]}),
+            event(9, sensor="http-route", capture="/other", trace=9, run="r2", data={"path": "/other"}),
+            event(10, sensor="auth-role-check", capture="RoleC", trace=9, run="r1", data={"role": "RoleC"}))  # a different run, must not join
         self.env.ingestor.poll()
 
     def report(self, name):
@@ -244,17 +253,29 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(all(r["chart"] == "grid" for r in self.app.reports()))
 
     def test_compare_is_routes_by_roles_with_x_where_detected(self):
-        self.assertEqual([("/buy", "RoleA", "X"), ("/buy", "RoleB", "X"), ("/home", "RoleA", "X")],
+        self.assertEqual([("/buy", "RoleA", "x"), ("/buy", "RoleB", "x"), ("/home", "RoleA", "x")],
                          self.rows("Access Control Matrix"))
 
-    def test_compare_uses_name_and_value_from_a_name_colon_value_capture(self):
-        self.assertEqual([("/home", "alice", "Role1")], self.rows("Test Coverage Matrix"))
+    def test_compare_fills_the_cells_from_the_value_field_and_a_list_gives_a_row_per_item(self):
+        self.assertEqual([("/home", "alice", "Role1"), ("/home", "alice", "Role2")], self.rows("Test Coverage Matrix"))
+
+    def test_a_boolean_is_true_or_false_in_a_report(self):
+        self.env.write(event(30, sensor="auth-role-check", capture="RoleD", trace=7, data={"role": "RoleD", "allowed": True}),
+                       event(31, sensor="auth-role-check", capture="RoleE", trace=7, data={"role": "RoleE", "allowed": False}))
+        self.env.ingestor.poll()
+        sql = store.report_sql("compare", "http-route.path", "auth-role-check.role", "auth-role-check.allowed")
+        self.assertIn(("/buy", "RoleD", "true"), [tuple(r) for r in self.app.sql(sql)["rows"]])
+        self.assertIn(("/buy", "RoleE", "false"), [tuple(r) for r in self.app.sql(sql)["rows"]])
+
+    def test_a_field_that_isnt_a_name_cannot_break_the_query(self):
+        with self.assertRaises(ValueError):
+            store.report_sql("table", "http-route.path", "a.b'); DROP TABLE events; --")
 
     def test_list_is_call_sites_with_what_they_captured(self):
-        self.assertEqual([("com.acme.Ticket.encrypt(Ticket.java:125)", "crypto-cipher", "DES")], self.rows("Encryption Usage"))
+        self.assertEqual([("com.acme.Ticket.encrypt(Ticket.java:125)", "crypto-cipher.algorithm", "DES")], self.rows("Encryption Usage"))
 
     def test_table_has_a_column_per_sensor(self):
-        self.assertEqual([("/buy", "crypto-cipher", "DES")], self.rows("Cipher Table"))
+        self.assertEqual([("/buy", "crypto-cipher.algorithm", "DES")], self.rows("Cipher Table"))
 
     def test_sensor_names_with_quotes_cannot_break_the_query(self):
         sql = store.report_sql("compare", "a'b", "c'); DROP TABLE events; --")
@@ -275,8 +296,8 @@ class ReportTests(unittest.TestCase):
         self.assertIn("Never ask the user for values", llm.SYSTEM)
         self.assertIn("grid", llm.TOOL["input_schema"]["properties"]["chart"]["enum"])
         prompt = llm.build_prompt("recreate it", "s", [], reports=self.app.report_summaries())
-        self.assertIn("Access Control Matrix (compare, rows http-route, cols auth-role-check)", prompt)
-        self.assertIn("Encryption Usage (list, rows none, cols crypto-cipher)", prompt)
+        self.assertIn("Access Control Matrix (compare, rows http-route.path, cols auth-role-check.role)", prompt)
+        self.assertIn("Encryption Usage (list, rows none, cols crypto-cipher.algorithm)", prompt)
 
     def test_report_definitions_sent_to_the_model_contain_no_event_data(self):
         sent = json.dumps(self.app.report_summaries())
@@ -568,8 +589,8 @@ sensors:
 - name: 'http-route'
   description: 'Identifies the route'
   methods: ['javax.servlet.Servlet.service']
-  captures: ['#P0.getRequestURI()']
-  matchers: ['!null']
+  captures: {path: '#P0.getRequestURI()'}
+  matchers: {path: ['!null']}
 - name: 'never-fires'
   description: 'No events will ever come'
   methods: ['a.b.C.method']
@@ -631,8 +652,8 @@ class JotsViewTests(unittest.TestCase):
         routes = self.by_name["http-route"]
         self.assertEqual(("sensor", "observe"), (routes["kind"], routes["mode"]))
         self.assertEqual(["javax.servlet.Servlet.service"], routes["methods"])
-        self.assertEqual(["#P0.getRequestURI()"], routes["captures"])
-        self.assertEqual(["!null"], routes["matchers"])
+        self.assertEqual({"path": "#P0.getRequestURI()"}, routes["captures"])
+        self.assertEqual({"path": ["!null"]}, routes["matchers"])
         self.assertIn("name: 'http-route'", routes["definition"], "the sensor as written in its file")
         self.assertEqual(["Routes by users"], [r["name"] for r in self.view["reports"]])
 
@@ -1408,14 +1429,17 @@ sensors:
   methods:
   - "a.b.C.m"
   captures:
-  - "#P0"
+    value: "#P0"
 
 # second
 - name: two
   methods:
   - a.b.C.n
+  captures:
+    value: "#P0"
   matchers:
-  - '!x'   # keep
+    value:
+    - '!x'   # keep
 """
 
 
@@ -1441,7 +1465,7 @@ class SaveJotTests(unittest.TestCase):
         self.assertIn("# trailing comment", one, "the sensor is shown as it is written, comments too")
         self.assertEqual({"saved": "bundle.jot", "name": "one", "reports": [], "notes": []}, self.app.save_jot("one", one, one.replace("First", "Changed") + "\nenabled: false"))
         saved = self.read()
-        self.assertEqual(BUNDLE.replace('"First"', '"Changed"').replace('  - "#P0"\n', '  - "#P0"\n  enabled: false\n'), saved)
+        self.assertEqual(BUNDLE.replace('"First"', '"Changed"').replace('    value: "#P0"\n', '    value: "#P0"\n  enabled: false\n', 1), saved)
         self.assertIn("# keep", saved)
         self.assertIn("Changed", self.shown("one"))
         self.assertEqual("false", next(s for s in store.run_query(self.env.db, "SELECT name, enabled FROM sensors")["rows"] if s[0] == "one")[1])
@@ -1554,11 +1578,11 @@ class CveStatusViewTests(unittest.TestCase):
 
 
 GOOD_DRAFT = """name: crypto-weak-key
-description: A key shorter than 2048 bits was generated
+description: Identifies a key shorter than 2048 bits being generated
 methods:
 - java.security.KeyPairGenerator.initialize
 captures:
-- '#P0'
+  value: '#P0'
 block-when: '#P0 < 2048'
 """
 
@@ -1573,8 +1597,9 @@ methods:
   - static java.nio.file.Files.newOutputStream
   - static java.nio.file.Files.write
 captures:
-  - '#P0'
+  path: '#P0'
 matchers:
+  path:
   - '(?i)\\.log(\\.\\d+)?$'
 """
 
@@ -1591,6 +1616,15 @@ class JotPromptTests(unittest.TestCase):
         self.assertIn("with no static or other modifiers", said)
         self.assertEqual(3, sum("isn't a method name" in p for p in problems), "each of the three static methods")
 
+    def test_a_draft_must_say_what_it_identifies(self):
+        for description, fine in (("Identifies starting a native process", True), ("Records each process started", False),
+                                  ("A web request started a process", False), ("", False)):
+            text = "name: x-y\ndescription: %s\nmethods:\n- a.b.C.m\ncaptures:\n  value: '#P0'\n" % description
+            said = " ".join(store.check_draft(text))
+            self.assertEqual(fine, "starts with" not in said, description)
+        self.assertNotIn("Records", llm.JOT_SYSTEM.split("Examples that were run")[1], "no example teaches it")
+        self.assertIn("Never start with Records or Detects", llm.JOT_SYSTEM)
+
     def test_the_prompt_never_teaches_static_and_says_not_to_use_it(self):
         text = llm.JOT_SYSTEM
         self.assertNotRegex(text, r"(?m)^\s*-\s+static ", "no example has it")
@@ -1604,7 +1638,7 @@ class JotPromptTests(unittest.TestCase):
         self.assertIs(False, yaml.safe_load(found[2])["protect"], "the example rule is staged, like every drafted rule")
 
     def test_the_log_example_matches_what_the_agent_records_for_every_way_of_writing_a_file(self):
-        matcher = yaml.safe_load(self.examples()[0])["matchers"][0]
+        matcher = yaml.safe_load(self.examples()[0])["matchers"]["path"][0]
         for captured in ("/var/log/app.log", "/var/log/app.LOG", "logs/app.log.1", "C:\\logs\\app.log.12"):
             self.assertTrue(re.search(matcher, captured, flags=0) or re.search(matcher.replace("(?i)", ""), captured, re.I), captured)
         for captured in ("/var/log/app.txt", "/var/data/blog.html", "/var/log/app.log.bak", "{class java.io.File:/var/log/app.log}"):
@@ -1619,7 +1653,7 @@ class DraftJotTests(unittest.TestCase):
     def setUp(self):
         self.env = Env()
         with open(os.path.join(self.env.dir, "a.jot"), "w") as f:
-            f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n  - '#P0'\n")
+            f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n    value: '#P0'\n")
         store.load_sensors(self.env.ingestor.db, [self.env.dir])
         self.env.write(event(1, method_name="javax.crypto.Cipher.getInstance"), event(2, method_name="javax.crypto.Cipher.getInstance"))
         self.env.ingestor.poll()
@@ -1646,13 +1680,13 @@ class DraftJotTests(unittest.TestCase):
         self.assertIsNone(call["problems"])
 
     def test_the_hooks_that_the_log_has_seen_are_counted(self):
-        draft = "name: crypto-cipher-use\ndescription: Cipher use\nmethods:\n- javax.crypto.Cipher.getInstance\n- javax.crypto.Cipher.other\ncaptures:\n- '#P0'\n"
+        draft = "name: crypto-cipher-use\ndescription: Cipher use\nmethods:\n- javax.crypto.Cipher.getInstance\n- javax.crypto.Cipher.other\ncaptures:\n  value: '#P0'\n"
         out = self.app({"yaml": draft, "explanation": "x"}).draft_jot("ciphers")
         self.assertEqual([("javax.crypto.Cipher.getInstance", 2), ("javax.crypto.Cipher.other", 0)], [(h["method"], h["seen"]) for h in out["hooks"]])
         self.assertFalse(out["rule"])
 
     def test_a_draft_with_problems_goes_back_to_the_model_with_them_and_the_repair_is_used(self):
-        bad = "name: crypto-cipher\nmethods:\n- a.b.C.m\ncaptures:\n- '#P0 + T(java.lang.Runtime).getRuntime()'\n"
+        bad = "name: crypto-cipher\nmethods:\n- a.b.C.m\ncaptures:\n  value: '#P0 + T(java.lang.Runtime).getRuntime()'\n"
         app = self.app({"yaml": bad, "explanation": "first"}, {"yaml": GOOD_DRAFT, "explanation": "second"})
         out = app.draft_jot("something")
         self.assertEqual([], out["problems"])
@@ -1782,7 +1816,7 @@ class DraftUiTests(unittest.TestCase):
         env = Env()
         path = os.path.join(env.dir, "a.jot")
         with open(path, "w") as f:
-            f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n  - '#P0'\n")
+            f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n    value: '#P0'\n")
         store.load_sensors(env.ingestor.db, [env.dir])
         app = server.App(env.db, env.ingestor, jot_paths=[env.dir], editable=True,
                          draft=lambda *a: {"yaml": GOOD_DRAFT, "explanation": "Watches key generation."})
@@ -1843,7 +1877,8 @@ class JotEventsLinkTests(unittest.TestCase):
         out.rows = document.querySelectorAll("#results tr").length - 1;
         out.clickable = document.querySelectorAll("#results tr.clickable").length;
         out.columns = [...document.querySelectorAll("#results th")].map((th) => th.textContent);
-        document.querySelector("#results tr.clickable").click();
+        const withData = [...document.querySelectorAll("#results tr.clickable")].find((tr) => tr.textContent.indexOf("bits=128") >= 0);
+        withData.click();
         await until(() => location.hash.indexOf("#event/") === 0);
         await until(() => { const d = document.getElementById("eventDrawer"); return d && !d.hidden && d.innerText.indexOf("crypto-cipher") >= 0; });
         out.hash = location.hash;
@@ -1857,9 +1892,9 @@ class JotEventsLinkTests(unittest.TestCase):
     def test_show_its_events_lists_events_that_open_the_event_drawer_when_clicked(self):
         env = Env()
         with open(os.path.join(env.dir, "a.jot"), "w") as f:
-            f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n  - '#P0'\n")
+            f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n    value: '#P0'\n")
         store.load_sensors(env.ingestor.db, [env.dir])
-        env.write(event(1, capture="AES"), event(2, capture="DES"))
+        env.write(event(1, capture="algorithm=AES, bits=128", data={"algorithm": "AES", "bits": 128, "modes": ["CBC", "GCM"]}), event(2, capture="DES"))
         env.ingestor.poll()
         app = server.App(env.db, env.ingestor, jot_paths=[env.dir])
         script = self.SCRIPT
@@ -1890,6 +1925,8 @@ class JotEventsLinkTests(unittest.TestCase):
         self.assertNotIn("pk", out["columns"], "the id is used and not shown")
         self.assertTrue(out["hash"].startswith("#event/"))
         self.assertIn("crypto-cipher", out["drawer"])
+        for shown in ("algorithm", "AES", "bits", "128", "modes", "CBC", "GCM"):
+            self.assertIn(shown, out["drawer"], "the drawer shows each captured field by name")
 
 
 class AlwaysCurrentTests(unittest.TestCase):
@@ -1949,7 +1986,7 @@ class SaveFlowTests(unittest.TestCase):
         env = Env()
         path = os.path.join(env.dir, "a.jot")
         with open(path, "w") as f:
-            f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n  - '#P0'\n")
+            f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n    value: '#P0'\n")
         store.load_sensors(env.ingestor.db, [env.dir])
         app = server.App(env.db, env.ingestor, jot_paths=[env.dir], editable=True)
         script = "(async () => { %s const out = {}; try { %s } catch (e) { out.error = String(e); } " \
@@ -2039,7 +2076,7 @@ class SaveFlowTests(unittest.TestCase):
         env = Env()
         path = os.path.join(env.dir, "a.jot")
         with open(path, "w") as f:
-            f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n  - '#P0'\n")
+            f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n    value: '#P0'\n")
         store.load_sensors(env.ingestor.db, [env.dir])
         app = server.App(env.db, env.ingestor, jot_paths=[env.dir], editable=True)
         script = self.SCRIPT
@@ -2110,7 +2147,7 @@ class CheckJotTests(unittest.TestCase):
     ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 
     def test_a_sensor_on_its_own_and_a_whole_file_are_both_fine(self):
-        one = "name: http-route\nmethods:\n- javax.servlet.Servlet.service\ncaptures:\n- '#P0'\n"
+        one = "name: http-route\nmethods:\n- javax.servlet.Servlet.service\ncaptures:\n  value: '#P0'\n"
         self.assertEqual([], store.check_jot_text(one))
         self.assertEqual([], store.check_jot_text("sensors:\n- " + one.replace("\n", "\n  ").rstrip(" ")))
 
@@ -2131,17 +2168,27 @@ class CheckJotTests(unittest.TestCase):
         self.assertGreater(found, 20)
 
     def test_a_missing_quote_that_changes_the_meaning_is_found(self):
-        text = ("name: ok\nmethods:\n- a.b.C.m\ncaptures:\n- #P0\n- !null\n- 123\n- yes\nmatchers:\n- null\n"
-                "- '!null'\n- \"#P0\"\ndescription: 5\n")
+        text = ("name: ok\nmethods:\n- a.b.C.m\ncaptures:\n  a: #P0\n  b: !null\n  c: 123\n  d: yes\nmatchers:\n  a:\n  - null\n"
+                "  - '!null'\n  - \"#P0\"\ndescription: 5\n")
         problems = store.check_jot_text(text)
-        self.assertEqual({5, 6, 7, 8, 10, 13}, {p["line"] for p in problems}, "the quoted ones on lines 11 and 12 are fine")
+        self.assertEqual({5, 6, 7, 8, 11, 14}, {p["line"] for p in problems}, "the quoted ones on lines 12 and 13 are fine")
         self.assertTrue(all("quotes" in p["message"] for p in problems))
         with self.assertRaises(store.SaveError):
             store.save_sensor([], "ok", text, text)
 
+    def test_captures_and_matchers_are_fields(self):
+        base = "name: r\nmethods:\n- a.b.C.m\n"
+        self.assertEqual([], store.check_jot_text(base + "captures:\n  path: '#P0'\n  size: '#P1'\nmatchers:\n  path:\n  - '!null'\n"))
+        said = lambda text: " | ".join(p["message"] for p in store.check_jot_text(base + text))
+        self.assertIn("captures must be names and expressions", said("captures:\n- '#P0'\n"))
+        self.assertIn("Path should be a lower case name", said("captures:\n  Path: '#P0'\n"))
+        self.assertIn("name is not a captured field, the fields are path", said("captures:\n  path: '#P0'\nmatchers:\n  name:\n  - x\n"))
+        self.assertIn("matchers must be a captured field", said("captures:\n  path: '#P0'\nmatchers:\n- x\n"))
+        self.assertIn("isn't a valid pattern", said("captures:\n  path: '#P0'\nmatchers:\n  path:\n  - '(open'\n"))
+
     def test_block_when_is_a_rule_whether_true_or_an_expression(self):
         for text in ("name: r\nmethods:\n- a.b.C.m\nblock-when: true\n",
-                     "name: r\nmethods:\n- a.b.C.m\ncaptures:\n- '#P0'\nblock-when: '#P0 < 2048'\nprotect: false\n"):
+                     "name: r\nmethods:\n- a.b.C.m\ncaptures:\n  value: '#P0'\nblock-when: '#P0 < 2048'\nprotect: false\n"):
             self.assertEqual([], store.check_jot_text(text), text)
         for text, line in (("name: r\nmethods:\n- a.b.C.m\nblock-when:\n", 4), ("name: r\nmethods:\n- a.b.C.m\nblock-when: 5\n", 4),
                            ("name: r\nmethods:\n- a.b.C.m\nprotect: false\n", 4)):
@@ -2163,8 +2210,8 @@ class CheckJotTests(unittest.TestCase):
         self.assertEqual("sensor", rule["kind"], "it only observes, as the agent will treat it")
 
     def test_problems_are_found_on_their_lines(self):
-        problems = store.check_jot_text("name: Bad_Name\nmethods:\n- foo\nmatchers:\n- '(open'\nenabled: maybe\ncolour: red\n")
-        self.assertEqual({1, 3, 5, 6, 7}, {p["line"] for p in problems})
+        problems = store.check_jot_text("name: Bad_Name\nmethods:\n- foo\nmatchers:\n  value:\n  - '(open'\nenabled: maybe\ncolour: red\n")
+        self.assertEqual({1, 3, 6, 7, 8}, {p["line"] for p in problems})
         self.assertEqual("is empty", store.check_jot_text("")[0]["message"])
         self.assertIn(store.check_jot_text("name: x\nmethods: [a.b.C.m\n- y\n")[0]["line"], (3, 4), "a YAML mistake is marked where it is found")
 

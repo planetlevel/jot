@@ -79,10 +79,11 @@ class App:
         db = sqlite3.connect(self.db_path)
         try:
             out = []
-            for name, description, methods, scopes, blocks in db.execute(
-                    "SELECT name, description, methods, scopes, blocks FROM sensors ORDER BY name"):
+            for name, description, methods, scopes, blocks, captures in db.execute(
+                    "SELECT name, description, methods, scopes, blocks, captures FROM sensors ORDER BY name"):
                 out.append({"name": name, "description": description, "methods": json.loads(methods or "[]"),
-                            "scopes": json.loads(scopes or "[]"), "blocks": blocks})
+                            "scopes": json.loads(scopes or "[]"), "blocks": blocks,
+                            "fields": list(json.loads(captures or "{}"))})
             return out
         finally:
             db.close()
@@ -185,10 +186,10 @@ class App:
         db = sqlite3.connect(self.db_path)
         try:
             out = []
-            for name, rtype, rows, cols in db.execute("SELECT name, type, rows, cols FROM reports ORDER BY rowid"):
+            for name, rtype, rows, cols, value in db.execute("SELECT name, type, rows, cols, value FROM reports ORDER BY rowid"):
                 try:
                     out.append({"name": name, "type": rtype, "title": name, "chart": "grid",
-                                "sql": store.report_sql(rtype, rows, cols)})
+                                "sql": store.report_sql(rtype, rows, cols, value)})
                 except ValueError:
                     continue
             return out
@@ -206,7 +207,7 @@ class App:
                                         matchers, excludes, definition, enabled FROM sensors ORDER BY rowid""").fetchall()
             issues = [{"level": l, "text": t, "file": f} for l, t, f in db.execute(
                 "SELECT level, text, source FROM jot_issues ORDER BY rowid")]
-            report_rows = db.execute("SELECT name, type, rows, cols, source FROM reports ORDER BY rowid").fetchall()
+            report_rows = db.execute("SELECT name, type, rows, cols, value, source FROM reports ORDER BY rowid").fetchall()
         finally:
             db.close()
 
@@ -230,7 +231,7 @@ class App:
             sensors.append({
                 "name": name, "kind": "rule" if rule else "sensor", "mode": mode, "description": description,
                 "methods": json.loads(methods or "[]"), "scopes": json.loads(scopes or "[]"),
-                "captures": json.loads(captures or "[]"), "matchers": json.loads(matchers or "[]"),
+                "captures": json.loads(captures or "{}"), "matchers": json.loads(matchers or "{}"),
                 "excludes": json.loads(excludes or "[]"), "block_when": blocks, "file": source,
                 "definition": definition, "jot_enabled": jot_enabled != "false",
                 **stats.get(name, {"events": 0, "last_ts": None, "last_hour": 0, "blocked": 0, "monitored": 0})})
@@ -240,8 +241,8 @@ class App:
             issues.append({"level": "warning", "file": None, "text": "the agent left something out, " + text})
 
         sql_by_name = {r["name"]: r["sql"] for r in self.reports()}
-        reports = [{"name": n, "type": t, "rows": r, "cols": c, "file": f, "sql": sql_by_name.get(n)}
-                   for n, t, r, c, f in report_rows]
+        reports = [{"name": n, "type": t, "rows": r, "cols": c, "value": v, "file": f, "sql": sql_by_name.get(n)}
+                   for n, t, r, c, v, f in report_rows]
         files = {}
         for x in sensors:
             files.setdefault(x["file"], {"sensors": 0, "rules": 0, "reports": 0})["rules" if x["kind"] == "rule" else "sensors"] += 1
@@ -272,6 +273,7 @@ class App:
         stack = json.loads(e["stack"]) if e.get("stack") else []
         prefixes = self.ingestor.app_prefixes
         e["stack"] = [{"frame": f, "kind": store.frame_kind(f, prefixes)} for f in stack]
+        e["data"] = json.loads(e["data"]) if e.get("data") else None
         e["related"] = []
         if e.get("trace") is not None:
             e["related"] = store.run_query(self.db_path, """
@@ -409,8 +411,8 @@ class App:
         """Report definitions for the model. Names and sensor names only, no data."""
         db = sqlite3.connect(self.db_path)
         try:
-            return [{"name": n, "type": t, "rows_sensor": r, "cols": c}
-                    for n, t, r, c in db.execute("SELECT name, type, rows, cols FROM reports ORDER BY rowid")]
+            return [{"name": n, "type": t, "rows_sensor": r, "cols": c, "value": v}
+                    for n, t, r, c, v in db.execute("SELECT name, type, rows, cols, value FROM reports ORDER BY rowid")]
         finally:
             db.close()
 

@@ -97,7 +97,7 @@ class AnnotationTest {
 		Sensor s = new Sensor().capture( "#ANNOTATION.roles" );
 		Map<String, Object> annotation = new MethodLocator( "@" + Secured.class.getName() ).annotationValues( Service.class, "read", READ );
 		List<Object> out = s.execute( "test", "a.B.read", null, new Object[0], null, new Exception().getStackTrace(), annotation );
-		Assertions.assertEquals( Arrays.asList( "admin", "auditor" ), out );
+		Assertions.assertEquals( List.of( "admin, auditor" ), out, "one call is one result, holding the whole list" );
 	}
 
 	@Test

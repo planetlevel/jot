@@ -48,20 +48,22 @@ Grids (crosstabs)
   this order, a row label, a column label and optionally a value. Use SELECT DISTINCT. Set chart to "grid".
   The dashboard builds the columns from the values it finds. A cell shows the value, or X when there is no
   value column. Example for routes by role, relating events from the same request
-    SELECT DISTINCT r.capture AS route, trim(substr(c.capture, 1, instr(c.capture, ':') - 1)) AS role,
-           trim(substr(c.capture, instr(c.capture, ':') + 1)) AS value
+    SELECT DISTINCT json_extract(r.data, '$.path') AS route, json_extract(c.data, '$.role') AS role,
+           json_extract(c.data, '$.allowed') AS value
     FROM events r JOIN events c ON r.run = c.run AND r.trace = c.trace
     WHERE r.sensor = 'http-route' AND c.sensor = 'auth-role-check' ORDER BY 1, 2
-  (auth-role-check captures the role and whether the user has it, like ADMIN: true)
+  (a sensor captures named fields, and the events table keeps them in data as JSON. Read one with
+  json_extract(data, '$.field'). A field that is a list is a JSON array, use json_each(data, '$.field') for one row per item.
+  The sensors list names each sensor's fields. capture is the same values as one line of text)
 - The reports section lists the reports the user defined in their .jot files, which they may ask you to
   recreate or adapt. The types are
     list     rows are the code that called the instrumented method (call_site), one column for the sensor
              in cols, cells hold what it captured
-    compare  rows are the captures of the rows sensor, columns come from the captures of the cols sensor,
-             related when they share a run and trace. A capture written name:value gives the column
-             name and the cell value, and a capture without a colon gives just the name with an X
-    table    rows are the captures of the rows sensor, one column per sensor in cols, cells hold what
-             that sensor captured, related by run and trace
+    compare  rows are the values of the rows field, columns are the values of the cols field, and cells hold
+             the value field, or an x, related when they share a run and trace
+    table    rows are the values of the rows field, one column per field in cols, cells hold that field,
+             related by run and trace
+  Rows, cols and value are written sensor.field, like http-route.path.
 
 Always answer by calling the report tool.
 - title is a short heading for the result.
@@ -125,6 +127,8 @@ def build_prompt(question, schema, sensors, history=(), error=None, reports=()):
                 line += " (watches %s)" % ", ".join(s["methods"])
             if s.get("scopes"):
                 line += " (only inside %s)" % ", ".join(s["scopes"])
+            if s.get("fields"):
+                line += " (fields %s)" % ", ".join(s["fields"])
             if s.get("blocks"):
                 line += " (a rule, blocks every call)" if s["blocks"] == "true" else " (a rule, blocks when: %s)" % s["blocks"]
             lines.append(line)
@@ -133,7 +137,8 @@ def build_prompt(question, schema, sensors, history=(), error=None, reports=()):
     if reports:
         lines += ["", "Reports defined in the .jot files"]
         for r in reports:
-            lines.append("- %s (%s, rows %s, cols %s)" % (r["name"], r["type"], r.get("rows_sensor") or "none", r.get("cols")))
+            lines.append("- %s (%s, rows %s, cols %s%s)" % (r["name"], r["type"], r.get("rows_sensor") or "none", r.get("cols"),
+                                                          ", value %s" % r["value"] if r.get("value") else ""))
     if history:
         lines += ["", "Earlier in this conversation, oldest first"]
         for h in history[-5:]:
@@ -200,8 +205,10 @@ The YAML is one mapping, with no sensors: list around it. These are all the keys
 
   name          required. Lower case words joined with -, domain first, like crypto-cipher, http-cookie-set, sql-statement,
                 file-path, net-url, native-process. A rule is named for what it guards, a sensor for what it records.
-  description   what was found, in words that are as true when the call is blocked as when it is only reported, like
-                "A web request started a process". It is the message of a rule.
+  description   what the JOT identifies, written to start with Identifies, like "Identifies starting a native process" or
+                "Identifies a cookie being set and whether it is Secure and HttpOnly". Never start with Records or Detects. It is
+                also the message of a rule, so it says what was found, in words that are as true when the call is blocked as when it
+                is only reported.
   methods       required. The methods to watch, each written package.Class.method, with <init> for a constructor, like
                 java.io.FileOutputStream.<init> or java.security.MessageDigest.getInstance. That is the whole syntax. Never write
                 static, public, a parameter list or a return type, they are not part of the name, and static and instance methods
@@ -213,23 +220,27 @@ The YAML is one mapping, with no sensors: list around it. These are all the keys
                 around one library method, like a CVE rule inside the vulnerable method, and scopes: [] to apply everywhere. A JOT
                 with scopes also reports once that its scope was active.
   excludes      optional. Classes to ignore.
-  captures      what to record, as expressions in the Spring expression language over these variables.
+  captures      what to record, as a mapping of a field name to an expression in the Spring expression language. A field name is
+                lower case words joined with _, like path or remote_ip. The expressions use these variables.
                 #P0 #P1 and so on are the arguments, #ARGS all of them, #OBJ the object the method is called on, #RET the
-                return value, #CALLER the calling method, #STACK the stack. For example #P0, #OBJ.getAlgorithm(),
-                '#P0 + ": " + #RET' to record a name and a result together, or '#OBJ.getHost() + ": " + #OBJ.getProtocol()'.
+                return value, #CALLER the calling method, #STACK the stack. Record each thing as its own field, a name and a
+                result as name and value, a host and a port as host and port, and add facts the method can tell, like
+                exists: "#P0.exists()". A number or a boolean stays one, and a list becomes a list of its items.
                 #RET only exists after the method returns, so a rule should not use it, it would block too late.
-                A capture of the form name: value shows as a column and a cell in the reports.
                 Never capture secrets. Record lengths, names and algorithms, not keys, passwords or tokens. Never use T( or new
                 in an expression.
-  matchers      optional regular expressions that the captured text is searched with. It is a search and not a full match, so write
-                ^ and $ only to anchor to the captured text. A leading ! excludes. (?i) makes it case insensitive.
+  matchers      optional. A mapping of a captured field to a list of regular expressions that the text of that field is searched
+                with. It is a search and not a full match, so write ^ and $ only to anchor to the text. A leading ! excludes.
+                (?i) makes it case insensitive. Every field that has matchers has to pass for the call to be recorded, and for a
+                list field the items that match are kept.
   block-when    makes it a rule. true blocks every call that gets that far, or an expression over the same variables that is
                 true when the call is bad, like '#P0 < 2048'. Without it the JOT only records.
   protect       false for a rule that only reports until the person turns it on. Always write protect: false in a new rule.
   enabled, debug   true or false, almost never needed.
 
 What a capture looks like to a matcher
-- A String, number, boolean, character, enum, File, Path, URI or URL is recorded as its plain text, a File as its path.
+- A String, number, boolean, character, enum, File, Path, URI or URL is recorded as its plain text, a File as its path, and
+  a matcher looks at that text.
 - Any other object is recorded as {class the.Name:its text}, so a matcher anchored with $ would not match it. Call a method for
   what you want instead, like #P0.getName(), or #P0.toString().
 - A method with overloads can take different types in the same position, like File, Path or String as #P0. Write the capture so
@@ -244,37 +255,41 @@ Choosing the methods
 - Do not repeat a name that is already in use.
 
 Writing the YAML
-- Quote any value that starts with #, !, *, [, {, a quote or a dash, or that contains a colon followed by a space. A capture
-  that starts with # always needs quotes, and so does a matcher that starts with !.
-- Use single quotes when the value has double quotes inside, and in a regular expression so that a backslash stays a backslash.
-- A rule needs a description and a block-when. A sensor needs at least one capture.
+- Write a value plain when you can. Quote it when it starts with #, !, *, [, {, a quote or a dash, or contains a colon followed
+  by a space. A capture that starts with # always needs quotes, and so does a matcher that starts with !.
+- Quote with double quotes, like "#P0" and "!null". Use single quotes only when the value itself contains a double quote or a
+  backslash, like '#P0 == 1 ? "encrypt" : "other"' and '!\.class', because in single quotes a backslash stays a backslash.
+- A rule needs a description and a block-when. A sensor needs at least one capture, written as field: expression.
 
 Examples that were run against a real application and did what they say
 
 name: file-log-write
-description: Code opened a log file for writing
+description: Identifies a log file being opened for writing
 methods:
 - java.io.FileOutputStream.<init>
 - java.nio.file.Files.newOutputStream
 captures:
-- '#P0.toString()'
+  path: "#P0.toString()"
 matchers:
-- '(?i)\.log(\.\d+)?$'
+  path:
+  - (?i)\.log(\.\d+)?$
 
 name: http-cookie-set
-description: Records each cookie the application sets and whether it is Secure and HttpOnly
+description: Identifies a cookie being set and whether it is Secure and HttpOnly
 methods:
 - javax.servlet.http.HttpServletResponse.addCookie
 - jakarta.servlet.http.HttpServletResponse.addCookie
 captures:
-- '#P0.getName() + ": secure=" + #P0.getSecure() + " httpOnly=" + #P0.isHttpOnly()'
+  name: "#P0.getName()"
+  secure: "#P0.getSecure()"
+  http_only: "#P0.isHttpOnly()"
 
 name: native-process
-description: A web request started a process
+description: Identifies starting a native process
 methods:
 - java.lang.ProcessBuilder.<init>
 captures:
-- '#ARGS'
+  command: "#ARGS"
 block-when: true
 protect: false
 

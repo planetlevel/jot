@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Takes the quotes off values in .jot files that don't need them, leaving everything else as written, comments and
-layout included. A value keeps its quotes if written plain it would read as something else, like "#P0", "!null", "yes" or
-"a: b". Every file is parsed before and after and left alone if the two aren't the same.
+r"""Writes the values of .jot files the one way they are written. A value is plain when it can be, which is when it reads back
+as the same text. Otherwise it is in double quotes, unless it contains a double quote or a backslash, and then it is in single
+quotes, where both are just themselves, so a regular expression keeps its backslashes and an expression keeps its strings.
+That makes "#P0" and "!null" double quoted, '!\.class' and '#P0 + ": " + #RET' single quoted, and the rest, like (?i)\.log$, plain.
+Everything else is left as written, comments and layout included. Every file is parsed before and after and left alone if the
+two aren't the same.
 
     python3 tools/unquote_jot.py cves/*.jot demo/ticketbook/jots/*.jot
 
-needs_quotes is also what the CVE generator uses, so regenerated files come out the same way.
+needs_quotes and quote are also what the CVE generator uses, so regenerated files come out the same way.
 """
 import re
 import sys
@@ -27,6 +30,15 @@ def needs_quotes(value):
         return True
 
 
+def quote(value):
+    """The value as it is written in a .jot file, plain if it can be and otherwise quoted by the convention in the top of this file."""
+    if not needs_quotes(value):
+        return value
+    if '"' not in value and "\\" not in value and value.isprintable():
+        return '"' + value + '"'
+    return "'" + value.replace("'", "''") + "'"
+
+
 def _scalars(node, in_flow=False):
     """The quoted scalars of a document that are written in block style, which can be written plain."""
     if isinstance(node, yaml.ScalarNode):
@@ -42,7 +54,8 @@ def _scalars(node, in_flow=False):
 
 
 def unquote(text):
-    """The text with unneeded quotes removed, and how many were. The text itself if anything would read differently."""
+    """The text with every quoted value written by the convention, and how many were changed. The text itself if anything would
+    read differently."""
     try:
         root = yaml.compose(text)
         before = yaml.safe_load(text)
@@ -53,9 +66,11 @@ def unquote(text):
     edits = []
     for node in _scalars(root):
         raw = text[node.start_mark.index:node.end_mark.index]
-        if "\n" in raw or needs_quotes(node.value):
+        if "\n" in raw or "\n" in node.value or "\t" in node.value:
             continue
-        edits.append((node.start_mark.index, node.end_mark.index, node.value))
+        written = quote(node.value)
+        if written != raw:
+            edits.append((node.start_mark.index, node.end_mark.index, written))
     result = text
     for start, end, value in sorted(edits, reverse=True):
         result = result[:start] + value + result[end:]

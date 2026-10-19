@@ -102,7 +102,7 @@ class ConfigReaderTest {
 			"  methods:",
 			"  - java.lang.String.isEmpty",
 			"  captures:",
-			"  - '#P0'",
+			"    size: '#P0'",
 			"  block-when: '#P0 < 2048'",
 			"- name: bw-sensor",
 			"  methods:",
@@ -163,7 +163,25 @@ class ConfigReaderTest {
 			"  methods:",
 			"  - java.lang.String.concat",
 			"  captures:",
-			"  -",
+			"    path:",
+			"- name: vd-list",
+			"  methods:",
+			"  - java.lang.String.codePointCount",
+			"  captures:",
+			"  - '#P0'",
+			"- name: vd-field",
+			"  methods:",
+			"  - java.lang.String.codePointBefore",
+			"  captures:",
+			"    Path: '#P0'",
+			"- name: vd-nofield",
+			"  methods:",
+			"  - java.lang.String.offsetByCodePoints",
+			"  captures:",
+			"    path: '#P0'",
+			"  matchers:",
+			"    name:",
+			"    - x",
 			"- name: vd-protect",
 			"  methods:",
 			"  - java.lang.String.charAt",
@@ -177,8 +195,11 @@ class ConfigReaderTest {
 			"- name: vd-badmatcher",
 			"  methods:",
 			"  - java.lang.String.indexOf",
+			"  captures:",
+			"    value: '#P0'",
 			"  matchers:",
-			"  - '(open'",
+			"    value:",
+			"    - '(open'",
 			"- name: vd-enabled",
 			"  methods:",
 			"  - java.lang.String.lastIndexOf",
@@ -198,20 +219,20 @@ class ConfigReaderTest {
 			"  methods:",
 			"  - '@a.b.Annotation'",
 			"  captures:",
-			"  - '#CALLER'",
+			"    caller: '#CALLER'",
 			"- name: Vd_Name",
 			"  methods:",
 			"  - java.lang.String.intern",
 			"" );
 		java.util.List<String> said = loadAndReport( dir, "wrong.jot", text, java.util.List.of( "vd-fine", "vd-old", "vd-typo", "vd-empty",
-			"vd-five", "vd-never", "vd-comment", "vd-protect", "vd-nomethods", "vd-badexpr", "vd-badmatcher", "vd-enabled", "Vd_Name", "vd-static", "vd-params", "vd-scope-annotation", "vd-annotation-ok" ) );
+			"vd-five", "vd-never", "vd-comment", "vd-list", "vd-field", "vd-nofield", "vd-protect", "vd-nomethods", "vd-badexpr", "vd-badmatcher", "vd-enabled", "Vd_Name", "vd-static", "vd-params", "vd-scope-annotation", "vd-annotation-ok" ) );
 		String all = allOf( said );
 		Assertions.assertTrue( all.contains( "loaded vd-annotation-ok" ), "an annotation is a fine way to name methods" );
 		Assertions.assertTrue( all.contains( "vd-static methods item 1, static java.nio.file.Files.write, isn't a method name, write package.Class.method with no static" ), all );
 		Assertions.assertTrue( all.contains( "vd-params methods item 1" ), all );
 		Assertions.assertTrue( all.contains( "vd-scope-annotation scopes item 1, @a.b.Annotation, isn't a method name" ), "a scope can't be an annotation\n" + all );
 		Assertions.assertTrue( all.contains( "loaded vd-fine" ), "what is right in the same file still loads" );
-		for ( String bad : java.util.List.of( "vd-old", "vd-typo", "vd-empty", "vd-five", "vd-never", "vd-comment", "vd-protect",
+		for ( String bad : java.util.List.of( "vd-old", "vd-typo", "vd-empty", "vd-five", "vd-never", "vd-comment", "vd-list", "vd-field", "vd-nofield", "vd-protect",
 				"vd-nomethods", "vd-badexpr", "vd-badmatcher", "vd-enabled", "Vd_Name", "vd-static", "vd-params", "vd-scope-annotation" ) ) {
 			Assertions.assertTrue( all.contains( "left out " + bad ), bad + " should have been left out\n" + all );
 		}
@@ -220,11 +241,14 @@ class ConfigReaderTest {
 		Assertions.assertTrue( all.contains( "vd-empty block-when must be true, or an expression" ), all );
 		Assertions.assertTrue( all.contains( "vd-five block-when must be true, or an expression" ), all );
 		Assertions.assertTrue( all.contains( "vd-never block-when: false never blocks" ), all );
-		Assertions.assertTrue( all.contains( "vd-comment item 1 of captures is empty, a # starts a comment" ), all );
+		Assertions.assertTrue( all.contains( "vd-comment capture path is empty, a # starts a comment" ), all );
+		Assertions.assertTrue( all.contains( "vd-list captures must be names and expressions" ), all );
+		Assertions.assertTrue( all.contains( "vd-field capture Path should be a lower case name" ), all );
+		Assertions.assertTrue( all.contains( "vd-nofield matchers name is not a captured field, the fields are path" ), all );
 		Assertions.assertTrue( all.contains( "vd-protect protect only matters for a rule" ), all );
 		Assertions.assertTrue( all.contains( "vd-nomethods needs methods" ), all );
 		Assertions.assertTrue( all.contains( "vd-badexpr block-when is not an expression" ), all );
-		Assertions.assertTrue( all.contains( "vd-badmatcher matchers item 1 is not a pattern" ), all );
+		Assertions.assertTrue( all.contains( "vd-badmatcher matchers value item 1 is not a pattern" ), all );
 		Assertions.assertTrue( all.contains( "vd-enabled enabled must be true or false" ), all );
 		Assertions.assertTrue( all.contains( "Vd_Name the name should be lower case words" ), all );
 	}

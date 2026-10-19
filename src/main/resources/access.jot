@@ -4,31 +4,34 @@
 sensors:
 
 - name: http-route
-  description: Identifies the route for this HTTP request
+  description: Identifies the route a request came in at
   methods:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#P0.getRequestURI()"
+    path: "#P0.getRequestURI()"
 
 - name: auth-user
-  description: Identifies user names
+  description: Identifies the user making a request, or Guest when no one is signed in
   methods:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#P0.getRemoteUser() ?: \"Guest\""
+    user: '#P0.getRemoteUser() ?: "Guest"'
 
 - name: auth-role-check
-  description: "Records each role check and whether the current user has the role, like ADMIN: true"
+  description: Identifies an authorization check and whether the current user has the role
   methods:
   - javax.servlet.ServletRequest.isUserInRole
   - jakarta.servlet.ServletRequest.isUserInRole
   captures:
-  - '#P0 + ": " + #RET'
+    role: "#P0"
+    allowed: "#RET"
   matchers:
-  - '!^null:'
-  - '!: null$'
+    role:
+      - "!null"
+    allowed:
+      - "!null"
     
   
 reports:

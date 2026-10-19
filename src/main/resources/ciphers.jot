@@ -3,11 +3,12 @@
 
 sensors:
  - name: crypto-cipher
-   description: Records each use of an encryption cipher, its algorithm and whether it encrypts or decrypts
+   description: Identifies a cipher being used, its algorithm and whether it encrypts or decrypts
    methods:
    - javax.crypto.Cipher.init
    captures:
-   - '#OBJ.getAlgorithm() + ": " + (#P0 == 1 ? "encrypt" : #P0 == 2 ? "decrypt" : "other")'
+     algorithm: "#OBJ.getAlgorithm()"
+     operation: '#P0 == 1 ? "encrypt" : #P0 == 2 ? "decrypt" : "other"'
     
 reports:
  - name: Encryption Usage

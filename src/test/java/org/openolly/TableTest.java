@@ -17,15 +17,45 @@ class TableTest {
 		return new Event( rule, capture, stack );
 	}
 
+	private static Event fields(String rule, Object... pairs) {
+		java.util.Map<String, Object> data = new java.util.LinkedHashMap<String, Object>();
+		for ( int i = 0; i < pairs.length; i += 2 ) data.put( (String)pairs[i], pairs[i + 1] );
+		return new Event( rule, Sensor.text( data ), stack, data );
+	}
+
 	@Test
 	void testCompare() {
 		Trace.start();
-		Report t = new Report().name("Test Report").type("compare").rows("rule1").cols("rule2").validate();
-		t.accept( event("rule1", "/route1") );
-		t.accept( event("rule2", "RoleA:value") );
-		t.accept( event("rule2", "RoleB:value") );
-		Assertions.assertEquals("[value]", t.get("/route1", "RoleA").toString() );
-		Assertions.assertEquals("[value]", t.get("/route1", "RoleB").toString() );
+		Report t = new Report().name("Test Report").type("compare").rows("rule1.path").cols("rule2.role").value("rule2.allowed").validate();
+		t.accept( fields("rule1", "path", "/route1") );
+		t.accept( fields("rule2", "role", "RoleA", "allowed", true) );
+		t.accept( fields("rule2", "role", "RoleB", "allowed", false) );
+		Assertions.assertEquals("[true]", t.get("/route1", "RoleA").toString() );
+		Assertions.assertEquals("[false]", t.get("/route1", "RoleB").toString() );
+	}
+
+	@Test
+	void testCompareWithoutAValueMarksTheCell() {
+		Trace.start();
+		Report t = new Report().name("Test Report").type("compare").rows("rule1.path").cols("rule2.user").validate();
+		t.accept( fields("rule1", "path", "/route1") );
+		t.accept( fields("rule2", "user", "alice") );
+		Assertions.assertEquals("[x]", t.get("/route1", "alice").toString() );
+	}
+
+	@Test
+	void testAFieldThatIsAListFillsOneCellEach() {
+		Trace.start();
+		Report t = new Report().name("Test Report").type("table").rows("rule1.path").cols("rule2.names").validate();
+		t.accept( fields("rule1", "path", "/route1") );
+		t.accept( fields("rule2", "names", List.of( "a", "b" ) ) );
+		Assertions.assertEquals("[a, b]", t.get("/route1", "rule2.names").toString() );
+	}
+
+	@Test
+	void testAValueFieldFromAnotherSensorIsRefused() {
+		Assertions.assertThrows( IllegalArgumentException.class,
+			() -> new Report().name("r").type("compare").rows("a.p").cols("b.x").value("c.y").validate() );
 	}
 
 	@Test

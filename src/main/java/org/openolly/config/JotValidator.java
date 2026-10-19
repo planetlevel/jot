@@ -25,8 +25,9 @@ final class JotValidator {
 	static final Set<String> SECTIONS = Set.of( "sensors", "reports" );
 	static final Set<String> SENSOR_KEYS = Set.of( "name", "description", "methods", "scopes", "excludes", "captures",
 			"matchers", "block-when", "protect", "enabled", "debug" );
-	private static final List<String> LISTS = Arrays.asList( "methods", "scopes", "excludes", "captures", "matchers" );
+	private static final List<String> LISTS = Arrays.asList( "methods", "scopes", "excludes" );
 	private static final List<String> BOOLEANS = Arrays.asList( "protect", "enabled", "debug" );
+	private static final Pattern FIELD = Pattern.compile( "[a-z][a-z0-9_]*" );
 	private static final Pattern NAME = Pattern.compile( "[a-z][a-z0-9]*(\\-[a-z0-9]+)*" );
 	private static final Pattern METHOD = Pattern.compile( "([\\p{L}_$][\\p{L}\\p{N}_$]*\\.)+(<init>|[\\p{L}_$][\\p{L}\\p{N}_$]*)" );
 	private static final Pattern ANNOTATION = Pattern.compile( "@([\\p{L}_$][\\p{L}\\p{N}_$]*\\.)*[\\p{L}_$][\\p{L}\\p{N}_$]*" );
@@ -95,18 +96,10 @@ final class JotValidator {
 						problems.add( list + " item " + n + ", " + text + ", isn't a method name, write package.Class.method with no static or other"
 								+ " modifiers, parameters or return type, and <init> for a constructor" + ( list.equals( "methods" ) ? ", or @package.Annotation" : "" ) );
 					}
-				} else if ( list.equals( "captures" ) ) {
-					expressionProblem( list + " item " + n, item.asText(), problems );
-				} else if ( list.equals( "matchers" ) ) {
-					String pattern = item.asText().startsWith( "!" ) ? item.asText().substring( 1 ) : item.asText();
-					try {
-						Pattern.compile( pattern );
-					} catch ( PatternSyntaxException e ) {
-						problems.add( "matchers item " + n + " is not a pattern, " + e.getDescription() );
-					}
 				}
 			}
 		}
+		fieldProblems( entry, problems );
 		if ( !entry.has( "methods" ) || ( entry.get( "methods" ).isArray() && entry.get( "methods" ).size() == 0 ) ) {
 			problems.add( "needs methods, the calls it watches" );
 		}
@@ -131,6 +124,62 @@ final class JotValidator {
 			problems.add( "protect only matters for a rule, which has a block-when" );
 		}
 		return problems;
+	}
+
+	/** captures is field: expression, and matchers is field: [patterns] for fields that are captured. */
+	private static void fieldProblems( JsonNode entry, List<String> problems ) {
+		JsonNode captures = entry.get( "captures" );
+		Set<String> fields = new java.util.LinkedHashSet<String>();
+		if ( captures != null ) {
+			if ( !captures.isObject() ) {
+				problems.add( "captures must be names and expressions, like path: #P0" );
+			} else {
+				Iterator<Map.Entry<String, JsonNode>> it = captures.fields();
+				while ( it.hasNext() ) {
+					Map.Entry<String, JsonNode> field = it.next();
+					fields.add( field.getKey() );
+					if ( !FIELD.matcher( field.getKey() ).matches() ) {
+						problems.add( "capture " + field.getKey() + " should be a lower case name like path or remote_ip" );
+					}
+					if ( !field.getValue().isTextual() || field.getValue().asText().trim().isEmpty() ) {
+						problems.add( "capture " + field.getKey() + " is " + ( field.getValue().isNull() ? "empty, a # starts a comment" : "not text" ) + ", quote it" );
+					} else {
+						expressionProblem( "capture " + field.getKey(), field.getValue().asText(), problems );
+					}
+				}
+			}
+		}
+		JsonNode matchers = entry.get( "matchers" );
+		if ( matchers == null ) return;
+		if ( !matchers.isObject() ) {
+			problems.add( "matchers must be a captured field and a list of patterns, like path: [ '\\.php$' ]" );
+			return;
+		}
+		Iterator<Map.Entry<String, JsonNode>> it = matchers.fields();
+		while ( it.hasNext() ) {
+			Map.Entry<String, JsonNode> field = it.next();
+			if ( captures != null && captures.isObject() && !fields.contains( field.getKey() ) ) {
+				problems.add( "matchers " + field.getKey() + " is not a captured field, the fields are " + String.join( ", ", fields ) );
+			}
+			if ( !field.getValue().isArray() ) {
+				problems.add( "matchers " + field.getKey() + " must be a list, each item starting with -" );
+				continue;
+			}
+			int n = 0;
+			for ( JsonNode item : field.getValue() ) {
+				n++;
+				if ( !item.isTextual() || item.asText().trim().isEmpty() ) {
+					problems.add( "item " + n + " of matchers " + field.getKey() + " is " + ( item.isNull() ? "empty, a # starts a comment" : "not text" ) + ", quote it" );
+					continue;
+				}
+				String pattern = item.asText().startsWith( "!" ) ? item.asText().substring( 1 ) : item.asText();
+				try {
+					Pattern.compile( pattern );
+				} catch ( PatternSyntaxException e ) {
+					problems.add( "matchers " + field.getKey() + " item " + n + " is not a pattern, " + e.getDescription() );
+				}
+			}
+		}
 	}
 
 	private static void expressionProblem( String where, String text, List<String> problems ) {

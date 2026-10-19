@@ -6,61 +6,65 @@ reports:
 
  - name: Test Coverage Matrix
    type: compare
-   rows: http-route
-   cols: auth-user
+   rows: http-route.path
+   cols: auth-user.user
    
  - name: Access Control Matrix
    type: compare
-   rows: http-route
-   cols: auth-role-check
+   rows: http-route.path
+   cols: auth-role-check.role
+   value: auth-role-check.allowed
    
  - name: Role Membership
    type: compare
-   rows: auth-user
-   cols: auth-role-check
+   rows: auth-user.user
+   cols: auth-role-check.role
+   value: auth-role-check.allowed
    
  - name: Cache Headers
    type: table
-   rows: http-route
-   cols: http-cache-header
+   rows: http-route.path
+   cols: http-cache-header.cache_control
    
  - name: Encryption Algorithms
    type: compare
-   rows: http-route
-   cols: crypto-cipher  
+   rows: http-route.path
+   cols: crypto-cipher.algorithm
+   value: crypto-cipher.operation
    
  - name: Unauthorized Files
    type: table
-   rows: http-route
-   cols: file-path
+   rows: http-route.path
+   cols: file-path.path
    
  - name: Database Queries
    type: table
-   rows: http-route
-   cols: sql-statement
+   rows: http-route.path
+   cols: sql-statement.sql
    
  - name: Encryption Users
    type: compare
-   rows: auth-user
-   cols: crypto-cipher
+   rows: auth-user.user
+   cols: crypto-cipher.algorithm
+   value: crypto-cipher.operation
       
  - name: HTTP Parameters
    type: table
-   rows: http-route
-   cols: http-parameter-read, http-parameter-received
+   rows: http-route.path
+   cols: http-parameter-read.name, http-parameter-received.name
    
  - name: Request Forwards
    type: table
-   rows: http-route
-   cols: http-forward
+   rows: http-route.path
+   cols: http-forward.path
    
     
    
 
  - name: Encryption Usage
    type: list
-   cols: crypto-cipher
+   cols: crypto-cipher.algorithm
 
  - name: Hash Usage
    type: list
-   cols: crypto-hash
+   cols: crypto-hash.algorithm

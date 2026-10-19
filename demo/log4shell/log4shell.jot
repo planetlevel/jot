@@ -1,11 +1,11 @@
 ---
 sensors:
 - name: cve-log4shell-no-exec
-  description: CVE-2021-44228 microsandbox. JNDI stays allowed, process execution does not
+  description: Creates a microsandbox around CVE-2021-44228
   methods:
   - java.lang.ProcessBuilder.<init>
   scopes:
   - org.apache.logging.log4j.core.lookup.JndiLookup.lookup
   captures:
-  - "#ARGS"
+    args: "#ARGS"
   block-when: true

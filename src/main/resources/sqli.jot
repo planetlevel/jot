@@ -4,12 +4,12 @@
 sensors: 
 
 - name: http-route
-  description: Identifies the route for this HTTP request
+  description: Identifies the route a request came in at
   methods:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#P0.getRequestURI()"
+    path: "#P0.getRequestURI()"
 
 - name: sql-statement
   description: Identifies unparameterized database queries
@@ -21,4 +21,4 @@ sensors:
   excludes:
   - java.sql.PreparedStatement   # not vulnerable subclass
   captures:
-  - "#ARGS"
+    sql: "#ARGS"

@@ -4,118 +4,128 @@
 sensors:
 
 - name: http-route
-  description: Identifies the route for this HTTP request
+  description: Identifies the route a request came in at
   methods:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#P0.getRequestURI()"
+    path: "#P0.getRequestURI()"
 
   
 - name: auth-user
-  description: Identifies user names
+  description: Identifies the user making a request, or Guest when no one is signed in
   methods:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#P0.getRemoteUser()==null ? \"Guest\" : #P0.getRemoteUser()"
+    user: '#P0.getRemoteUser()==null ? "Guest" : #P0.getRemoteUser()'
   
   
 - name: auth-role-check
-  description: "Records each role check and whether the current user has the role, like ADMIN: true"
+  description: Identifies an authorization check and whether the current user has the role
   methods:
   - javax.servlet.ServletRequest.isUserInRole
   - jakarta.servlet.ServletRequest.isUserInRole
   captures:
-  - '#P0 + ": " + #RET'
+    role: "#P0"
+    allowed: "#RET"
   matchers:
-  - '!^null:'
-  - '!: null$'
+    role:
+      - "!null"
+    allowed:
+      - "!null"
     
   
 - name: http-parameter-received
-  description: Identifies parameter names used in HTTP requests
+  description: Identifies the parameter names a request was sent with
   methods:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#P0.getParameterNames()"
+    name: "#P0.getParameterNames()"
   matchers:
-  - "!null"
+    name:
+      - "!null"
 
 
 - name: http-parameter-read
-  description: Identifies parameter names referenced by the app
+  description: Identifies the parameter names the application reads
   methods:
   - javax.servlet.ServletRequest.getParameter
   - jakarta.servlet.ServletRequest.getParameter
   - javax.servlet.ServletRequest.getParameterValues
   - jakarta.servlet.ServletRequest.getParameterValues
   captures:
-  - "#P0"
+    name: "#P0"
   matchers:
-  - "!null"
+    name:
+      - "!null"
 
 
 - name: http-redirect
-  description: Extracts any response redirects in this app
+  description: Identifies a redirect being sent
   methods:
   - javax.servlet.ServletResponse.sendRedirect
   - jakarta.servlet.ServletResponse.sendRedirect
   captures:
-  - "#P0"
+    url: "#P0"
   matchers:
-  - "!null"
+    url:
+      - "!null"
 
 
 - name: http-forward
-  description: Extracts any request forwards in this app
+  description: Identifies a request being forwarded
   methods:
   - javax.servlet.ServletRequest.getRequestDispatcher
   - jakarta.servlet.ServletRequest.getRequestDispatcher
   - javax.servlet.ServletContext.getRequestDispatcher
   - jakarta.servlet.ServletContext.getRequestDispatcher
   captures:
-  - "#P0"
+    path: "#P0"
   matchers:
-  - "!null"
+    path:
+      - "!null"
 
 
 - name: http-filter-registered
-  description: Extracts the filters in this app"
+  description: Identifies a filter being added at run time
   methods:
   - javax.servlet.ServletContext.addFilter
   - jakarta.servlet.ServletContext.addFilter
   captures:
-  - "#RET.getUrlPatternMappings()"
+    urls: "#RET.getUrlPatternMappings()"
   matchers:
-  - "!null"
+    urls:
+      - "!null"
 
 
 - name: http-servlet-registered
-  description: Identifies the servlets in this app
+  description: Identifies a servlet being added at run time
   methods:
   - javax.servlet.ServletContext.addServlet
   - jakarta.servlet.ServletContext.addServlet
   captures:
-  - "#RET.getMappings()"
+    urls: "#RET.getMappings()"
   matchers:
-  - "!null"
+    urls:
+      - "!null"
 
 
 - name: http-cache-header
-  description: Identifies whether cache header is set
+  description: Identifies a cache header being set
   methods:
   - javax.servlet.ServletResponse.setHeader
   - jakarta.servlet.ServletResponse.setHeader
   captures:
-  - "#P0.equalsIgnoreCase(\"Cache-Control\")?#P1:null"
+    cache_control: '#P0.equalsIgnoreCase("Cache-Control")?#P1:null'
   matchers:
-  - "!null"
+    cache_control:
+      - "!null"
 
 
 - name: get-privacy
-  description: Identifies PII creation
+  description: Identifies personal information in a request parameter
   methods:
   - javax.servlet.ServletRequest.getParameter
   - jakarta.servlet.ServletRequest.getParameter
@@ -125,34 +135,36 @@ sensors:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#P0"
+    value: "#P0"
   matchers:
-  - (?!000|666)[0-8][0-9]{2}-(?!00)[0-9]{2}-(?!0000)[0-9]{4}
-  - (?<visa>4[0-9]{12}(?:[0-9]{3})?)
-  - (?<mastercard>5[1-5][0-9]{14})
-  - (?<discover>6(?:011|5[0-9]{2})[0-9]{12})
-  - (?<amex>3[47][0-9]{13})
-  - (?<diners>3(?:0[0-5]|[68][0-9])?[0-9]{11})
-  - (?<jcb>(?:2131|1800|35[0-9]{3})[0-9]{11})
+    value:
+      - (?!000|666)[0-8][0-9]{2}-(?!00)[0-9]{2}-(?!0000)[0-9]{4}
+      - (?<visa>4[0-9]{12}(?:[0-9]{3})?)
+      - (?<mastercard>5[1-5][0-9]{14})
+      - (?<discover>6(?:011|5[0-9]{2})[0-9]{12})
+      - (?<amex>3[47][0-9]{13})
+      - (?<diners>3(?:0[0-5]|[68][0-9])?[0-9]{11})
+      - (?<jcb>(?:2131|1800|35[0-9]{3})[0-9]{11})
   
 
 ##### detect attacks #####
 
 - name: expression-suspicious
-  description: An expression contained dangerous patterns
+  description: Identifies an expression that contains reflection or process APIs
   methods:
   - javax.servlet.jsp.el.ExpressionEvaluator.evaluate
   - jakarta.servlet.jsp.el.ExpressionEvaluator.evaluate
   - org.springframework.expression.parseExpression
   captures:
-  - "#P0"
+    expression: "#P0"
   matchers:
-  - \.class
+    expression:
+      - \.class
   block-when: true
   
 
 - name: expression
-  description: An expression being evaluated used a harmful method
+  description: Identifies an expression being evaluated starting a process or opening a socket
   methods:
   - java.lang.ProcessBuilder.<init>
   - java.io.Socket.<init>
@@ -161,6 +173,6 @@ sensors:
   - jakarta.servlet.jsp.el.ExpressionEvaluator.evaluate
   - org.springframework.expression.parseExpression
   captures:
-  - "#P0"
+    expression: "#P0"
   block-when: true
 

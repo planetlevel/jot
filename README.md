@@ -40,12 +40,12 @@ to capture and "reports" tell JOT how to track the data over time.
       methods:
       - "javax.crypto.Cipher.getInstance"
       captures:
-      - "#P0"
+        algorithm: "#P0"
     
     reports:
     - name: "Encryption Usage"
       type: "list"
-      cols: "crypto-cipher"  
+      cols: "crypto-cipher.algorithm"
 
 ## Getting Started with JOT
 
@@ -102,7 +102,8 @@ about the event.
 | `trace` | Events with the same `trace` and `run` came from the same request, or from the same thread outside a request |
 | `thread`, `thread_id` | The thread that triggered it |
 | `sensor`, `action` | The sensor name, and `observed`, `monitored` or `blocked` |
-| `capture`, `message` | What the sensor captured, and for monitored and blocked events the rule's message, its description and condition |
+| `data` | What the sensor captured, as an object of its named fields, like `{"algorithm":"AES","bits":128}`. A number or a boolean stays one and a list is a list |
+| `capture`, `message` | The same values as one line of text, and for monitored and blocked events the rule's message, its description and condition |
 | `method` | The instrumented method that was called |
 | `call_site` | The code that called it |
 | `stack` | The stack from the instrumented method up to `jot.output.stack` frames |
@@ -117,9 +118,10 @@ inventory such as routes, ciphers or roles, and it is what the reports use.
 
 A sensor with a `block-when` is a rule. Its `block-when` says when the call is bad, `true` for every call that gets
 that far or an expression over the same variables as a capture, like `#P0 < 2048`. The rule's `description` is its
-message, so write it to say what happened, in words that are as true in monitor as in protect, like "A web request
-started a process". When the condition is an expression the message is the description and then the condition, like
-"A key shorter than 2048 bits was generated: #P0 < 2048". Whether the rule stops the call depends on whether it protects.
+message. Every JOT's description says what it identifies and starts with "Identifies", like "Identifies starting a native
+process", which reads the same whether the rule is blocking or only reporting. When the condition is an expression the
+message is the description and then the condition, like "Identifies a key shorter than 2048 bits being generated: #P0 < 2048".
+Whether the rule stops the call depends on whether it protects.
 
 | Rule has a `block-when` | Protects | Event | Call stopped |
 |---|---|---|---|
@@ -137,7 +139,7 @@ have stopped and check it for false positives before turning it on.
 
     # one rule only reports, the others still block
     - name: "cve-log4shell-no-exec"
-      description: "CVE-2021-44228 microsandbox, a process was started"
+      description: "Creates a microsandbox around CVE-2021-44228"
       block-when: true
       protect: false
 
@@ -254,16 +256,17 @@ Relative paths are relative to the jots file. The dashboard reads the same file 
 and the dashboard always use the same definitions. See demo/ticketbook/jots.yaml. If two JOTs define a sensor
 with the same name, the first one loaded wins, so list your own first to override a standard one.
 
-Lastly, every JOT can have multiple "captures." A capture is a way to specify
-what data you want to collect from the methods you specified in the JOT.  The simple
-captures are things like:
+Lastly, every JOT can have "captures." Each capture is a named field and an expression that says
+what data to collect from the methods you specified in the JOT. The simple
+expressions are things like:
 	#P0 - the first parameter
 	#P1 - the second parameter
 	#ARGS - all the parameters concatenated in a String
 	#OBJ - the object the method is being called on
 	#RET - the return from the method
 	
-Captures are actually Spring Expression Language (SpEL) expressions, so you can call methods
+Every call produces one event, with each field by name in its `data`. A host and a port are two fields,
+and a fact the method can tell, like whether a file exists, is one more. Expressions are Spring Expression Language (SpEL), so you can call methods
 on those basic objects, compare stuff, and do operations. This helps
 you observe exactly what you want. See below for all the details of writing your own sensors.
 
@@ -299,7 +302,7 @@ sensors to perform limited actions within an application.
     
 	  # Use this to describe what this sensor does. Try to provide enough
 	  # detail so that anyone would understand what it's about.
-	  description: "What does sensor do?"
+	  description: "Identifies what the sensor is for, starting with the word Identifies"
 	
 	  # A list of methods to gather data from. To avoid potential performance issues,
 	  # avoid putting sensors in methods that are extremely frequently used,
@@ -340,27 +343,33 @@ sensors to perform limited actions within an application.
 	  # These objects are whatever type they happen
 	  # to be, and you can invoke any existing methods on those objects. Note that STACK is a StackFrame[]
 	  # See https://blog.abelotech.com/posts/useful-things-spring-expression-language-spel/
-	  captures: 
-	  - "#RET?.toUpperCase()"                # call toUpperCase if #RET is not null (note ?. operator)
-	  - "\"\"+#P0+\":\"+#RET"                # for methods that take a name and return a value
-	  - "#OBJ.getCanonicalPath() + \" \" + #OBJ.exists() ? [EXISTS] : [DOES NOT EXIST]"   # use ternary operator
-	  - "\"\"+#P0+\":\"+(#RET ? \"Y\" : \"N\")"          # for methods that return boolean
+	  # Each capture is a field name, in lower case words joined with _, and an expression.
+	  # A String stays one, a number or boolean keeps its type, and a list becomes a list of its items.
+	  captures:
+	    upper: "#RET?.toUpperCase()"         # call toUpperCase if #RET is not null (note ?. operator)
+	    name: "#P0"                          # for methods that take a name and return a value
+	    value: "#RET"
+	    path: "#OBJ.getCanonicalPath()"
+	    exists: "#OBJ.exists()"              # a fact about the file, which stays a boolean
+	    status: "#RET ? 'yes' : 'no'"        # use the ternary operator
 	  
 	  # Matchers allow you to filter the data that was captured with a set of regular expressions.
-	  # If there are no matchers then all captures will report data.
-	  # Positive matchers only fire if the data matches the pattern. You'll get a result if any positive matchers match.
-	  # Negative matchers (starting with !) only fire if the data does not match the pattern. You'll get a result if no negative matchers match.
-	  # If you mix positive and negative, you'll get a result if any positive captures match and no negative matchers match.
+	  # Each one names a captured field and lists the patterns that field's text is searched with.
+	  # A field with no matchers always passes, and every field that has some must pass for the call to be recorded.
+	  # Positive matchers pass if any of them match. Negative matchers (starting with !) pass if none of them match.
+	  # For a field that is a list, the items that pass are kept and the field fails if none do.
 	  matchers:
-	  - "^\\w*$"                             # matches anything with word characters start to finish
-	  - "!^\\[foo"                           # matches anything that doesn't start with foo
-	  - "!null"                              # hide empty results from output
+	    name:
+	    - "^\\w*$"                           # matches anything with word characters start to finish
+	    - "!^\\[foo"                         # matches anything that doesn't start with foo
+	    value:
+	    - "!null"                            # hide empty results from output
 	  
 	  # block-when makes this a rule, which can change the behavior of an application.
-	  # true blocks every call where a capture occurs and the matchers fire. An expression, like #P0 < 2048,
+	  # true blocks every call where the captures are recorded and the matchers pass. An expression, like #P0 < 2048,
 	  # blocks only when it is true, and it can use the same variables as a capture. If the mode is monitor it
 	  # only reports. JOT throws a SensorException whose message is the description, then the condition.
-	  # Note that generally you don't want to use #RET in your capture if you're blocking,
+	  # Note that generally you don't want to use #RET in a capture if you're blocking,
 	  # because it will throw at the end of the method, which is probably too late.
 	  block-when: true
 	
@@ -377,16 +386,17 @@ the annotation. If both have it, the method's own annotation is the one you read
 
     sensors:
     - name: "who-may-call-what"
-      description: "Records the roles a method requires, each time it is called"
+      description: "Identifies the roles a method requires, each time it is called"
       methods:
       - "@javax.annotation.security.RolesAllowed"
       captures:
-      - "#CALLER + ' requires ' + #ANNOTATION.value"
+        method: "#CALLER"
+        roles: "#ANNOTATION.value"
 
 Inside a capture, `#ANNOTATION` holds the annotation's attributes. Read one as `#ANNOTATION.roles` or
 `#ANNOTATION['roles']`. Strings and numbers are themselves, an array is a list, a class is its name, an enum is its
-name, and an attribute left at its default has the default. A capture that gives a list produces one event for each
-item, so a method that needs two roles gives two events, and a matcher can pick out one of them.
+name, and an attribute left at its default has the default. A capture that gives a list is a list in the event,
+so a method that needs two roles has both in `roles`, and a matcher keeps the ones that match.
 
 A rule can use the same capture and a matcher to stop a call based on what the annotation says.
 
@@ -394,10 +404,11 @@ A rule can use the same capture and a matcher to stop a call based on what the a
       methods:
       - "@javax.annotation.security.RolesAllowed"
       captures:
-      - "#ANNOTATION.value"
-      description: "An auditor called a method that auditors may not call"
+        roles: "#ANNOTATION.value"
+      description: "Identifies an auditor calling a method that auditors may not call"
       matchers:
-      - "auditor"
+        roles:
+        - "auditor"
       block-when: true
 
 A few things to know. An annotation is matched by the name it is written with, so list both spellings for an annotation that Jakarta EE renamed.
@@ -415,29 +426,35 @@ independent of the event output, so they work the same with `jot.output=console`
        # Title of this report that will be displayed above the results
        - name: "example"
 
+         # What a report reads is written sensor.field, the field of a sensor's captures, like http-route.path.
+         # A bare sensor name is everything it captured as one line.
+         #
          # Types of reports
          # 1. list
          #       ROWS: the code that called the instrumented method
-         #       COLS: one column named after the sensor in "cols"
-         #       DATA: values captured by that sensor
+         #       COLS: one column named after the field in "cols"
+         #       DATA: values of that field
          # 2. compare
-         #       ROWS: values captured by the sensor in "rows"
-         #       COLS: names taken from the "cols" sensor's captures, written as name:value
-         #       DATA: the value part of those captures
+         #       ROWS: values of the field in "rows"
+         #       COLS: one column for each value of the field in "cols"
+         #       DATA: the field in "value", which has to be of the same sensor as "cols", or an x
          # 3. table
-         #       ROWS: values captured by the sensor in "rows"
-         #       COLS: one column per sensor in "cols"
-         #       DATA: values captured by those sensors
+         #       ROWS: values of the field in "rows"
+         #       COLS: one column per field in "cols"
+         #       DATA: values of those fields
          # 4. graph - not a table. Prints a GraphViz DOT graph of what happened inside each route.
          #       rows: the sensor that identifies the route
          #       cols: optional, sensors such as forwards that start a new route node
-         type: "table"
+         type: "compare"
 
-         # A sensor to be used to populate row headers (compare, table and graph)
-         rows: "http-route"
+         # A field to be used to populate row headers (compare, table and graph)
+         rows: "http-route.path"
 
-         # A sensor, or a comma separated list of sensors, to be used to populate columns
-         cols: "auth-user"
+         # A field, or a comma separated list of fields, to be used to populate columns
+         cols: "auth-role-check.role"
+
+         # compare only, the field that fills the cells
+         value: "auth-role-check.allowed"
 
 compare, table and graph relate a row to a column when both were observed during the same request,
 in either order. Outside of a servlet request, events are related when they happen on the same thread.

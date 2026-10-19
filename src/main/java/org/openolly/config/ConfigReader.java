@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 import org.openolly.AppScope;
 import org.openolly.PlatformWork;
@@ -270,7 +271,7 @@ public class ConfigReader {
 			.type( type )
 			.rows( entry.rows )
 			.cols( entry.cols )
-			.data( entry.data )
+			.value( entry.value )
 			.validate() );
 	}
 	
@@ -286,8 +287,8 @@ public class ConfigReader {
 		public List<String> methods = new ArrayList<String>();
 		public List<String> scopes = null;     // none means the application, an empty list means anywhere
 		public List<String> excludes = new ArrayList<String>();
-		public List<String> captures = new ArrayList<String>();
-		public List<String> matchers = new ArrayList<String>();
+		public Map<String, String> captures = new java.util.LinkedHashMap<String, String>();
+		public Map<String, List<String>> matchers = new java.util.LinkedHashMap<String, List<String>>();
 		@com.fasterxml.jackson.annotation.JsonProperty( "block-when" )
 		public String blockWhen = null;
 		public Boolean protect = null;
@@ -300,7 +301,7 @@ public class ConfigReader {
 		public String type = null;
 		public String rows = null;
 		public String cols = null;
-		public String data = null;
+		public String value = null;
 	}
 	
 	

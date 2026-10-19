@@ -33,7 +33,7 @@ import os
 import re
 import sys
 
-from unquote_jot import needs_quotes
+from unquote_jot import quote
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_VULNPOINT = os.path.join(HERE, "..", "..", "vulnpoint")
@@ -44,9 +44,8 @@ SKIP = ("java.lang.ProcessImpl.forkAndExec", "java.lang.ProcessImpl.start")
 
 
 def q(text):
-    """A YAML value, plain when it reads back as the same text and a double quoted string when it needs to be. JSON
-    strings are valid YAML."""
-    return text if not needs_quotes(text) else json.dumps(text, ensure_ascii=False)
+    """A YAML value, written by the convention of unquote_jot, plain when it reads back as the same text."""
+    return quote(text)
 
 
 # where the Java sink mappings are. Newer vulnpoint keeps them with the call graph code, and resources/capabilities.json
@@ -151,11 +150,10 @@ def rule(shield, catalog, deny, observe, policy=()):
             text += "# scope from the vulnpoint policy, its shield doesn't list this method\n"
         text += "- name: %s\n" % q(name)
         short = sorted({jot_method(m).rsplit(".", 2)[-2] + "." + jot_method(m).rsplit(".", 1)[-1] for m in methods})
-        text += "  description: %s\n" % q("%s microsandbox. Inside %s, these are not allowed: %s" % (
-            shield["cve"], ", ".join(short), ", ".join(caps)))
+        text += "  description: %s\n" % q("Creates a microsandbox around %s" % shield["cve"])
         text += "  methods:\n" + lines(sinks)
         text += "  scopes:\n" + lines(jot_method(m) for m in methods)
-        text += "  captures:\n  - \"#ARGS\"\n"
+        text += "  captures:\n    args: \"#ARGS\"\n"
         text += "  block-when: true\n"
         if (behavior != "BLOCK" and not from_policy) or overridden:
             text += "  protect: false\n"   # reports what it would have blocked until someone turns it on
@@ -163,12 +161,12 @@ def rule(shield, catalog, deny, observe, policy=()):
     if texts:
         return "\n".join(texts)
     if observe:
-        # nothing to sandbox, so only a sensor on the methods that make up the vulnerable code. It records the word reached
+        # nothing to sandbox, so only a sensor on the methods that make up the vulnerable code. It records that it was reached
         # and not the arguments, which can be anything, a whole request body for a JSON library.
         text = header + "- name: %s\n" % q(base)
-        text += "  description: %s\n" % q("%s. The vulnerable code was reached" % shield["cve"])
+        text += "  description: %s\n" % q("Identifies the vulnerable code of %s running" % shield["cve"])
         text += "  methods:\n" + lines(jot_method(m["method"]) for m in scope_methods)
-        text += "  captures:\n  - %s\n" % q("'reached'")
+        text += "  captures:\n    reached: %s\n" % q("true")
         return text
     return None
 

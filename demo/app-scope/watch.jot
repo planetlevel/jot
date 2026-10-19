@@ -4,29 +4,32 @@ sensors:
   methods:
   - java.io.File.<init>
   captures:
-  - "#P0"
+    path: "#P0"
   matchers:
-  - ^(inside|outside)/
+    path:
+      - ^(inside|outside)/
 - name: digest-in-app
   methods:
   - java.security.MessageDigest.getInstance
   captures:
-  - "#P0"
+    algorithm: "#P0"
   matchers:
-  - ^(SHA-256|MD5)$
+    algorithm:
+      - ^(SHA-256|MD5)$
 # scopes: [] means anywhere, also before and after the application runs
 - name: file-anywhere
   scopes: []
   methods:
   - java.io.File.<init>
   captures:
-  - "#P0"
+    path: "#P0"
   matchers:
-  - ^(inside|outside)/
+    path:
+      - ^(inside|outside)/
 # on the entry point itself. The call that starts the application is the application, so this applies, which is how the route
 # sensor of a web application can see where each request came in
 - name: on-entry
   methods:
-  - '@Demo$Entry'
+  - "@Demo$Entry"
   captures:
-  - "#P0"
+    value: "#P0"

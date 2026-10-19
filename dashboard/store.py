@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS events_raw (
   thread_id INTEGER,
   sensor TEXT,          -- the sensor that produced the event
   action TEXT,          -- observed, monitored or blocked
-  capture TEXT,         -- what the sensor captured
+  capture TEXT,         -- what the sensor captured, as one line
+  data TEXT,            -- JSON object of the named values it captured, read with json_extract(data, '$.field')
   message TEXT,         -- for blocked and monitored events, the sensor's exception message
   method TEXT,          -- the instrumented method as a stack frame, with module and line
   method_name TEXT,     -- the instrumented method, like javax.crypto.Cipher.getInstance
@@ -67,13 +68,13 @@ CREATE TABLE IF NOT EXISTS sensors (
   description TEXT,
   methods TEXT,         -- JSON array
   scopes TEXT,          -- JSON array. The sensor only fires inside these methods
-  captures TEXT,        -- JSON array of expressions
+  captures TEXT,        -- JSON object of field name to expression
   blocks TEXT,          -- the block-when condition if the sensor is a rule, true for every call, otherwise null
   protect TEXT,         -- 'false' if the .jot file stages the rule as report only, otherwise null
   enabled TEXT,         -- 'false' if the .jot file writes enabled: false, otherwise null
   source TEXT,          -- the .jot file it came from
   path TEXT,            -- the full path of that file
-  matchers TEXT,        -- JSON array
+  matchers TEXT,        -- JSON object of field name to a list of patterns
   excludes TEXT,        -- JSON array
   definition TEXT       -- the sensor as written, as YAML
 );
@@ -87,8 +88,9 @@ CREATE TABLE IF NOT EXISTS jot_issues (
 CREATE TABLE IF NOT EXISTS reports (
   name TEXT PRIMARY KEY,
   type TEXT,            -- list, compare, table or graph
-  rows TEXT,            -- the sensor whose captures are the rows
-  cols TEXT,            -- the sensor, or comma separated sensors, for the columns
+  rows TEXT,            -- the sensor.field whose values are the rows
+  cols TEXT,            -- the sensor.field, or comma separated, for the columns
+  value TEXT,           -- compare only, the sensor.field that fills the cells
   source TEXT
 );
 
@@ -124,7 +126,7 @@ JOT_NAME_SQL = ("CASE WHEN sensor LIKE '%-active' THEN SUBSTR(sensor, 1, LENGTH(
 MODEL_TABLES = ("events", "sensors")
 
 EVENT_COLUMNS = ("time", "ts", "run", "host", "pid", "app", "id", "trace", "thread", "thread_id", "sensor",
-                 "action", "capture", "message", "method", "method_name", "call_site", "call_site_name", "stack",
+                 "action", "capture", "data", "message", "method", "method_name", "call_site", "call_site_name", "stack",
                  "origin", "app_frame")
 
 _FRAME = re.compile(r"^(?:[\w.@-]+/)?([^(]*)\(")
@@ -231,7 +233,7 @@ def init(db):
     db.execute("DROP VIEW IF EXISTS events")
     db.executescript(SCHEMA)
     have = {r[1] for r in db.execute("PRAGMA table_info(events_raw)")}
-    for column in ("origin", "app_frame"):
+    for column in ("origin", "app_frame", "data"):
         if column not in have:
             db.execute("ALTER TABLE events_raw ADD COLUMN %s TEXT" % column)
     db.commit()
@@ -260,6 +262,7 @@ def row_from_event(e, app_prefixes=()):
     values = {k: e.get(k) for k in EVENT_COLUMNS}
     values["origin"], values["app_frame"] = classify(stack, app_prefixes)
     values["stack"] = json.dumps(stack) if stack is not None else None
+    values["data"] = json.dumps(e["data"]) if isinstance(e.get("data"), dict) else None
     values["method_name"] = frame_name(e.get("method"))
     values["call_site_name"] = frame_name(e.get("call_site"))
     return tuple(values[k] for k in EVENT_COLUMNS)
@@ -415,7 +418,8 @@ def jot_files(paths):
 SENSOR_KEYS = ("name", "description", "methods", "scopes", "excludes", "captures", "matchers", "block-when",
                "protect", "enabled", "debug")
 _SENSOR_NAME = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
-_LISTS = ("methods", "scopes", "excludes", "captures", "matchers")
+_LISTS = ("methods", "scopes", "excludes")
+_FIELD = re.compile(r"^[a-z][a-z0-9_]*$")
 _BOOLEANS = ("protect", "enabled", "debug")
 
 
@@ -532,12 +536,34 @@ def check_jot_text(text):
                         add(m, problem)
         elif "methods" not in keys:
             add(node, "needs methods, the calls it watches")
-        if "matchers" in keys and isinstance(keys["matchers"][1], yaml.SequenceNode):
-            for m in keys["matchers"][1].value:
-                value = text_of(m) or ""
-                problem = _pattern_problem(value[1:] if value.startswith("!") else value)
-                if problem:
-                    add(m, "isn't a valid pattern, %s" % problem)
+        fields = set()
+        if "captures" in keys:
+            captures = keys["captures"][1]
+            if not isinstance(captures, yaml.MappingNode):
+                add(keys["captures"][0], "captures must be names and expressions, like path: \"#P0\"")
+            else:
+                for field, expression in captures.value:
+                    fields.add(text_of(field))
+                    if not _FIELD.match(text_of(field) or ""):
+                        add(field, "%s should be a lower case name like path or remote_ip" % text_of(field))
+                    _must_be_text(expression, add)
+        if "matchers" in keys:
+            matchers = keys["matchers"][1]
+            if not isinstance(matchers, yaml.MappingNode):
+                add(keys["matchers"][0], "matchers must be a captured field and a list of patterns, like path: [ '\\.php$' ]")
+            else:
+                for field, patterns in matchers.value:
+                    if "captures" in keys and isinstance(keys["captures"][1], yaml.MappingNode) and text_of(field) not in fields:
+                        add(field, "%s is not a captured field, the fields are %s" % (text_of(field), ", ".join(sorted(fields))))
+                    if not isinstance(patterns, yaml.SequenceNode):
+                        add(field, "%s must be a list, each item starting with -" % text_of(field))
+                        continue
+                    for m in patterns.value:
+                        _must_be_text(m, add)
+                        value = text_of(m) or ""
+                        problem = _pattern_problem(value[1:] if value.startswith("!") else value)
+                        if problem:
+                            add(m, "isn't a valid pattern, %s" % problem)
         if "block-when" in keys:
             node = keys["block-when"][1]
             kind = node.tag.rsplit(":", 1)[-1] if isinstance(node, yaml.ScalarNode) else None
@@ -628,7 +654,7 @@ def rename_in_reports(text, old, new):
         return text, []
     if not isinstance(root, yaml.MappingNode):
         return text, []
-    token = re.compile(r"(?<![\w-])%s(?![\w-])" % re.escape(old))
+    token = re.compile(r"(?<![\w.-])%s(?![\w-])" % re.escape(old))
     edits, changed = [], []
     for key, value in root.value:
         if key.value != "reports" or not isinstance(value, yaml.SequenceNode):
@@ -638,7 +664,7 @@ def rename_in_reports(text, old, new):
                 continue
             fields = {k.value: v for k, v in report.value if isinstance(k, yaml.ScalarNode)}
             used = False
-            for field in ("rows", "cols"):
+            for field in ("rows", "cols", "value"):
                 node = fields.get(field)
                 if not isinstance(node, yaml.ScalarNode):
                     continue
@@ -658,11 +684,16 @@ def _report_uses(doc, rename=None):
     """Each report of a parsed file as (the whole report, its rows, its cols as a list), with old to new applied to the names
     when rename is (old, new). Used to check that editing the text changed the names and nothing else."""
     out = []
-    swap = (lambda n: rename[1] if n == rename[0] else n) if rename else (lambda n: n)
+
+    def swap(ref):
+        sensor, dot, field = str(ref).partition(".")
+        return (rename[1] if rename and sensor == rename[0] else sensor) + dot + field if ref else ref
+
     for r in (doc or {}).get("reports") or []:
         if isinstance(r, dict):
-            rest = {k: v for k, v in r.items() if k not in ("rows", "cols")}
-            out.append((rest, swap(r.get("rows")), [swap(c.strip()) for c in str(r.get("cols") or "").split(",") if c.strip()]))
+            rest = {k: v for k, v in r.items() if k not in ("rows", "cols", "value")}
+            out.append((rest, swap(r.get("rows")), [swap(c.strip()) for c in str(r.get("cols") or "").split(",") if c.strip()],
+                        swap(r.get("value"))))
     return out
 
 
@@ -685,11 +716,14 @@ def check_draft(text, taken=()):
         return problems
     if doc.get("name") in set(taken):
         problems.append("the name %s is already used by another JOT" % doc["name"])
-    expressions = [str(c) for c in doc.get("captures") or []]
+    captures = doc.get("captures")
+    expressions = [str(c) for c in (captures.values() if isinstance(captures, dict) else [])]
     if doc.get("block-when") not in (None, True, False):
         expressions.append(str(doc["block-when"]))
     if any(_FORBIDDEN_IN_EXPRESSIONS.search(e) for e in expressions):
         problems.append("an expression can't use T( or new")
+    if not str(doc.get("description") or "").startswith("Identifies "):
+        problems.append('the description says what the JOT identifies and starts with "Identifies", like "Identifies starting a native process"')
     if "block-when" in doc:
         if not doc.get("description"):
             problems.append("a rule needs a description, it is the message")
@@ -902,8 +936,8 @@ def load_sensors(db, paths):
             db.execute("""INSERT INTO sensors (name, description, methods, scopes, captures, blocks, protect, enabled, source, path,
                                                matchers, excludes, definition) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
                 name, s.get("description"), json.dumps(methods), json.dumps(s.get("scopes") or []),
-                json.dumps(s.get("captures") or []), _block_condition(s), staged, off, source, f,
-                json.dumps(s.get("matchers") or []), json.dumps(s.get("excludes") or []),
+                json.dumps(s.get("captures") or {}), _block_condition(s), staged, off, source, f,
+                json.dumps(s.get("matchers") or {}), json.dumps(s.get("excludes") or []),
                 (written.get(name) or {}).get("text")
                 or yaml.safe_dump(s, sort_keys=False, default_flow_style=False, allow_unicode=True).rstrip()))
             loaded += 1
@@ -926,12 +960,17 @@ def load_reports(db, paths):
                 _issue(db, "info", "report %s is type %s, which the dashboard doesn't build. series reports are "
                        "replaced by the event log" % (r["name"], rtype or "(none)"), source)
                 continue
-            db.execute("INSERT OR REPLACE INTO reports VALUES (?,?,?,?,?)", (
-                r["name"], rtype, r.get("rows"), r.get("cols"), source))
-            used = ([r["rows"]] if r.get("rows") else []) + [c.strip() for c in str(r.get("cols") or "").split(",") if c.strip()]
-            for sensor in used:
-                if not db.execute("SELECT 1 FROM sensors WHERE name = ?", (sensor,)).fetchone():
+            db.execute("INSERT OR REPLACE INTO reports VALUES (?,?,?,?,?,?)", (
+                r["name"], rtype, r.get("rows"), r.get("cols"), r.get("value"), source))
+            used = ([r["rows"]] if r.get("rows") else []) + [c.strip() for c in str(r.get("cols") or "").split(",") if c.strip()] \
+                + ([r["value"]] if r.get("value") else [])
+            for ref in used:
+                sensor, _, field = ref.partition(".")
+                have = db.execute("SELECT captures FROM sensors WHERE name = ?", (sensor,)).fetchone()
+                if not have:
                     _issue(db, "warning", "report %s uses %s, which no loaded sensor defines" % (r["name"], sensor), source)
+                elif field and field not in json.loads(have[0] or "{}"):
+                    _issue(db, "warning", "report %s uses %s, but %s doesn't capture %s" % (r["name"], ref, sensor, field), source)
             loaded += 1
     db.commit()
     return loaded
@@ -942,32 +981,53 @@ def _lit(text):
     return "'" + str(text).replace("'", "''") + "'"
 
 
-# the name:value convention of the original compare report. A capture with no colon is all name.
-_NAME = "trim(CASE WHEN instr({c}, ':') > 0 THEN substr({c}, 1, instr({c}, ':') - 1) ELSE {c} END)"
-_VALUE = "trim(CASE WHEN instr({c}, ':') > 0 THEN substr({c}, instr({c}, ':') + 1) ELSE 'X' END)"
+def _values(alias, ref, n):
+    """How a report reads sensor.field from the events called alias, as (what to join, an SQL expression for the value).
+    A list is one value for each item, and a bare sensor name is what it captured as one line. n makes the names unique."""
+    sensor, _, field = ref.partition(".")
+    if not field:
+        return "", "%s.capture" % alias
+    if not re.match(r"^[a-z][a-z0-9_]*$", field):
+        raise ValueError("%s isn't sensor.field, a field is a lower case name" % ref)
+    each = "j%d" % n
+    return (", json_each(%s.data, '$.%s') %s" % (alias, field, each),
+            "CASE %s.type WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE CAST(%s.value AS TEXT) END" % (each, each))
 
 
-def report_sql(rtype, rows, cols):
-    """The query for a report, as rows of (row, column, value) which the dashboard turns into a grid.
-    These are the original JOT reports. A row and a column are related when they were observed in the
-    same request, which is the same run and trace."""
-    sensors = [c.strip() for c in (cols or "").split(",") if c.strip()]
-    if not sensors:
+def report_sql(rtype, rows, cols, value=None):
+    """The query for a report, as rows of (row, column, value) which the dashboard turns into a grid. What it reads is
+    written sensor.field. A row and a column are related when they were observed in the same request, which is the same
+    run and trace."""
+    refs = [c.strip() for c in (cols or "").split(",") if c.strip()]
+    if not refs:
         raise ValueError("a report needs cols")
     if rtype == "list":
-        return ("SELECT DISTINCT call_site AS call_site, sensor AS sensor, capture AS value\n"
-                "FROM events WHERE sensor = %s AND call_site IS NOT NULL AND capture <> ''\n"
-                "ORDER BY call_site" % _lit(sensors[0]))
+        join, expr = _values("e", refs[0], 0)
+        return ("SELECT DISTINCT e.call_site AS call_site, %s AS sensor, %s AS value\n"
+                "FROM events e%s WHERE e.sensor = %s AND e.call_site IS NOT NULL AND %s <> ''\n"
+                "ORDER BY call_site" % (_lit(refs[0]), expr, join, _lit(refs[0].partition(".")[0]), expr))
     if not rows:
         raise ValueError("a %s report needs rows" % rtype)
-    join = "FROM events r JOIN events c ON r.run = c.run AND r.trace = c.trace\nWHERE r.sensor = %s" % _lit(rows)
-    row = _NAME.format(c="r.capture")
+    row_join, row_expr = _values("r", rows, 1)
+    start = "FROM events r%s, events c" % row_join
+    relate = "r.run = c.run AND r.trace = c.trace AND r.sensor = %s" % _lit(rows.partition(".")[0])
     if rtype == "compare":
-        return ("SELECT DISTINCT %s AS row, %s AS col, %s AS value\n%s AND c.sensor = %s\nORDER BY 1, 2"
-                % (row, _NAME.format(c="c.capture"), _VALUE.format(c="c.capture"), join, _lit(sensors[0])))
+        col_join, col_expr = _values("c", refs[0], 2)
+        if value:
+            if value.partition(".")[0] != refs[0].partition(".")[0]:
+                raise ValueError("value is a field of the cols sensor")
+            val_join, val_expr = _values("c", value, 3)
+            return ("SELECT DISTINCT %s AS row, %s AS col, %s AS value\n%s%s%s WHERE %s AND c.sensor = %s\nORDER BY 1, 2"
+                    % (row_expr, col_expr, val_expr, start, col_join, val_join, relate, _lit(refs[0].partition(".")[0])))
+        return ("SELECT DISTINCT %s AS row, %s AS col, 'x' AS value\n%s%s WHERE %s AND c.sensor = %s\nORDER BY 1, 2"
+                % (row_expr, col_expr, start, col_join, relate, _lit(refs[0].partition(".")[0])))
     if rtype == "table":
-        return ("SELECT DISTINCT %s AS row, c.sensor AS col, c.capture AS value\n%s AND c.sensor IN (%s)\nORDER BY 1, 2"
-                % (row, join, ", ".join(_lit(x) for x in sensors)))
+        parts = []
+        for i, ref in enumerate(refs):
+            col_join, col_expr = _values("c", ref, 2)
+            parts.append("SELECT DISTINCT %s AS row, %s AS col, %s AS value\n%s%s WHERE %s AND c.sensor = %s"
+                         % (row_expr, _lit(ref), col_expr, start, col_join, relate, _lit(ref.partition(".")[0])))
+        return "\nUNION\n".join(parts) + "\nORDER BY 1, 2"
     raise ValueError("unknown report type %s" % rtype)
 
 

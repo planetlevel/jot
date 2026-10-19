@@ -15,13 +15,17 @@ import com.google.common.collect.TreeBasedTable;
 /**
  * Summarizes the events it receives as a table, which is printed to stderr at shutdown.
  *
+ * What a report reads is written sensor.field, the field of a sensor's captures, like http-route.path. A bare sensor
+ * name is what it captured as one line.
+ *
  * There are three styles.
- *   list     one row per call site, one column for the "cols" sensor, holding what it captured
- *   compare  rows from the "rows" sensor, columns named by the "cols" sensor's captures
- *   table    rows from the "rows" sensor, one column per "cols" sensor, holding what it captured
+ *   list     one row per call site, one column for the "cols" field, holding what it captured
+ *   table    rows from the "rows" field, one column per "cols" field, holding what it captured
+ *   compare  rows from the "rows" field, a column for each value of the "cols" field, holding the "value" field of the same
+ *            sensor, or an x when there is none
  *
  * compare and table relate a row to a column when both were observed in the same request, so
- * "rows" is typically a sensor that identifies the route.
+ * "rows" is typically a field that identifies the route.
  *
  * Reports are bounded. A table holds at most maxRows rows and each cell holds at most
  * maxValues values. Anything past that is counted and not stored.
@@ -51,7 +55,7 @@ public class Report implements EventSink {
 	private String name = null;
 	private String rows = null;
 	private String[] cols = null;
-	private String data = null;
+	private String value = null;
 	private int maxRows = DEFAULT_MAX_ROWS;
 	private int maxValues = DEFAULT_MAX_VALUES;
 	private int rowNameColWidth = 10;
@@ -75,44 +79,74 @@ public class Report implements EventSink {
 
 	private void acceptList(Event event) {
 		if ( matches( event, cols[0] ) ) {
-			set( event.getCallSite(), cols[0], shorten( event.getCapture() ) );
+			for ( String v : values( event, cols[0] ) ) set( event.getCallSite(), cols[0], shorten( v ) );
 		}
 	}
 
 	private void acceptRelated(Event event) {
-		boolean isRow = matches( event, rows );
+		List<String> rowValues = matches( event, rows ) ? values( event, rows ) : List.of();
 		String column = null;
-		String value = null;
+		List<String> cells = List.of();
 		for ( String col : cols ) {
 			if ( matches( event, col ) ) {
 				if ( mode == ReportStyle.COMPARE ) {
-					column = event.getNameFromCapture();
-					value = event.getValueFromCapture();
+					cells = new ArrayList<String>();
+					List<String> marks = value == null ? List.of() : values( event, value );
+					for ( String name : values( event, col ) ) cells.add( name + "\u0000" + ( marks.isEmpty() ? "x" : String.join( ",", marks ) ) );
 				} else {
 					column = col;
-					value = event.getCapture();
+					cells = values( event, col );
 				}
 				break;
 			}
 		}
-		if ( !isRow && column == null ) return;
+		if ( rowValues.isEmpty() && cells.isEmpty() ) return;
 
 		Window trace = traces.computeIfAbsent( event.getTrace(), id -> new Window() );
-		if ( isRow ) {
-			String row = event.getNameFromCapture();
+		for ( String row : rowValues ) {
 			if ( trace.rowNames.size() < MAX_PER_TRACE && trace.rowNames.add( row ) ) {
 				for ( String[] cell : trace.cells ) set( row, cell[0], cell[1] );
 			}
 		}
-		if ( column != null && trace.cells.size() < MAX_PER_TRACE ) {
-			String shortened = shorten( value );
-			trace.cells.add( new String[] { column, shortened } );
-			for ( String row : trace.rowNames ) set( row, column, shortened );
+		for ( String cell : cells ) {
+			String name = column;
+			String shortened;
+			if ( mode == ReportStyle.COMPARE ) {
+				int split = cell.indexOf( '\u0000' );
+				name = cell.substring( 0, split );
+				shortened = shorten( cell.substring( split + 1 ) );
+			} else {
+				shortened = shorten( cell );
+			}
+			if ( trace.cells.size() >= MAX_PER_TRACE ) break;
+			trace.cells.add( new String[] { name, shortened } );
+			for ( String row : trace.rowNames ) set( row, name, shortened );
 		}
 	}
 
-	private static boolean matches(Event event, String rule) {
-		return rule != null && event.getRule().equalsIgnoreCase( rule );
+	/** True if the reference, sensor or sensor.field, is to this event's sensor. */
+	private static boolean matches(Event event, String ref) {
+		return ref != null && event.getRule().equalsIgnoreCase( sensorOf( ref ) );
+	}
+
+	static String sensorOf(String ref) {
+		int dot = ref.indexOf( '.' );
+		return dot < 0 ? ref : ref.substring( 0, dot );
+	}
+
+	/** What the event holds for the reference, one value per item of a list. A bare sensor name is the one line it captured. */
+	static List<String> values(Event event, String ref) {
+		int dot = ref.indexOf( '.' );
+		if ( dot < 0 ) return List.of( event.getCapture() );
+		Object found = event.getData() == null ? null : event.getData().get( ref.substring( dot + 1 ) );
+		if ( found == null ) return List.of();
+		List<String> out = new ArrayList<String>();
+		if ( found instanceof List ) {
+			for ( Object item : (List<?>)found ) out.add( String.valueOf( item ) );
+		} else {
+			out.add( String.valueOf( found ) );
+		}
+		return out;
 	}
 
 	private static String shorten(String value) {
@@ -146,8 +180,9 @@ public class Report implements EventSink {
 		return this;
 	}
 
-	public Report data( String value ) {
-		this.data = value;
+	/** compare only, the field that fills the cells. */
+	public Report value( String value ) {
+		this.value = value;
 		return this;
 	}
 
@@ -167,6 +202,9 @@ public class Report implements EventSink {
 		if ( cols == null || cols.length == 0 ) throw new IllegalArgumentException( "report '" + name + "' needs cols" );
 		if ( mode != ReportStyle.LIST && StringUtils.isBlank( rows ) ) {
 			throw new IllegalArgumentException( "report '" + name + "' needs rows" );
+		}
+		if ( value != null && ( mode != ReportStyle.COMPARE || !sensorOf( value ).equalsIgnoreCase( sensorOf( cols[0] ) ) ) ) {
+			throw new IllegalArgumentException( "report '" + name + "' value only goes with compare, and is a field of the cols sensor" );
 		}
 		return this;
 	}

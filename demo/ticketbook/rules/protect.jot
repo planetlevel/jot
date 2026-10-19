@@ -11,27 +11,26 @@ sensors:
 
 # A web request must never start an operating system process.
 - name: native-process
-  description: A web request started a process
+  description: Identifies starting a native process
   methods:
   - java.lang.ProcessBuilder.<init>
   captures:
-  - "#ARGS"
+    command: "#ARGS"
   block-when: true
 
 # A web request must never deserialize objects.
 - name: object-deserialization
-  description: A web request deserialized an object
+  description: Identifies deserializing an object
   methods:
   - java.io.ObjectInputStream.readObject
   - java.io.ObjectInputStream.readUnshared
   captures:
-  - "#ARGS"
-  block-when: true
+    args: "#ARGS"
 
 # The microsandbox for expression injection. Evaluating an expression is allowed, but while one is being
 # evaluated it can't start a process or open a socket.
 - name: expression
-  description: An expression being evaluated started a process or opened a socket
+  description: Identifies an expression being evaluated starting a process or opening a socket
   methods:
   - java.lang.ProcessBuilder.<init>
   - java.net.Socket.<init>
@@ -39,48 +38,49 @@ sensors:
   - javax.el.ValueExpression.getValue
   - jakarta.el.ValueExpression.getValue
   captures:
-  - "#ARGS"
+    expression: "#ARGS"
   block-when: true
 
 # The pattern based alternative, which looks for attack text in the expression itself. It is easier to get
 # around than the sandbox above. Add "protect: false" to stage it as report only, and the dashboard can then
 # promote it to block.
 - name: expression-suspicious
-  description: An expression contained reflection or process APIs
+  description: Identifies an expression that contains reflection or process APIs
   methods:
   - javax.el.ExpressionFactory.createValueExpression
   - jakarta.el.ExpressionFactory.createValueExpression
   captures:
-  - "#P1"
+    expression: "#P1"
   matchers:
-  - \.class
-  - getRuntime
-  - ProcessBuilder
-  - forName
+    expression:
+      - \.class
+      - getRuntime
+      - ProcessBuilder
+      - forName
   block-when: true
 
 # The JVM must never be shut down by a web request.
 - name: jvm-exit
-  description: A web request tried to end the JVM
+  description: Identifies ending the JVM
   methods:
   - java.lang.Runtime.exit
   - java.lang.Runtime.halt
   captures:
-  - "#ARGS"
+    args: "#ARGS"
   block-when: true
 
 # Native code loaded by a web request can do anything the JVM can. Libraries are loaded once, often on first use inside the
 # first request (a JDBC driver extracting its native part, for example), so run in monitor for a while, see what loads, then
 # move to protect.
 - name: native-library
-  description: A web request loaded a native library
+  description: Identifies loading a native library
   methods:
   - java.lang.System.load
   - java.lang.System.loadLibrary
   - java.lang.Runtime.load
   - java.lang.Runtime.loadLibrary
   captures:
-  - "#P0"
+    name: "#P0"
   matchers:
-  - "!null"
-  block-when: true
+    name:
+      - "!null"

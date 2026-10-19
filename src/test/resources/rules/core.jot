@@ -9,7 +9,8 @@ sensors:
   methods:
   - javax.crypto.Cipher.init
   captures:
-  - '#OBJ.getAlgorithm() + ": " + (#P0 == 1 ? "encrypt" : #P0 == 2 ? "decrypt" : "other")'
+    algorithm: "#OBJ.getAlgorithm()"
+    operation: '#P0 == 1 ? "encrypt" : #P0 == 2 ? "decrypt" : "other"'
 
 
 - name: native-library
@@ -19,9 +20,10 @@ sensors:
   - java.lang.System.loadLibrary
   - java.lang.System.mapLibraryName
   captures:
-  - "#P0"
+    name: "#P0"
   matchers:
-  - "!null"
+    name:
+      - "!null"
   
 
 - name: sql-statement
@@ -34,7 +36,7 @@ sensors:
   excludes:
   - java.sql.PreparedStatement   #these calls are harmless in PreparedStatement
   captures:
-  - "#ARGS"
+    sql: "#ARGS"
 
 
 - name: sql-prepared
@@ -43,7 +45,7 @@ sensors:
   - java.sql.Connection.prepareCall
   - java.sql.Connection.prepareStatement
   captures:
-  - "#ARGS"
+    sql: "#ARGS"
 
 
 - name: file-path
@@ -51,11 +53,12 @@ sensors:
   methods:
   - java.io.File.<init>
   captures:
-  - "#OBJ.getCanonicalPath()"
+    path: "#OBJ.getCanonicalPath()"
   matchers:
-  - "!\\/apache\\-tomcat"
-  - "!sdkman"
-  - "!eclipse\\-workspace"
+    path:
+      - '!\/apache\-tomcat'
+      - "!sdkman"
+      - '!eclipse\-workspace'
 
 
 - name: net-socket
@@ -63,11 +66,14 @@ sensors:
   methods:
   - java.net.Socket.<init>
   captures:
-  - "\"\"+#P0+\":\"+#P1"     # using ""+#P0 is a shorthand String conversion
+    host: "#P0"
+    port: "#P1"
   debug: "true"
   matchers:
-  - "!null\\:null"
-  - "!\\:8080"               # any port that's not 8080
+    host:
+      - "!null"
+    port:
+      - "!^8080$"
 
 
 - name: get-exceptions
@@ -78,5 +84,5 @@ sensors:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#P0"
+    exception: "#P0"
 

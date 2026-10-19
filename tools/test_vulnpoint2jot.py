@@ -44,6 +44,7 @@ class Vulnpoint2JotTests(unittest.TestCase):
         self.assertIn("javax.script.ScriptEngine.eval", s["methods"])
         self.assertNotIn("javax.naming.Context.lookup", s["methods"], "jndi was not disallowed, so it stays allowed")
         self.assertIn("CVE-2021-44228", s["description"])
+        self.assertEqual("Creates a microsandbox around CVE-2021-44228", s["description"])
         self.assertIs(True, s["block-when"], "a rule that blocks every call that gets that far")
         self.assertNotIn("exception", s)
         self.assertNotIn("protect", s)
@@ -60,8 +61,8 @@ class Vulnpoint2JotTests(unittest.TestCase):
         empty = shield(scopes=[{"method": "a.B.c", "disallowed_capabilities": []}])
         self.assertIsNone(v.rule(empty, CATALOG, [], False))
         (s,) = parsed("sensors:\n" + v.rule(empty, CATALOG, [], True))
-        self.assertEqual(("cve-2021-44228", ["a.B.c"], ["'reached'"], None), (s["name"], s["methods"], s["captures"], s.get("block-when")),
-                         "a sensor that records the word reached and nothing of the arguments")
+        self.assertEqual(("cve-2021-44228", ["a.B.c"], {"reached": "true"}, None), (s["name"], s["methods"], s["captures"], s.get("block-when")),
+                         "a sensor that records that it was reached and nothing of the arguments")
 
     def test_deny_gives_a_shield_without_a_policy_capabilities_and_says_so_and_only_reports(self):
         empty = shield(scopes=[{"method": "a.B.c", "disallowed_capabilities": []}])

@@ -15,7 +15,10 @@ import static net.bytebuddy.matcher.ElementMatchers.isMethod;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.regex.Pattern;
 
@@ -55,9 +58,11 @@ public class Sensor {
 	private List<MethodLocator> methods = new ArrayList<MethodLocator>();
 	private List<MethodLocator> scopes = new ArrayList<MethodLocator>();
 	private List<MethodLocator> excludes = new ArrayList<MethodLocator>();
-	private List<Expression> captures = new ArrayList<Expression>();
-	private List<Matcher> negativeMatchers = new ArrayList<Matcher>();
-	private List<Matcher> positiveMatchers = new ArrayList<Matcher>();
+	/** What is captured, by the name of the field it fills, in the order the JOT lists them. */
+	private Map<String, Expression> captures = new LinkedHashMap<String, Expression>();
+	/** The matchers of each field, by the name of the field they check. */
+	private Map<String, List<Matcher>> negativeMatchers = new HashMap<String, List<Matcher>>();
+	private Map<String, List<Matcher>> positiveMatchers = new HashMap<String, List<Matcher>>();
 	private String blockWhen = null;        // makes this a rule, true for every call or an expression that says when. block-when in the .jot file
 	private Expression blockCondition = null;   // blockWhen as an expression, null when it is true for every call
 	private boolean blockNever = false;
@@ -203,37 +208,17 @@ public class Sensor {
 	
 			if ( stack == null && ( !captures.isEmpty() || isRule() ) ) stack = currentStack();
 
-			for (Expression capture : captures) {
+			Map<String, Object> data = null;
+			if ( !captures.isEmpty() ) {
 				try {
-					Object o = capture.execute(obj, params, ret, caller, stack, annotation);
-					
-					if ( o instanceof Collection ) {
-						for ( Object item : (Collection)o ) {
-							String safe = SafeString.format( item, debug );
-							boolean matched = !isAgentJar( safe ) && Matcher.eval( safe, getPositiveMatchers(), getNegativeMatchers() );
-							if ( matched ) {
-								String cleaned = StringUtils.normalizeSpace( safe );
-								Event event = new Event(getName(), cleaned, stack);
-								publishObserved( event );
-								// logger.atWarning().log( "[JOT %s] %s", this, event );
-		 						results.add(safe);
-							}
-						}
-					} else {
-						String safe = SafeString.format( o, debug );
-						boolean matched = !isAgentJar( safe ) && Matcher.eval( safe, getPositiveMatchers(), getNegativeMatchers() );
-						if ( matched ) {
-							String cleaned = StringUtils.normalizeSpace( safe );
-							Event event = new Event(getName(), cleaned, stack);
-								publishObserved( event );
-							// logger.atWarning().log( "[JOT %s] %s", this, event );
-	 						results.add(safe);
-						}
+					data = capture( obj, params, ret, caller, stack, annotation );
+					if ( data != null ) {
+						String text = text( data );
+						publishObserved( new Event( getName(), text, stack, data ) );
+						results.add( text );
 					}
-					
 				} catch( Exception e ) {
-					logger.atWarning().log( "[JOT %s] Error running capture (%s) %s", this, capture, e.getMessage() );
-					//e.printStackTrace();
+					logger.atWarning().log( "[JOT %s] Error running capture %s", this, e.getMessage() );
 					logger.atWarning().log( ExceptionUtils.getStackTrace(e) );
 				}
 			}
@@ -244,17 +229,76 @@ public class Sensor {
 					String details = results.stream().map( String::valueOf ).collect( Collectors.joining( " | " ) );
 					if ( isProtected() ) {
 						SensorException e = new SensorException( getRuleMessage() );
-						EventBus.publish( new Event( getName() + "-blocked", details, stack, Event.Action.BLOCKED, getRuleMessage() ) );
+						EventBus.publish( new Event( getName() + "-blocked", details, stack, Event.Action.BLOCKED, getRuleMessage(), data ) );
 						throw e;
 					}
 					// not protecting, so say what would have been stopped and let the call go ahead
-					EventBus.publish( new Event( getName() + "-monitored", details, stack, Event.Action.MONITORED, getRuleMessage() ) );
+					EventBus.publish( new Event( getName() + "-monitored", details, stack, Event.Action.MONITORED, getRuleMessage(), data ) );
 				}
 			}			
 		} finally {
 			JotScope.exit();
 		}
 		return results;
+	}
+
+	/**
+	 * The fields of one call, or null if the call is not wanted because a field is missing, fails a matcher or is the agent's own.
+	 * A value is a String, a Number, a Boolean, a list of Strings or null, so it can be shown and stored without the application's
+	 * objects. A field that can't be worked out is left out of the call rather than dropping it, unless it has matchers.
+	 */
+	private Map<String, Object> capture(Object obj, Object[] params, Object ret, String caller, StackTraceElement[] stack, Map<String, Object> annotation) {
+		Map<String, Object> data = new LinkedHashMap<String, Object>();
+		for ( Map.Entry<String, Expression> field : captures.entrySet() ) {
+			String name = field.getKey();
+			List<Matcher> positives = positiveMatchers.getOrDefault( name, List.of() );
+			List<Matcher> negatives = negativeMatchers.getOrDefault( name, List.of() );
+			Object value;
+			Object o = null;
+			boolean unknown = false;
+			try {
+				o = field.getValue().execute( obj, params, ret, caller, stack, annotation );
+			} catch ( Exception e ) {
+				// an expression that can't be worked out for this call, like exists on a String, is null and the rest is still recorded
+				unknown = true;
+				logger.atFine().log( "[JOT %s] capture %s (%s) is null, %s", this, name, field.getValue(), e.getMessage() );
+			}
+			try {
+				if ( o instanceof Collection ) {
+					List<String> kept = new ArrayList<String>();
+					for ( Object item : (Collection<?>)o ) {
+						String safe = SafeString.format( item, debug );
+						if ( !isAgentJar( safe ) && Matcher.eval( safe, positives, negatives ) ) kept.add( StringUtils.normalizeSpace( safe ) );
+					}
+					if ( kept.isEmpty() ) return null;
+					value = kept;
+				} else {
+					String safe = SafeString.format( o, debug );
+					if ( isAgentJar( safe ) || !Matcher.eval( safe, positives, negatives ) ) return null;
+					value = unknown || o == null ? null : o instanceof Number || o instanceof Boolean ? o : StringUtils.normalizeSpace( safe );
+				}
+			} catch ( Exception e ) {
+				logger.atWarning().log( "[JOT %s] Error running capture %s (%s) %s", this, name, field.getValue(), e.getMessage() );
+				return null;
+			}
+			data.put( name, value );
+		}
+		return data;
+	}
+
+	/** The fields as one line, the value alone when there is one field and name=value otherwise. */
+	static String text(Map<String, Object> data) {
+		if ( data.size() == 1 ) return display( data.values().iterator().next() );
+		StringBuilder sb = new StringBuilder();
+		for ( Map.Entry<String, Object> field : data.entrySet() ) {
+			if ( sb.length() > 0 ) sb.append( ", " );
+			sb.append( field.getKey() ).append( '=' ).append( display( field.getValue() ) );
+		}
+		return sb.toString();
+	}
+
+	private static String display(Object value) {
+		return value instanceof List ? String.join( ", ", ((List<?>)value).stream().map( String::valueOf ).collect( Collectors.joining( ", " ) ) ) : String.valueOf( value );
 	}
 
 	public String toString() {
@@ -406,10 +450,17 @@ public class Sensor {
 		return this;
 	}
 
+	/** The one value a sensor captures when it doesn't name it. */
+	public static final String VALUE = "value";
+
 	public Sensor capture(String value) {
-		if ( value == null ) {
+		return capture( VALUE, value );
+	}
+
+	public Sensor capture(String field, String value) {
+		if ( value == null || field == null ) {
 			return this;
-		}		
+		}
 		if (!capturePattern.matcher(value).matches()) {
 			logger.atWarning().log( "[JOT %s] YAML error: malformed capture (" + value + ") must match " + capturePattern.pattern(), this );
 		}
@@ -418,35 +469,36 @@ public class Sensor {
 			if ( value.contains( "#RET" ) ) {
 				hasReturn = true;
 			}
-			captures.add( exp );
+			captures.put( field, exp );
 		} catch( Exception e ) {
 			logger.atWarning().log( "[JOT %s] YAML error: malformed capture (" + value + "): " + e.getMessage(), this );
 		}
 		return this;
 	}
 
-	public Sensor captures( List<String> list ) {
-		if ( list == null || list.isEmpty() ) {
+	public Sensor captures( Map<String, String> fields ) {
+		if ( fields == null ) {
 			return this;
-		}		
-		for ( String s : list ) {
-			capture( s );
+		}
+		for ( Map.Entry<String, String> field : fields.entrySet() ) {
+			capture( field.getKey(), field.getValue() );
 		}
 		return this;
 	}
 
 	public Sensor matcher(String value) {
+		return matcher( VALUE, value );
+	}
+
+	public Sensor matcher(String field, String value) {
 		try {
-			if ( value == null ) {
+			if ( value == null || field == null ) {
 				return this;
 			}
 			if ( value.startsWith( "!" ) ) {
-				value = value.substring(1);
-				Matcher matcher = new Matcher( value, true );
-				negativeMatchers.add( matcher );
+				negativeMatchers.computeIfAbsent( field, k -> new ArrayList<Matcher>() ).add( new Matcher( value.substring(1), true ) );
 			} else {
-				Matcher matcher = new Matcher( value, false );
-				positiveMatchers.add( matcher );
+				positiveMatchers.computeIfAbsent( field, k -> new ArrayList<Matcher>() ).add( new Matcher( value, false ) );
 			}
 		} catch( Exception e ) {
 			logger.atWarning().log( "[JOT %s] YAML error: malformed matcher (" + value + "): " + e.getMessage(), this );
@@ -454,12 +506,15 @@ public class Sensor {
 		return this;
 	}
 
-	public Sensor matchers( List<String> list ) {
-		if ( list == null || list.isEmpty() ) {
+	public Sensor matchers( Map<String, List<String>> fields ) {
+		if ( fields == null ) {
 			return this;
-		}		
-		for ( String s : list ) {
-			matcher( s );
+		}
+		for ( Map.Entry<String, List<String>> field : fields.entrySet() ) {
+			if ( field.getValue() == null ) continue;
+			for ( String pattern : field.getValue() ) {
+				matcher( field.getKey(), pattern );
+			}
 		}
 		return this;
 	}
@@ -594,16 +649,8 @@ public class Sensor {
 		return excludes;
 	}
 
-	public List<Expression> getCaptures() {
+	public Map<String, Expression> getCaptures() {
 		return captures;
-	}
-	
-	public List<Matcher> getPositiveMatchers() {
-		return positiveMatchers;
-	}
-	
-	public List<Matcher> getNegativeMatchers() {
-		return negativeMatchers;
 	}
 	
 	/** The message of a rule, or null for a sensor. It is the description, then the condition if there is one. */

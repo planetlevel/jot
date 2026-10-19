@@ -99,6 +99,29 @@ public class JsonSink implements EventSink {
 		}
 	}
 
+	private static void value(StringBuilder sb, Object value) {
+		if ( value == null ) {
+			sb.append( "null" );
+		} else if ( value instanceof Boolean || value instanceof Integer || value instanceof Long || value instanceof Short || value instanceof Byte ) {
+			sb.append( value );
+		} else if ( value instanceof Number ) {
+			double d = ((Number)value).doubleValue();
+			if ( Double.isNaN( d ) || Double.isInfinite( d ) ) quote( sb, value.toString() );   // JSON has no NaN or Infinity
+			else sb.append( value );
+		} else if ( value instanceof java.util.List ) {
+			sb.append( '[' );
+			boolean first = true;
+			for ( Object item : (java.util.List<?>)value ) {
+				if ( !first ) sb.append( ',' );
+				first = false;
+				quote( sb, String.valueOf( item ) );
+			}
+			sb.append( ']' );
+		} else {
+			quote( sb, value.toString() );
+		}
+	}
+
 	String toJson(Event event) {
 		StringBuilder sb = new StringBuilder( 512 );
 		sb.append( "{\"v\":1,\"time\":" );
@@ -116,6 +139,18 @@ public class JsonSink implements EventSink {
 		quote( sb, event.getAction().name().toLowerCase() );
 		sb.append( ",\"capture\":" );
 		quote( sb, event.getCapture() );
+		if ( event.getData() != null ) {
+			sb.append( ",\"data\":{" );
+			boolean first = true;
+			for ( java.util.Map.Entry<String, Object> field : event.getData().entrySet() ) {
+				if ( !first ) sb.append( ',' );
+				first = false;
+				quote( sb, field.getKey() );
+				sb.append( ':' );
+				value( sb, field.getValue() );
+			}
+			sb.append( '}' );
+		}
 		if ( event.getMessage() != null ) {
 			sb.append( ",\"message\":" );
 			quote( sb, event.getMessage() );

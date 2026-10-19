@@ -1,5 +1,8 @@
 package org.openolly.reporting;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -21,6 +24,7 @@ public class Event implements Comparable<Event> {
 
 	private final String rule;
 	private final String capture;
+	private final Map<String, Object> data;
 	private final StackTraceElement[] stack;
 	private final int id;
 	private final long timestamp;
@@ -31,11 +35,25 @@ public class Event implements Comparable<Event> {
 	private final long trace;
 
 	public Event(String rule, String capture, StackTraceElement[] stack) {
-		this(rule, capture, stack, Action.OBSERVED, null);
+		this(rule, capture, stack, Action.OBSERVED, null, null);
+	}
+
+	/** An observation with the named values that were captured. capture is the same values as one line of text. */
+	public Event(String rule, String capture, StackTraceElement[] stack, Map<String, Object> data) {
+		this(rule, capture, stack, Action.OBSERVED, null, data);
 	}
 
 	public Event(String rule, String capture, StackTraceElement[] stack, Action action, String message) {
+		this(rule, capture, stack, action, message, null);
+	}
+
+	/**
+	 * data is the captured values by name, each a String, a Number, a Boolean, a list of Strings or null, which is what can go
+	 * into JSON, so the event keeps a copy of plain values and nothing of the application's own objects.
+	 */
+	public Event(String rule, String capture, StackTraceElement[] stack, Action action, String message, Map<String, Object> data) {
 		this.rule = rule;
+		this.data = data == null || data.isEmpty() ? null : Collections.unmodifiableMap( new LinkedHashMap<String, Object>( data ) );
 		this.capture = capture;
 		this.stack = stack;
 		this.action = action;
@@ -53,6 +71,11 @@ public class Event implements Comparable<Event> {
 
 	public String getCapture() {
 		return capture;
+	}
+
+	/** The named values the sensor captured, in the order the JOT lists them, or null when it captured none by name. */
+	public Map<String, Object> getData() {
+		return data;
 	}
 
 	public Action getAction() {
@@ -102,24 +125,6 @@ public class Event implements Comparable<Event> {
 
 	public StackTraceElement[] getStack() {
 		return stack;
-	}
-
-	// FIXME: return the "name" of a name-value pair captured. Needs update.
-	public String getNameFromCapture() {
-		if ( capture.indexOf( ':' ) != -1 ) {
-			return capture.substring( 0, capture.indexOf(':'));
-		} else {
-			return capture;
-		}
-	}
-
-	// FIXME: return the "name" of a name-value pair captured. Needs update.
-	public String getValueFromCapture() {
-		if ( capture.indexOf( ':' ) != -1 ) {
-			return capture.substring( capture.indexOf(':') + 1);
-		} else {
-			return "X";
-		}
 	}
 
 	public String toString() {

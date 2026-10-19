@@ -3,7 +3,8 @@
   methods:
   - java.io.File.<init>
   captures:
-  - "#OBJ.getCanonicalPath() + \" \" + ( #OBJ.exists() ? \"EXISTS\" : \"DOES NOT EXIST\" )"
+    path: "#OBJ.getCanonicalPath()"
+    exists: "#OBJ.exists()"
   
 
   

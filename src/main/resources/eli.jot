@@ -4,15 +4,15 @@
 sensors: 
 
 - name: http-route
-  description: Identifies the route for this HTTP request
+  description: Identifies the route a request came in at
   methods:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#P0.getRequestURI()"
+    path: "#P0.getRequestURI()"
 
 - name: expression
-  description: An expression being evaluated used a harmful method
+  description: Identifies an expression being evaluated starting a process or opening a socket
   methods:
   - java.lang.ProcessBuilder.<init>
   - java.io.Socket.<init>
@@ -20,5 +20,5 @@ sensors:
   - javax.el.ValueExpression.getValue
   - jakarta.el.ValueExpression.getValue
   captures:
-  - "#P0"
+    expression: "#P0"
   block-when: true

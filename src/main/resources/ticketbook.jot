@@ -4,23 +4,25 @@
 sensors:
 
 - name: crypto-cipher
-  description: Records each use of an encryption cipher, its algorithm and whether it encrypts or decrypts
+  description: Identifies a cipher being used, its algorithm and whether it encrypts or decrypts
   methods:
   - javax.crypto.Cipher.init
   captures:
-  - '#OBJ.getAlgorithm() + ": " + (#P0 == 1 ? "encrypt" : #P0 == 2 ? "decrypt" : "other")'
+    algorithm: "#OBJ.getAlgorithm()"
+    operation: '#P0 == 1 ? "encrypt" : #P0 == 2 ? "decrypt" : "other"'
 
 
 - name: native-library
-  description: Identifies the use of native libraries
+  description: Identifies loading a native library
   methods:
   - java.lang.System.load
   - java.lang.System.loadLibrary
   - java.lang.System.mapLibraryName
   captures:
-  - "#P0"
+    name: "#P0"
   matchers:
-  - "!null"
+    name:
+      - "!null"
   
 
 - name: sql-statement
@@ -33,53 +35,57 @@ sensors:
   excludes:
   - java.sql.PreparedStatement   #these calls are harmless in PreparedStatement
   captures:
-  - "#ARGS"
+    sql: "#ARGS"
 
 
 - name: file-path
-  description: Identifies the use of Files outside certain paths
+  description: Identifies file and directory use
   methods:
   - java.io.File.<init>
   captures:
-  - "#OBJ.getCanonicalPath()"
+    path: "#OBJ.getCanonicalPath()"
   matchers:
-  - "!\\/apache\\-tomcat"
-  - "!sdkman"
-  - "!eclipse\\-workspace"
+    path:
+      - '!\/apache\-tomcat'
+      - "!sdkman"
+      - '!eclipse\-workspace'
 
 
 - name: net-socket
-  description: Identifies the use of sockets
+  description: Identifies a socket being opened
   methods:
   - java.net.Socket.<init>
   captures:
-  - "\"\"+#P0+\":\"+#P1"     # using ""+#P0 is a shorthand String conversion
+    host: "#P0"
+    port: "#P1"
   debug: "true"
   matchers:
-  - "!null\\:null"
-  - "!\\:8080"               # any port that's not 8080
+    host:
+      - "!null"
+    port:
+      - "!^8080$"
 
 
 - name: route
-  description: Identifies the route for this HTTP request
+  description: Identifies the route a request came in at
   methods:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#P0.getRequestURI()"
+    path: "#P0.getRequestURI()"
 
   
 - name: check-role
-  description: Identifies roles
+  description: Identifies a role being checked
   methods:
   - javax.servlet.ServletRequest.isUserInRole
   - jakarta.servlet.ServletRequest.isUserInRole
   captures:
-  - "#P0"
+    role: "#P0"
     
   
 - name: get-parameter
-  description: Identifies parameter names referenced by the app
+  description: Identifies a parameter being read and its value
   methods:
   - javax.servlet.ServletRequest.getParameter
   - jakarta.servlet.ServletRequest.getParameter
@@ -88,82 +94,101 @@ sensors:
   - javax.servlet.ServletRequest.getQueryString
   - jakarta.servlet.ServletRequest.getQueryString
   captures:
-  - "#P0 + \":\" + #RET"
+    name: "#P0"
+    value: "#RET"
   matchers:
-  - "!null"
+    name:
+      - "!null"
+    value:
+      - "!null"
  
 - name: get-header
-  description: Identifies parameter names referenced by the app
+  description: Identifies a request header being read and its value
   methods:
   - javax.servlet.ServletRequest.getHeader
   - jakarta.servlet.ServletRequest.getHeader
   - javax.servlet.ServletRequest.getHeaders
   - jakarta.servlet.ServletRequest.getHeaders
   captures:
-  - "#P0 + \":\" + #RET"
+    name: "#P0"
+    value: "#RET"
   matchers:
-  - "!null"
+    name:
+      - "!null"
+    value:
+      - "!null"
  
-- name: get-header
-  description: Identifies parameter names referenced by the app
+- name: get-cookies
+  description: Identifies cookies being read
   methods:
   - javax.servlet.ServletRequest.getCookies
   - jakarta.servlet.ServletRequest.getCookies
   captures:
-  - "#P0 + \":\" + #RET"
+    name: "#P0"
+    value: "#RET"
   matchers:
-  - "!null"
+    name:
+      - "!null"
+    value:
+      - "!null"
  
 - name: multipart
-  description: Identifies parameter names referenced by the app
+  description: Identifies a multipart upload being read
   methods:
   - javax.servlet.ServletRequest.getPart
   - jakarta.servlet.ServletRequest.getPart
   - javax.servlet.ServletRequest.getParts
   - jakarta.servlet.ServletRequest.getParts
   captures:
-  - "#P0"
+    name: "#P0"
   matchers:
-  - "!null"
+    name:
+      - "!null"
 
 
 - name: send-redirect
-  description: Extracts any response redirects in this app
+  description: Identifies a redirect being sent
   methods:
   - javax.servlet.ServletResponse.sendRedirect
   - jakarta.servlet.ServletResponse.sendRedirect
   captures:
-  - "#P0"
+    url: "#P0"
   matchers:
-  - "!null"
+    url:
+      - "!null"
 
 
 - name: request-forward
-  description: Extracts any request forwards in this app
+  description: Identifies a request being forwarded
   methods:
   - javax.servlet.ServletRequest.getRequestDispatcher
   - jakarta.servlet.ServletRequest.getRequestDispatcher
   - javax.servlet.ServletContext.getRequestDispatcher
   - jakarta.servlet.ServletContext.getRequestDispatcher
   captures:
-  - "#P0"
+    path: "#P0"
   matchers:
-  - "!null"
+    path:
+      - "!null"
 
 
 - name: set-header
-  description: Identifies whether headers are being set
+  description: Identifies a response header being set and its value
   methods:
   - javax.servlet.ServletResponse.setHeader
   - jakarta.servlet.ServletResponse.setHeader
   captures:
-  - "#P0 + \":\" + #P1"
+    name: "#P0"
+    value: "#P1"
   matchers:
-  - "!null"
+    name:
+      - "!null"
+    value:
+      - "!null"
 
 
 - name: credit-card
-  description: Identifies PII creation
+  description: Identifies a credit card number in a request parameter
   methods:
   - javax.servlet.ServletRequest.getParameter
   - jakarta.servlet.ServletRequest.getParameter
@@ -173,29 +198,30 @@ sensors:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#P0"
+    value: "#P0"
   matchers:
-  - (?!000|666)[0-8][0-9]{2}-(?!00)[0-9]{2}-(?!0000)[0-9]{4}
-  - (?<visa>4[0-9]{12}(?:[0-9]{3})?)
-  - (?<mastercard>5[1-5][0-9]{14})
-  - (?<discover>6(?:011|5[0-9]{2})[0-9]{12})
-  - (?<amex>3[47][0-9]{13})
-  - (?<diners>3(?:0[0-5]|[68][0-9])?[0-9]{11})
-  - (?<jcb>(?:2131|1800|35[0-9]{3})[0-9]{11})
+    value:
+      - (?!000|666)[0-8][0-9]{2}-(?!00)[0-9]{2}-(?!0000)[0-9]{4}
+      - (?<visa>4[0-9]{12}(?:[0-9]{3})?)
+      - (?<mastercard>5[1-5][0-9]{14})
+      - (?<discover>6(?:011|5[0-9]{2})[0-9]{12})
+      - (?<amex>3[47][0-9]{13})
+      - (?<diners>3(?:0[0-5]|[68][0-9])?[0-9]{11})
+      - (?<jcb>(?:2131|1800|35[0-9]{3})[0-9]{11})
 
 - name: native-process
-  description: Detects attempts to start native processes
+  description: Identifies starting a native process
   methods:
   - java.lang.ProcessBuilder.<init>
   scopes:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#ARGS"
+    command: "#ARGS"
 
 
 - name: expression-language
-  description: Detects harmful methods from being used during expresssion evaluation
+  description: Identifies an expression being evaluated
   methods:
   - javax.el.ValueExpression.getValue
   - jakarta.el.ValueExpression.getValue
@@ -203,5 +229,5 @@ sensors:
   - javax.servlet.Servlet.service
   - jakarta.servlet.Servlet.service
   captures:
-  - "#OBJ.getExpressionString()"
+    expression: "#OBJ.getExpressionString()"
 

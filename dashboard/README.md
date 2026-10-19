@@ -41,6 +41,10 @@ minute?". The dashboard shows the result, a one line explanation, and the SQL th
 can edit and run again. A question you have asked appears as a button, and clicking it re-runs its saved SQL
 without asking the model again.
 
+A sensor captures named fields, and each event keeps them in its `data` column as JSON. In SQL read one with
+`json_extract(data, '$.path')`, and use `json_each(data, '$.names')` for a field that is a list. The `capture` column
+is the same values as one line of text. The event drawer shows each field by name.
+
 The current result refreshes every 3 seconds on its own, along with the event feed on the right. A result whose SQL you have open
 to edit is left alone until you close it.
 
