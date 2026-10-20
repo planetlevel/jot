@@ -1860,6 +1860,15 @@ class DraftUiTests(unittest.TestCase):
         self.assertEqual(["crypto-cipher", "crypto-weak-key"], [x["name"] for x in saved["sensors"]])
 
 
+class PageIdTests(unittest.TestCase):
+    def test_no_id_is_used_twice_in_the_page(self):
+        with open(os.path.join(server.HERE, "static", "index.html"), encoding="utf-8") as fh:
+            page = fh.read()
+        ids = re.findall(r'\bid="([^"]+)"', page.split("<script>", 1)[0].split("</style>", 1)[-1])
+        twice = sorted({i for i in ids if ids.count(i) > 1})
+        self.assertEqual([], twice, "getElementById finds the first, so a repeat is drawn into the wrong place")
+
+
 class HiddenJotTests(unittest.TestCase):
     def setUp(self):
         self.env = Env()
@@ -1921,19 +1930,40 @@ class FilterDrawerTests(unittest.TestCase):
         out.barHasClear = !!document.querySelector("#sharedBar #clearBtn");
         out.startsClosed = document.getElementById("filterDrawer").hidden;
         document.getElementById("filtersBtn").click();
-        await until(() => document.querySelectorAll("#jotList label").length >= 2);
+        await until(() => document.querySelectorAll("#filterJotList label").length >= 2);
         out.open = !document.getElementById("filterDrawer").hidden;
-        out.listed = [...document.querySelectorAll("#jotList label span:not(.n)")].map((x) => x.textContent);
-        const box = [...document.querySelectorAll("#jotList label")].find((l) => l.textContent.indexOf("http-cache-header") >= 0).querySelector("input");
-        out.allTicked = [...document.querySelectorAll("#jotList input")].every((b) => b.checked);
+        out.visible = [...document.querySelectorAll("#filterJotList label")].every((l) => l.offsetHeight > 0 && l.offsetWidth > 0);
+        out.listed = [...document.querySelectorAll("#filterJotList label span:not(.n)")].map((x) => x.textContent);
+        const box = [...document.querySelectorAll("#filterJotList label")].find((l) => l.textContent.indexOf("http-cache-header") >= 0).querySelector("input");
+        out.allTicked = [...document.querySelectorAll("#filterJotList input")].every((b) => b.checked);
         box.click();
         await until(() => document.getElementById("filtersBtn").textContent === "Filters (1)");
         out.button = document.getElementById("filtersBtn").textContent;
-        document.getElementById("jotFilter").value = "hash";
-        document.getElementById("jotFilter").dispatchEvent(new Event("input"));
-        out.found = [...document.querySelectorAll("#jotList label span:not(.n)")].map((x) => x.textContent);
+        document.getElementById("filterJotSearch").value = "hash";
+        document.getElementById("filterJotSearch").dispatchEvent(new Event("input"));
+        out.found = [...document.querySelectorAll("#filterJotList label span:not(.n)")].map((x) => x.textContent);
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
         out.closedByEscape = document.getElementById("filterDrawer").hidden;
+        // pointing at a kind of event and pressing H hides its JOT, with a way back
+        hoverNode = { kind: "effect", label: "crypto-hash-blocked", events: 1, captures: [] };
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "h" }));
+        await wait(300);
+        out.blockedKept = document.getElementById("hideToast").hidden;
+        hoverNode = { kind: "effect", label: "crypto-hash", events: 1, captures: [] };
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "h" }));
+        await until(() => !document.getElementById("hideToast").hidden);
+        out.toast = document.getElementById("hideToast").textContent;
+        out.hiddenAfterH = (await (await fetch("/api/status")).json()).hidden_jots;
+        [...document.querySelectorAll("#hideToast button")].find((b) => b.textContent === "Undo").click();
+        await until(async () => true);
+        await wait(400);
+        out.hiddenAfterUndo = (await (await fetch("/api/status")).json()).hidden_jots;
+        // a method of the application becomes a JOT to start from, in the editor of the JOTs page
+        out.frame = JotGraph.frameMethod("org.hsqldb.jdbc.JDBCStatement.executeUpdate(Unknown Source)");
+        await sensorFromNode({ full: "com.acme.Ticket.encrypt" });
+        await until(() => draft.editor);
+        out.page = currentPage;
+        out.started = draft.editor.get();
         location.hash = "#graph";
         await wait(300);
       } catch (e) { out.error = String(e); }
@@ -1974,12 +2004,20 @@ class FilterDrawerTests(unittest.TestCase):
         self.assertTrue(out["barHasClear"], "Clear stays on the bar")
         self.assertTrue(out["startsClosed"])
         self.assertTrue(out["open"])
+        self.assertTrue(out["visible"], "the checkboxes are on screen, not in some other list")
         self.assertEqual(["crypto-hash", "http-cache-header"], out["listed"])
         self.assertTrue(out["allTicked"], "every JOT starts ticked, which is shown")
         self.assertEqual("Filters (1)", out["button"], "the button says how many filters are on")
         self.assertEqual(["crypto-hash"], out["found"])
         self.assertTrue(out["closedByEscape"])
+        self.assertTrue(out["blockedKept"], "what a rule blocked can't be hidden")
+        self.assertIn("Hid crypto-hash", out["toast"])
+        self.assertEqual(["crypto-hash", "http-cache-header"], out["hiddenAfterH"])
+        self.assertEqual(["http-cache-header"], out["hiddenAfterUndo"])
         self.assertEqual(["http-cache-header"], store.get_hidden_jots(env.db))
+        self.assertEqual("jots", out["page"])
+        self.assertTrue(out["started"].startswith("name: ticket-encrypt\ndescription: Identifies calls to Ticket.encrypt\n"), out["started"])
+        self.assertEqual([], store.check_draft(out["started"]), "what it starts with passes the same checks as a draft")
 
 
 class JotEventsLinkTests(unittest.TestCase):
@@ -2005,6 +2043,13 @@ class JotEventsLinkTests(unittest.TestCase):
         await until(() => { const d = document.getElementById("eventDrawer"); return d && !d.hidden && d.innerText.indexOf("crypto-cipher") >= 0; });
         out.hash = location.hash;
         out.drawer = document.getElementById("eventDrawer").innerText;
+        // each frame that is a method can start a JOT
+        const marks = [...document.querySelectorAll("#eventDrawer .frames .mk")];
+        out.marks = marks.length;
+        marks[0].click();
+        await until(() => typeof draft !== "undefined" && draft.editor);
+        out.page = currentPage;
+        out.started = draft.editor.get();
       } catch (e) { out.error = String(e); }
       const pre = document.createElement("pre"); pre.id = "testResult"; pre.textContent = JSON.stringify(out); document.body.append(pre);
     })();
@@ -2016,7 +2061,8 @@ class JotEventsLinkTests(unittest.TestCase):
         with open(os.path.join(env.dir, "a.jot"), "w") as f:
             f.write("sensors:\n- name: crypto-cipher\n  description: Records ciphers\n  methods:\n  - javax.crypto.Cipher.getInstance\n  captures:\n    value: '#P0'\n")
         store.load_sensors(env.ingestor.db, [env.dir])
-        env.write(event(1, capture="algorithm=AES, bits=128", data={"algorithm": "AES", "bits": 128, "modes": ["CBC", "GCM"]}), event(2, capture="DES"))
+        env.write(event(1, capture="algorithm=AES, bits=128", data={"algorithm": "AES", "bits": 128, "modes": ["CBC", "GCM"]},
+                  stack=["org.hsqldb.jdbc.JDBCStatement.executeUpdate(Unknown Source)", "com.acme.Ticket.encrypt(Ticket.java:125)", "a"]), event(2, capture="DES"))
         env.ingestor.poll()
         app = server.App(env.db, env.ingestor, jot_paths=[env.dir])
         script = self.SCRIPT
@@ -2047,6 +2093,10 @@ class JotEventsLinkTests(unittest.TestCase):
         self.assertNotIn("pk", out["columns"], "the id is used and not shown")
         self.assertTrue(out["hash"].startswith("#event/"))
         self.assertIn("crypto-cipher", out["drawer"])
+        self.assertEqual(2, out["marks"], "the two frames that are methods, not the one called a")
+        self.assertEqual("jots", out["page"])
+        self.assertTrue(out["started"].startswith("name: jdbc-statement-execute-update\n"), out["started"])
+        self.assertIn("- org.hsqldb.jdbc.JDBCStatement.executeUpdate\n", out["started"])
         for shown in ("algorithm", "AES", "bits", "128", "modes", "CBC", "GCM"):
             self.assertIn(shown, out["drawer"], "the drawer shows each captured field by name")
 

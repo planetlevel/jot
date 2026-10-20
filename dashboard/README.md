@@ -71,7 +71,7 @@ at `jot.output.stack` frames, 25 by default, so an older event may be missing th
 
 The **Filters** button on the Events and Graph pages opens a drawer with the filters, App events only, Blocked, Monitored, JOT control events and a list of JOTs to show or hide. The button shows how many filters are on. They apply to the events, the graph, the views, the search and the counts, and nothing is deleted.
 
-**JOTs** lists every JOT with a checkbox, ticked meaning shown. Unticking one leaves out what it observed, and ticking it brings that back. Tick all and Untick all work on the ones the search box has narrowed the list to. What a hidden rule blocked or reported still shows. A rule and its `-active`, `-blocked` and `-monitored` events are one JOT here.
+**JOTs** lists every JOT with a checkbox, ticked meaning shown. Unticking one leaves out what it observed, and ticking it brings that back. Tick all and Untick all work on the ones the search box has narrowed the list to. What a hidden rule blocked or reported still shows. A rule and its `-active`, `-blocked` and `-monitored` events are one JOT here. You can also hide one without opening the drawer. Point at a kind of event in the graph and press **H**, or use the **Hide** button in the graph's detail panel or an event's drawer. A message offers Undo for a few seconds.
 
 **Blocked** and **Monitored** limit the page to events where a rule blocked a call, or where a rule reported that it would have and let the call go ahead. Tick one, or both to see both. With neither ticked everything shows. They apply to the views, the search and the counts, and they are off until you tick them.
 
@@ -163,6 +163,11 @@ at startup in `jot-config` events, so the panel shows it as locked to monitor an
 say which JOTs the agent loaded, and a rule the agent didn't load is marked as such.
 
 ## Drafting a JOT
+
+**From a method.** You can also start from a method you can already see. Click a box for the application's own code in the graph and press
+**Make this a sensor**, or hover a frame in an event's stack and press **Make a sensor**, which also works for library and JDK frames. The
+editor opens with a JOT for that method, named for its class and method, with its arguments and result as captures. Change the captures to
+what you want, then Add to file. It needs no API key, since nothing is sent to a model, and a static initializer can't be watched, so it has no button.
 
 New JOT, on the JOTs tab, opens a chat. Say what you want a JOT to watch or stop, like "block any request that creates an RSA
 key under 2048 bits", and the model drafts one, with a few sentences about what it watches and what to check. The draft

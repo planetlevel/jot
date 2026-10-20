@@ -198,6 +198,9 @@
   #jotDetail li { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
   #eventDrawer dl { display: grid; grid-template-columns: 120px 1fr; gap: 4px 14px; margin: 0; font-size: 13px; }
   #eventDrawer dt { color: var(--muted); }
+#hideToast { position: fixed; left: 16px; bottom: 16px; z-index: 60; display: flex; gap: 12px; align-items: center; padding: 10px 14px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.35); font-size: 13px; }
+#graphTip .hint.keys { margin-top: 8px; }
 #filterDrawer { width: min(440px, 100vw); }
 #filterDrawer .opt { display: block; margin: 8px 0 2px; }
 #filterDrawer .opt input { margin-right: 8px; }
@@ -209,9 +212,11 @@
 #eventDrawer dl.fields dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
   #eventDrawer dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
   #eventDrawer .frames { margin: 0; padding: 0; list-style: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-  #eventDrawer .frames li { display: grid; grid-template-columns: 34px 1fr; padding: 2px 6px; border-radius: 4px; overflow-wrap: anywhere; }
+  #eventDrawer .frames li { display: grid; grid-template-columns: 34px 1fr auto; padding: 2px 6px; border-radius: 4px; overflow-wrap: anywhere; }
   #eventDrawer .frames .n { color: var(--muted); text-align: right; padding-right: 10px; }
-  #eventDrawer .frames .platform { color: var(--muted); }
+  #eventDrawer .frames .mk { visibility: hidden; padding: 0 6px; font-size: 11px; line-height: 16px; align-self: center; }
+#eventDrawer .frames li:hover .mk, #eventDrawer .frames .mk:focus { visibility: visible; }
+#eventDrawer .frames .platform { color: var(--muted); }
   #eventDrawer .frames .library { }
   #eventDrawer .frames .app { background: var(--observed-bg); color: var(--observed); font-weight: 600; }
   #eventDrawer .opt { font-size: 12px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; margin-left: 10px; text-transform: none; letter-spacing: 0; }
@@ -344,6 +349,7 @@
     <aside class="card" id="graphDetail" hidden></aside>
   </div>
   <div id="graphTip" role="tooltip" hidden></div>
+<div id="hideToast" role="status" hidden></div>
 </main>
 
 <main id="jotsPage" hidden>
@@ -413,10 +419,10 @@
 
   <h4>JOTs</h4>
   <p class="why" style="margin-left:0">Untick a JOT to hide what it observed. What a hidden rule blocked or reported still shows.</p>
-  <input type="search" id="jotFilter" autocomplete="off" aria-label="Find a JOT" placeholder="Find a JOT">
+  <input type="search" id="filterJotSearch" autocomplete="off" aria-label="Find a JOT" placeholder="Find a JOT">
   <p><button type="button" class="small" id="jotsAll">Tick all</button> <button type="button" class="small" id="jotsNone">Untick all</button>
     <span class="hint">the ones listed</span></p>
-  <div class="jotlist" id="jotList"></div>
+  <div class="jotlist" id="filterJotList"></div>
 </aside>
 <script src="/dom.js"></script>
 <script src="/grid.js"></script>
@@ -611,6 +617,7 @@ async function refreshStatus() {
   ].filter(Boolean));
   $("showAllBtn").hidden = !s.since;
   const active = (s.since ? 1 : 0) + (s.app_only ? 0 : 1) + (s.filter.blocked || s.filter.monitored ? 1 : 0) + (s.show_jot_control ? 1 : 0) + s.hidden_jots.length;
+  if (!$("filterDrawer").hidden && !jotNames.length) loadJotNames();
   $("filtersBtn").textContent = active ? "Filters (" + active + ")" : "Filters";
   $("appOnly").checked = s.app_only;
   $("filterBlocked").checked = s.filter.blocked;
@@ -623,13 +630,13 @@ async function refreshStatus() {
 // ---- the filter drawer
 let jotNames = [];
 function listedJots() {
-  const find = $("jotFilter").value.trim().toLowerCase();
+  const find = $("filterJotSearch").value.trim().toLowerCase();
   return jotNames.filter((j) => !find || j.name.toLowerCase().includes(find));
 }
 function drawJotList() {
   const hidden = new Set((lastStatus && lastStatus.hidden_jots) || []);
   const shown = listedJots();
-  $("jotList").replaceChildren(...(shown.length ? shown.map((j) => {
+  $("filterJotList").replaceChildren(...(shown.length ? shown.map((j) => {
     const box = el("input", { type: "checkbox", checked: hidden.has(j.name) ? null : "", onchange: () => setJotsShown([j.name], box.checked) });
     return el("label", { title: j.events.toLocaleString() + " events recorded" }, box, el("span", { text: j.name }),
       el("span", { class: "n", text: j.events.toLocaleString() }));
@@ -645,20 +652,43 @@ async function setJotsShown(names, show) {
     drawJotList();
   } catch (e) { showError(e.message); drawJotList(); }
 }
+async function loadJotNames() {
+  try {
+    jotNames = await api("/api/filter-jots");
+    drawJotList();
+  } catch (e) {
+    $("filterJotList").replaceChildren(el("div", { class: "hint", text: "Couldn't read the list of JOTs, " + e.message }));
+  }
+}
 async function openFilters() {
   $("filterBackdrop").hidden = false;
   $("filterDrawer").hidden = false;
-  try { jotNames = await api("/api/filter-jots"); } catch (e) { jotNames = []; }
-  drawJotList();
+  $("filterJotList").replaceChildren(el("div", { class: "hint", text: "Loading the JOTs..." }));
+  await loadJotNames();
 }
 function closeFilters() { $("filterBackdrop").hidden = true; $("filterDrawer").hidden = true; }
 $("filtersBtn").addEventListener("click", openFilters);
 $("filtersClose").addEventListener("click", closeFilters);
 $("filterBackdrop").addEventListener("click", closeFilters);
-$("jotFilter").addEventListener("input", drawJotList);
+$("filterJotSearch").addEventListener("input", drawJotList);
 $("jotsAll").addEventListener("click", () => setJotsShown(listedJots().map((j) => j.name), true));
 $("jotsNone").addEventListener("click", () => setJotsShown(listedJots().map((j) => j.name), false));
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !$("filterDrawer").hidden) closeFilters(); });
+
+// The JOT an event of this sensor belongs to, a rule's -active, -blocked and -monitored events being the rule's own
+function jotOf(sensor) { return sensor.replace(/-(active|blocked|monitored)$/, ""); }
+let toastTimer = null;
+// Hides what a JOT observes, from any page, and says so with a way to undo it
+async function hideJot(sensor) {
+  const name = jotOf(sensor);
+  await setJotsShown([name], false);
+  $("hideToast").replaceChildren(el("span", { text: "Hid " + name }),
+    el("button", { class: "small", type: "button", text: "Undo", onclick: async () => { $("hideToast").hidden = true; await setJotsShown([name], true); } }),
+    el("a", { href: "#", text: "Filters", onclick: (ev) => { ev.preventDefault(); $("hideToast").hidden = true; openFilters(); } }));
+  $("hideToast").hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { $("hideToast").hidden = true; }, 8000);
+}
 
 // ---- clearing. This sets a start time, nothing is deleted.
 async function setSince(value) {
@@ -1387,7 +1417,8 @@ function hooksNote(hooks) {
     + (unseen.length ? "Not seen in your log yet, " + unseen.map((h) => h.method).join(", ") + ". That is fine for a method that hasn't run, but check the name." : "");
 }
 
-function openDraft() {
+// initial is the text of a JOT to start from, which is put in the editor to be read, changed and added
+function openDraft(initial) {
   if (!jots) return;
   if (jotSelected && jotSelected !== "draft:new" && holdForEdits()) return;
   if (draft.editor) { draft.editor.destroy(); draft.editor = null; }
@@ -1417,6 +1448,15 @@ function openDraft() {
   request.focus();
 
   let timer = null, serial = 0, blocked = false;
+  const starting = () => {
+    draft.editor = JotEditor.create(host, { doc: initial, onChange: changed });
+    draft.history.push({ request: "a sensor on this method", yaml: initial });
+    const name = (/^name:\s*(\S+)/m.exec(initial) || [])[1];
+    if (name && !files.value) newName.value = name + ".jot";
+    log.append(el("div", { class: "bot" }, el("div", { text: "Here is a start for this method. Change the captures to what you want to see, or say what to change." })));
+    box.hidden = false;
+    check();
+  };
   const sync = () => {
     newName.hidden = files.value !== "";
     add.disabled = !jots.editable || blocked || !draft.editor || !draft.editor.get().trim();
@@ -1472,6 +1512,7 @@ function openDraft() {
     }
   }
   sync();
+  if (initial) starting();
   send.addEventListener("click", ask);
   request.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); ask(); } });
   add.addEventListener("click", async () => {
@@ -1493,7 +1534,7 @@ function openDraft() {
     }
   });
 }
-$("newJot").addEventListener("click", openDraft);
+$("newJot").addEventListener("click", () => openDraft());
 
 $("jotFilter").addEventListener("input", drawJots);
 $("reportFilter").addEventListener("input", drawJots);
@@ -1548,8 +1589,10 @@ function pickNode(id, route) {
 function graphLabel(text, max) { return text.length > max ? text.slice(0, max - 1) + "…" : text; }
 
 // The box that follows the pointer over a node, saying what it is and what it captured
+let hoverNode = null;
 function showTip(n, ev, anchor) {
   const tip = $("graphTip");
+  hoverNode = n;
   const caught = n.captures.slice(0, 8);
   tip.replaceChildren(...[
     el("div", { class: "tt" }, el("b", { text: n.label }), el("span", { class: "n", text: n.events.toLocaleString() + (n.kind === "route" ? (n.events === 1 ? " request" : " requests") : " events") })),
@@ -1559,6 +1602,7 @@ function showTip(n, ev, anchor) {
     ...caught.map(([c, count]) => el("div", { class: "cap" }, el("span", { text: graphLabel(c === "" ? "(nothing)" : c, 90) }),
       el("span", { class: "n", text: count.toLocaleString() }))),
     n.captures.length > caught.length ? el("div", { class: "hint", text: "and " + (n.captures.length - caught.length) + " more" }) : null,
+    hideable(n) ? el("div", { class: "hint keys", text: "Press H to hide " + jotOf(n.label) }) : null,
   ].filter(Boolean));
   tip.hidden = false;
   if (ev) moveTip(ev);
@@ -1572,7 +1616,16 @@ function placeTip(x, y) {
   tip.style.top = Math.max(8, Math.min(y, window.innerHeight - h - 8)) + "px";
 }
 function moveTip(ev) { placeTip(ev.clientX + 14, ev.clientY + 14); }
-function hideTip() { $("graphTip").hidden = true; }
+function hideTip() { $("graphTip").hidden = true; hoverNode = null; }
+// only what a sensor saw can be hidden, and not what a rule blocked or reported, which always shows
+function hideable(n) { return n.kind === "effect" && !n.blocked && !n.monitored && !/-(blocked|monitored)$/.test(n.label); }
+document.addEventListener("keydown", (ev) => {
+  if ((ev.key !== "h" && ev.key !== "H") || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test((ev.target && ev.target.tagName) || "") || !hoverNode || !hideable(hoverNode)) return;
+  const n = hoverNode;
+  hideTip();
+  hideJot(n.label);
+});
 
 // Each route is drawn on its own, so a route's paths can be read without those of the others running through them
 function drawGraph() {
@@ -1668,8 +1721,24 @@ function drawGraphDetail() {
     from.length ? list(from) : null,
     to.length ? el("h4", { text: "Leads to" }) : null,
     to.length ? list(to) : null,
-    el("div", { class: "row" }, el("button", { class: "primary small", type: "button", text: "Show these events", onclick: () => openSearch(query) })),
+    el("div", { class: "row" }, el("button", { class: "primary small", type: "button", text: "Show these events", onclick: () => openSearch(query) }),
+      n.kind === "code" && JotGraph.sensorFor(n.full, []) ? el("button", { class: "small", type: "button", text: "Make this a sensor",
+        title: "Start a JOT that watches this method and records its arguments and result", onclick: () => sensorFromNode(n) }) : null,
+      hideable(n) ? el("button", { class: "small", type: "button", text: "Hide " + jotOf(n.label), title: "Leave out what this JOT observes, from every page. Untick it in Filters to bring it back.",
+        onclick: () => hideJot(n.label) }) : null),
   ].filter(Boolean));
+}
+
+// a method of the application, as a JOT to start from in the editor of the JOTs page
+async function sensorFromNode(n) {
+  try {
+    await loadJots();
+    const text = JotGraph.sensorFor(n.full, jots.sensors.map((x) => x.name));
+    if (!text) return;
+    location.hash = "#jots";
+    showPage("jots");          // now, so the panel isn't closed as the page changes underneath it
+    openDraft(text);
+  } catch (e) { showError(e.message); }
 }
 
 // show the events behind something, as a search on the Events page
@@ -1784,6 +1853,9 @@ function drawEvent() {
       el("h2", {}, jotLink || e.sensor || "event"),
       el("span", { class: "spacer" }),
       pager(eventOrder.indexOf(e.pk), eventOrder.length, stepEvent),
+      e.action === "observed" && e.sensor && !e.sensor.startsWith("jot-")
+        ? el("button", { class: "small", type: "button", text: "Hide " + jotOf(e.sensor), title: "Leave out what this JOT observes, from every page. Untick it in Filters to bring it back.",
+            onclick: () => hideJot(e.sensor) }) : null,
       copy,
       el("button", { class: "small", text: "Close", title: "Escape", onclick: () => { location.hash = "#events"; } })),
     el("div", { class: "when", text: when }),
@@ -1802,7 +1874,10 @@ function drawEvent() {
         "hide JDK and server frames")),
     e.stack.length
       ? el("ol", { class: "frames", start: "0" }, ...frames.map((f) => el("li", { class: f.kind, title: f.kind },
-          el("span", { class: "n", text: String(e.stack.indexOf(f)) }), el("span", { text: f.frame }))))
+          el("span", { class: "n", text: String(e.stack.indexOf(f)) }), el("span", { text: f.frame }),
+          JotGraph.sensorFor(JotGraph.frameMethod(f.frame), []) ? el("button", { class: "small mk", type: "button", text: "Make a sensor",
+            title: "Start a JOT that watches " + JotGraph.frameMethod(f.frame) + " and records its arguments and result",
+            onclick: () => sensorFromNode({ full: JotGraph.frameMethod(f.frame) }) }) : null)))
       : el("div", { class: "hint", text: "This event has no stack." }),
     hiddenCount ? el("div", { class: "hint", text: hiddenCount + " JDK and server frames hidden" }) : null,
     e.related.length > 1 ? el("h4", { text: "Same request (" + e.related.length + " events)" }) : null,

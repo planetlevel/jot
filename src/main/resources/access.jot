@@ -27,6 +27,7 @@ sensors:
   captures:
     role: "#P0"
     allowed: "#RET"
+    user: '#OBJ.getRemoteUser() == null ? "Guest" : #OBJ.getRemoteUser()'
   matchers:
     role:
       - "!null"

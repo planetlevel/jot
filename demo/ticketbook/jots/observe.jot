@@ -31,6 +31,7 @@ sensors:
   captures:
     role: "#P0"
     allowed: "#RET"
+    user: '#OBJ.getRemoteUser() == null ? "Guest" : #OBJ.getRemoteUser()'
   matchers:
     role:
       - "!null"
@@ -208,6 +209,15 @@ sensors:
   captures:
     sql: "#ARGS"
 
+- name: sql-connection
+  description: Identifies obtaining a database connection, and where it connects
+  methods:
+  - com.acme.ticketbook.Database.getConnection
+  captures:
+    url: "#RET?.getMetaData()?.getURL()"
+    user: "#RET?.getMetaData()?.getUserName()"
+    closed: "#RET?.isClosed()"
+
 - name: file-path
   description: Identifies file and directory use
   methods:
@@ -255,3 +265,14 @@ sensors:
   captures:
     algorithm: "#P1.getAlgorithm()"
     bits: '#P1.getAlgorithm() == "RSA" ? #P1.getModulus().bitLength() : #P1.getEncoded().length * 8'
+
+- name: thread-runnable
+  description: Identifies a thread being created with a Runnable and the code that created it
+  methods:
+  - java.lang.Thread.<init>
+  captures:
+    runnable_classes: "#ARGS.![#this?.getClass()?.getName()]"
+    caller: "#CALLER"
+  matchers:
+    runnable_classes:
+    - '!^java\.lang\.(String|ThreadGroup|Long|Boolean)$'

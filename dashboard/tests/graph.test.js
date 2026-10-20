@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { layout, through, curve, collapse } = require("../static/graph.js");
+const { layout, through, curve, collapse, sensorFor, frameMethod } = require("../static/graph.js");
 
 const n = (id, kind, events = 1) => ({ id, kind, label: id, events });
 const e = (from, to, events = 1) => ({ from, to, events });
@@ -222,4 +222,54 @@ test("an edge that closes a loop is left out of the layout, so nothing runs back
   const L = layout(ns, es);
   assert.deepStrictEqual([...L.closing], [es[2]], "the order most requests used stays");
   for (const x of es) if (!L.closing.has(x)) assert.ok(L.pos.get(x.from).column < L.pos.get(x.to).column);
+});
+
+test("a method becomes a starting JOT named for the class and method", () => {
+  const text = sensorFor("com.acme.ticketbook.Database.getConnection", []);
+  assert.strictEqual(text, [
+    "name: database-get-connection",
+    "description: Identifies calls to Database.getConnection",
+    "methods:",
+    "- com.acme.ticketbook.Database.getConnection",
+    "captures:",
+    '  args: "#ARGS"',
+    '  result: "#RET"',
+    "",
+  ].join("\n"));
+});
+
+test("the name is made unique, handles acronyms and constructors, and what can't be watched gives nothing", () => {
+  assert.match(sensorFor("a.b.Database.getConnection", ["database-get-connection"]), /^name: database-get-connection-2\n/);
+  assert.match(sensorFor("a.b.UrlHelper.getURLPath", []), /^name: url-helper-get-url-path\n/);
+  assert.match(sensorFor("a.b.Ticket.<init>", []), /^name: ticket-new\n/);
+  assert.match(sensorFor("a.b.Outer$Inner.run", []), /^name: inner-run\n/);
+  assert.strictEqual(sensorFor("a.b.Ticket.<clinit>", []), null);
+  assert.strictEqual(sensorFor("a.b.C.m\na.b.C.n", []), null, "a folded run is more than one method");
+  assert.strictEqual(sensorFor("", []), null);
+});
+
+test("the method of a stack frame has no module, line or file", () => {
+  assert.strictEqual(frameMethod("java.base/javax.crypto.Cipher.getInstance(Cipher.java:531)"), "javax.crypto.Cipher.getInstance");
+  assert.strictEqual(frameMethod("org.hsqldb.jdbc.JDBCStatement.executeUpdate(Unknown Source)"), "org.hsqldb.jdbc.JDBCStatement.executeUpdate");
+  assert.strictEqual(frameMethod("com.acme.Ticket.<init>(Ticket.java:12)"), "com.acme.Ticket.<init>");
+  assert.strictEqual(frameMethod(""), "");
+});
+
+test("a route a forward leads to sits right after the forward, in the column of what else came at that distance", () => {
+  // r -> f (forward) -> page code -> later effect, and f -> x, the route it forwards to
+  const ns = [n("r", "route", 9), n("f", "effect", 6), n("page", "code", 4), n("later", "effect", 4), n("x", "exit", 6)];
+  const L = layout(ns, [e("r", "f"), e("f", "page"), e("page", "later"), e("f", "x")]);
+  const col = (id) => L.pos.get(id).column;
+  assert.strictEqual(col("x"), col("f") + 1, "side by side with the forward, not at the far end");
+  assert.strictEqual(col("x"), col("page"));
+  assert.strictEqual(L.columns, 4, "no column of its own at the end");
+  assert.ok(!L.titles.includes("Routes out"));
+  assert.notStrictEqual(L.pos.get("x").y, L.pos.get("page").y, "the column grows taller instead of overlapping");
+});
+
+test("a route out that comes after everything else still has its own column", () => {
+  const ns = [n("r", "route"), n("f", "effect"), n("x", "exit")];
+  const L = layout(ns, [e("r", "f"), e("f", "x")]);
+  assert.strictEqual(L.pos.get("x").column, 2);
+  assert.deepStrictEqual(L.titles, ["Routes in", "What was seen", "Routes out"]);
 });

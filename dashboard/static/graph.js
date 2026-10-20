@@ -62,8 +62,13 @@
     let firstEffect = maxDepth + 1;
     for (const n of nodes) if (n.kind === "effect") firstEffect = Math.min(firstEffect, depth.get(n.id));
 
-    const hasExit = nodes.some((n) => n.kind === "exit");
-    const column = (n) => n.kind === "route" ? 0 : (n.kind === "code" || n.kind === "effect") ? depth.get(n.id) : maxDepth + 1;
+    // a route that a forward or redirect leads to sits right after the node that leads to it, side by side, rather than
+    // far off at the end. It may share a column with what else came at that distance, and the column grows taller
+    const exitColumn = (n) => {
+      const from = inn.get(n.id).filter((id) => byId.get(id).kind === "code" || byId.get(id).kind === "effect");
+      return from.length ? Math.max(...from.map((id) => depth.get(id))) + 1 : maxDepth + 1;
+    };
+    const column = (n) => n.kind === "route" ? 0 : (n.kind === "code" || n.kind === "effect") ? depth.get(n.id) : exitColumn(n);
     const columns = [];
     for (const n of nodes) {
       const c = column(n);
@@ -76,7 +81,8 @@
       if (c < firstEffect) { titles.push(labeledCode ? "" : "Application code"); labeledCode = true; }
       else { titles.push(labeledEffect ? "" : "What was seen"); labeledEffect = true; }
     }
-    if (hasExit) titles.push("Routes out");
+    // only a column past the last method or effect is made of routes out, an exit beside others has the column's own title
+    if (columns.length > maxDepth + 1) titles.push("Routes out");
 
     // start with the busiest on top, then pull each node toward the middle of the nodes it is connected to
     const y = new Map();
@@ -226,7 +232,37 @@
     return { nodes: second.nodes, edges: second.edges, head };
   }
 
-  const api = { layout, through, curve, collapse };
+  // A starting JOT for an application method, from its full name like com.acme.Database.getConnection, or null when a method of
+  // that name can't be watched, like a static initializer. Its name is the class and method as words, made unique among those taken.
+  function sensorFor(full, taken) {
+    if (!full || !/^([\p{L}_$][\p{L}\p{N}_$]*\.)+(<init>|[\p{L}_$][\p{L}\p{N}_$]*)$/u.test(full)) return null;
+    const parts = full.split(".");
+    const method = parts.pop(), cls = parts.pop().replace(/^.*\$/, "");
+    const words = (text) => text.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    let base = words(cls) + "-" + (method === "<init>" ? "new" : words(method));
+    if (!/^[a-z]/.test(base)) base = "jot-" + base;
+    const used = new Set(taken || []);
+    let name = base;
+    for (let i = 2; used.has(name); i++) name = base + "-" + i;
+    return [
+      "name: " + name,
+      "description: Identifies calls to " + cls + "." + (method === "<init>" ? "<init>" : method),
+      "methods:",
+      "- " + full,
+      "captures:",
+      '  args: "#ARGS"',
+      '  result: "#RET"',
+      "",
+    ].join("\n");
+  }
+
+  // The method of a stack frame, java.base/javax.crypto.Cipher.getInstance(Cipher.java:531) is javax.crypto.Cipher.getInstance
+  function frameMethod(frame) {
+    const head = String(frame || "").split("(")[0];
+    return head.includes("/") ? head.slice(head.lastIndexOf("/") + 1) : head;
+  }
+
+  const api = { layout, through, curve, collapse, sensorFor, frameMethod };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.JotGraph = api;
 })(typeof window !== "undefined" ? window : globalThis);

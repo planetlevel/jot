@@ -169,6 +169,11 @@ blockquote { border-left: 3px solid var(--accent); color: var(--muted); }
 .table > thead > tr > th { border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
 .table > tbody > tr > td, .table > tbody > tr > th { border-top: 1px solid var(--border); }
 .table-hover > tbody > tr:hover { background: var(--surface-2); }
+/* Bootstrap colors its contextual rows for a light page, which leaves the light text of this one unreadable on them */
+.table > tbody > tr.danger > td, .table > tbody > tr.danger > th { background: rgba(255, 123, 123, 0.16); color: var(--text); }
+.table > tbody > tr.warning > td, .table > tbody > tr.warning > th { background: rgba(240, 180, 60, 0.16); color: var(--text); }
+.table > tbody > tr.success > td, .table > tbody > tr.success > th { background: var(--accent-tint); color: var(--text); }
+.table > tbody > tr.info > td, .table > tbody > tr.info > th { background: rgba(80, 160, 240, 0.16); color: var(--text); }
 
 .alert { border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); }
 iframe { border-radius: 8px; }

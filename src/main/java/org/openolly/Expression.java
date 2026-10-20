@@ -19,10 +19,35 @@ public class Expression {
 	private static ExpressionParser parser = new SpelExpressionParser();
 	private org.springframework.expression.Expression exp = null;
 
-	private StandardEvaluationContext context = new StandardEvaluationContext();
-	
+	/**
+	 * The variables of a call are set on a context before the expression reads them, so a context shared by threads would
+	 * hand one request's #P0 to another that is running at the same time. Each thread has its own.
+	 */
+	private final ThreadLocal<StandardEvaluationContext> contexts = new ThreadLocal<StandardEvaluationContext>();
+	/** how many P variables each thread's context has been given, so a call with fewer arguments doesn't see the last call's */
+	private final ThreadLocal<int[]> parameterCounts = ThreadLocal.withInitial( () -> new int[1] );
+
 	public Expression(String expression) throws ParseException, NoSuchMethodException, SecurityException {
 		exp = parser.parseExpression(expression);
+		// checked once here, so a function that can't be registered is a mistake in the expression when it is written
+		newContext();
+	}
+
+	private StandardEvaluationContext context() {
+		StandardEvaluationContext context = contexts.get();
+		if ( context == null ) {
+			try {
+				context = newContext();
+			} catch ( NoSuchMethodException e ) {
+				throw new IllegalStateException( e );
+			}
+			contexts.set( context );
+		}
+		return context;
+	}
+
+	private static StandardEvaluationContext newContext() throws NoSuchMethodException {
+		StandardEvaluationContext context = new StandardEvaluationContext();
 		context.registerFunction("toUpper", StringUtils.class.getMethod("upperCase", String.class));
 		context.registerFunction("toLower", StringUtils.class.getMethod("upperCase", String.class));
 		// so a map can be read as #ANNOTATION.roles as well as #ANNOTATION['roles']
@@ -38,6 +63,7 @@ public class Expression {
 			public void write(org.springframework.expression.EvaluationContext c, Object target, String name, Object value) { }
 		});
 		context.registerFunction("sort", Collections.class.getMethod("sort", List.class));
+		return context;
 	}
 
 	public Object execute(Object obj, Object[] params, Object ret, String caller, StackTraceElement[] stack) {
@@ -53,14 +79,16 @@ public class Expression {
 		params = convert( params );
 		ret = convert( ret );
 		
+		StandardEvaluationContext context = context();
+		int[] known = parameterCounts.get();
+		int count = params == null ? 0 : params.length;
 		context.setVariable("OBJ", obj);
 		context.setVariable("ARGS", params);
 		context.setVariable("RET", ret);
-		if (params != null) {
-			for (int i = 0; i < params.length; i++) {
-				context.setVariable("P" + i, params[i]);
-			}
+		for (int i = 0; i < Math.max( count, known[0] ); i++) {
+			context.setVariable("P" + i, i < count ? params[i] : null);
 		}
+		known[0] = Math.max( count, known[0] );
 		context.setVariable("CALLER", caller);
 		context.setVariable("STACK", stack);
 		context.setVariable("ANNOTATION", annotation);
@@ -72,6 +100,14 @@ public class Expression {
 		} catch( Exception e ) {
 			logger.atWarning().log( "[JOT] Couldn't evaluate %s: %s", this, e.getMessage() );
 			result = null;
+		} finally {
+			// the context stays with the thread, and must not keep the request's objects alive until the next call
+			context.setVariable("OBJ", null);
+			context.setVariable("ARGS", null);
+			context.setVariable("RET", null);
+			for (int i = 0; i < known[0]; i++) context.setVariable("P" + i, null);
+			context.setVariable("STACK", null);
+			context.setVariable("ANNOTATION", null);
 		}
 		return result;
 	}

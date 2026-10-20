@@ -17,7 +17,7 @@ reports:
    
  - name: Role Membership
    type: compare
-   rows: auth-user.user
+   rows: auth-role-check.user
    cols: auth-role-check.role
    value: auth-role-check.allowed
    
