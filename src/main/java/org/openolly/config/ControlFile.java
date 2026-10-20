@@ -13,6 +13,7 @@ import java.util.Set;
 import org.openolly.JotScope;
 import org.openolly.Sensor;
 import org.openolly.reporting.Event;
+import org.openolly.log.FluentLogger;
 import org.openolly.reporting.EventBus;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -44,6 +45,8 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
  * shows when protection was lowered or restored.
  */
 public final class ControlFile {
+
+	private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
 	static final String SENSOR = "jot-control";
 	private static final int MAX_BYTES = 64 * 1024;
@@ -189,7 +192,7 @@ public final class ControlFile {
 		String message = "[JOT] control file " + path + " " + text;
 		if ( !message.equals( lastProblem ) ) {
 			lastProblem = message;
-			System.err.println( message );
+			logger.atWarning().log( message );
 		}
 	}
 
@@ -200,8 +203,10 @@ public final class ControlFile {
 			Set<PosixFilePermission> perms = Files.getPosixFilePermissions( path );
 			if ( perms.contains( PosixFilePermission.OTHERS_WRITE ) || perms.contains( PosixFilePermission.GROUP_WRITE ) ) {
 				warnedPermissions = true;
-				System.err.println( "[JOT] control file " + path + " can be written by other users. Anyone who can write it can switch "
-						+ "protection off. Run chmod go-w on it." );
+				String warning = "control file " + path + " can be written by other users. Anyone who can write it can switch "
+						+ "protection off. Run chmod go-w on it.";
+				logger.atWarning().log( warning );
+				EventBus.publish( new Event( SENSOR, "warning", null, Event.Action.OBSERVED, warning ) );
 			}
 		} catch ( UnsupportedOperationException e ) {
 			// not a POSIX file system

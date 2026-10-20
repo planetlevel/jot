@@ -10,7 +10,7 @@ import org.springframework.expression.ParseException;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
 
-import com.google.common.flogger.FluentLogger;
+import org.openolly.log.FluentLogger;
 
 public class Expression {
 
@@ -21,11 +21,13 @@ public class Expression {
 
 	/**
 	 * The variables of a call are set on a context before the expression reads them, so a context shared by threads would
-	 * hand one request's #P0 to another that is running at the same time. Each thread has its own.
+	 * hand one request's #P0 to another that is running at the same time. Each thread has its own. It is one for the thread and
+	 * not one for each expression, since they are all set up the same, and a thread only runs one expression at a time because no
+	 * sensor fires inside JOT's own code. That keeps it to about a kilobyte for each thread, not for each thread and sensor.
 	 */
-	private final ThreadLocal<StandardEvaluationContext> contexts = new ThreadLocal<StandardEvaluationContext>();
+	private static final ThreadLocal<StandardEvaluationContext> contexts = new ThreadLocal<StandardEvaluationContext>();
 	/** how many P variables each thread's context has been given, so a call with fewer arguments doesn't see the last call's */
-	private final ThreadLocal<int[]> parameterCounts = ThreadLocal.withInitial( () -> new int[1] );
+	private static final ThreadLocal<int[]> parameterCounts = ThreadLocal.withInitial( () -> new int[1] );
 
 	public Expression(String expression) throws ParseException, NoSuchMethodException, SecurityException {
 		exp = parser.parseExpression(expression);

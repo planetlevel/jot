@@ -59,3 +59,16 @@ test("a captured list loses its brackets so each item reads on its own", () => {
   const g = pivot(["r", "c", "v"], [["a", "q", "[SELECT 1]"], ["a", "q", "[SELECT 2]"], ["a", "w", "[x], [y]"]]);
   assert.deepStrictEqual(g.rows[0].cells, [["SELECT 1", "SELECT 2"], ["[x], [y]"]]);
 });
+
+test("a fourth column says who had each value, kept by cell and value", () => {
+  const g = pivot(["route", "role", "allowed", "user"], [
+    ["/a", "RoleA", "true", "UserB"], ["/a", "RoleA", "false", "UserA"], ["/a", "RoleA", "false", "UserC"], ["/a", "RoleA", "false", "UserA"],
+  ]);
+  assert.deepStrictEqual(g.rows[0].cells[0], ["false", "true"]);
+  assert.deepStrictEqual(g.rows[0].notes[0], { true: ["UserB"], false: ["UserA", "UserC"] });
+});
+
+test("without a fourth column the cells have no notes", () => {
+  const g = pivot(["route", "role", "allowed"], [["/a", "RoleA", "true"]]);
+  assert.strictEqual(g.rows[0].notes, undefined);
+});

@@ -8,7 +8,7 @@ import java.util.List;
 import org.openolly.advice.AppScopeAdvice;
 import org.openolly.advice.scope.BinaryScope;
 
-import com.google.common.flogger.FluentLogger;
+import org.openolly.log.FluentLogger;
 
 import net.bytebuddy.agent.builder.AgentBuilder;
 import net.bytebuddy.asm.Advice;
@@ -75,7 +75,7 @@ public final class AppScope {
 	/** Puts the advice on every entry point. One advice for all of them, however many JOTs use the application scope. */
 	public static AgentBuilder instrument(AgentBuilder builder) {
 		for ( MethodLocator entry : entries ) {
-			logger.atWarning().log( "APP SCOPE " + ( entry.isAnnotation() ? "@" + entry.annotationName() : entry.className() + " -> " + entry.methodName() ) );
+			logger.atFine().log( "APP SCOPE " + ( entry.isAnnotation() ? "@" + entry.annotationName() : entry.className() + " -> " + entry.methodName() ) );
 			if ( entry.isConstructor() ) {
 				logger.atWarning().log( "WARNING: " + entry.className() + " is a constructor, which can't be an entry point of the application. Ignoring" );
 				continue;

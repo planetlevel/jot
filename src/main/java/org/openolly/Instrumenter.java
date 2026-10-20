@@ -23,7 +23,7 @@ import net.bytebuddy.agent.builder.AgentBuilder.TypeStrategy;
 import net.bytebuddy.asm.Advice;
 import net.bytebuddy.dynamic.ClassFileLocator;
 
-import com.google.common.flogger.FluentLogger;
+import org.openolly.log.FluentLogger;
 
 public class Instrumenter {
 	
@@ -31,7 +31,7 @@ public class Instrumenter {
 
 	private static Instrumentation inst = null;
 
-	// -Djot.verbose=true reveals instrumentation errors that are otherwise suppressed
+	// -Djot.verbose=true writes instrumentation errors to the agent's log, see -Djot.log, and they are otherwise suppressed
 	private static final boolean VERBOSE = Boolean.getBoolean("jot.verbose");
 	// on unless -Djot.retransform=false, see the comment where it is used
 	private static final boolean RETRANSFORM = !"false".equalsIgnoreCase(System.getProperty("jot.retransform"));
@@ -57,7 +57,7 @@ public class Instrumenter {
 			//	.with(AgentBuilder.Listener.StreamWriting.toSystemError())
 			//	.with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
 			//	.with(AgentBuilder.Listener.StreamWriting.toSystemError().withTransformationsOnly())
-				.with(VERBOSE ? InstallationListener.StreamWriting.toSystemError() : InstallationListener.ErrorSuppressing.INSTANCE)  // prevent errors from breaking app
+				.with(InstallationListener.ErrorSuppressing.INSTANCE)  // prevent errors from breaking app, and nothing goes to the application's console
 				.with(VERBOSE ? new ErrorLogger() : AgentBuilder.Listener.NoOp.INSTANCE)
 				.with(new JotScopeListener())      // sensors must not see JOT reading class files while it decides what to instrument
 				.with(LocationStrategy.ForClassLoader.STRONG.withFallbackTo(ClassFileLocator.ForClassLoader.ofBootLoader()))
@@ -80,7 +80,7 @@ public class Instrumenter {
 
 			for (Sensor sensor : sensors ) {
 				//System.err.println( "[SENSOR] processing " + sensor );
-				logger.atWarning().log("[SENSOR] processing " + sensor);
+				logger.atFine().log("[SENSOR] processing " + sensor);
 				builder = sensor.instrument( builder );
 			}
 			

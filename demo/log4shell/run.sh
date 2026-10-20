@@ -18,13 +18,16 @@ CP=$OUT/classes:$OUT/lib/log4j-core-2.14.1.jar:$OUT/lib/log4j-api-2.14.1.jar
 javac -cp "$CP" -d $OUT/classes FakeDirectory.java Victim.java
 
 run() {
-  rm -f pwned.txt
-  java "$@" -Djava.naming.factory.initial=FakeDirectory -cp "$CP" Victim 2>&1 \
-    | grep -E 'ERROR Victim|pwned|BLOCKED|MONITORED|SEVERE|CVE-2021'
+  rm -f pwned.txt $OUT/events.jsonl
+  # the agent writes nothing to the console, so what it recorded is read from its event file
+  java "$@" -Djot.output=json -Djot.output.file=$OUT/events.jsonl -Djava.naming.factory.initial=FakeDirectory -cp "$CP" Victim 2>&1 \
+    | grep -E 'ERROR Victim|pwned'
+  [ -f $OUT/events.jsonl ] && grep -oE '"sensor":"cve-[^"]*","action":"(blocked|monitored)"' $OUT/events.jsonl \
+    | sed -E 's/"sensor":"([^"]*)","action":"([^"]*)"/JOT recorded \1 (\2)/' | sort -u || true
   rm -f pwned.txt
 }
 echo "=== without JOT ==="; run
 echo; echo "=== with JOT, monitor only (-Djot.protect=false). The attack still works and is recorded ==="
-run -Djot.protect=false -Djot.verbose=true -javaagent:$JAR=jots.yaml
+run -Djot.protect=false -javaagent:$JAR=jots.yaml
 echo; echo "=== with JOT, enforcing (log4shell.jot). The attack is stopped ==="
-run -Djot.verbose=true -javaagent:$JAR=jots.yaml
+run -javaagent:$JAR=jots.yaml

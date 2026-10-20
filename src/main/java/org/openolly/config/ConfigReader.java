@@ -11,15 +11,13 @@ import org.openolly.AppScope;
 import org.openolly.PlatformWork;
 import org.openolly.Sensor;
 import org.openolly.reporting.EventBus;
-import org.openolly.reporting.Report;
-import org.openolly.reporting.RouteGraph;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import com.google.common.flogger.FluentLogger;
+import org.openolly.log.FluentLogger;
 
 
 public class ConfigReader {
@@ -41,7 +39,7 @@ public class ConfigReader {
 			return;
 		}
 		//System.err.println( "[JOT] Loading JOTs from " + filename );
-		logger.atWarning().log("[JOT] Loading JOTs from " + filename );
+		logger.atInfo().log("Loading JOTs from " + filename );
 		// The argument is a jots file, which lists the .jot files and directories to load. The dashboard reads
 		// the same file, so the two always agree. The first definition of a name wins.
 		File jots = new File( filename.trim() );
@@ -181,7 +179,8 @@ public class ConfigReader {
 		problems.add( file.getName() + " " + ( name == null ? "" : name + " " ) + text );
 	}
 
-	// Sensors are added to the Sensor class, reports are added to the EventBus as sinks. A sensor or rule that says
+	// Sensors are added to the Sensor class. A reports section is for the dashboard, which reads the same files, and the agent leaves it
+	// alone. A sensor or rule that says
 	// something wrong is left out and said so, see JotValidator, and the rest of the file is still read.
 	public static void load( File yaml ) throws IOException {
 		ConfigReader.yaml = yaml;
@@ -237,48 +236,11 @@ public class ConfigReader {
 					.debug( entry.debug );
 			}
 		}
-
-		// the reports are bound on their own, so a sensor that is wrong can't take them with it
-		com.fasterxml.jackson.databind.node.ObjectNode rest = ( (com.fasterxml.jackson.databind.node.ObjectNode) root ).deepCopy();
-		rest.remove( "sensors" );
-		YAML config = mapper.treeToValue( rest, YAML.class );
-
-		if ( config.reports != null ) {
-			for ( YAMLReport entry : config.reports ) {
-				if ( entry.name == null || entry.name.contentEquals( "example" ) ) continue;
-				try {
-					addReport( entry );
-				} catch ( IllegalArgumentException e ) {
-					logger.atWarning().log( "[JOT] Skipping report '" + entry.name + "' in " + yaml + ", " + e.getMessage() );
-				}
-			}
-		}
-	}
-
-	private static void addReport( YAMLReport entry ) {
-		String type = entry.type == null ? "" : entry.type.trim();
-		if ( type.equalsIgnoreCase( "series" ) ) {
-			throw new IllegalArgumentException( "series reports were replaced by the event log, see jot.output" );
-		}
-		if ( type.equalsIgnoreCase( "graph" ) ) {
-			if ( entry.rows == null ) throw new IllegalArgumentException( "a graph report needs rows" );
-			List<String> forwards = entry.cols == null ? null : Arrays.asList( entry.cols.split( ",\\s*" ) );
-			EventBus.addSink( new RouteGraph( entry.name, entry.rows, forwards ) );
-			return;
-		}
-		EventBus.addSink( new Report()
-			.name( entry.name )
-			.type( type )
-			.rows( entry.rows )
-			.cols( entry.cols )
-			.value( entry.value )
-			.validate() );
 	}
 	
 	private static class YAML {
 		public YAML() {}
 		public List<YAMLSensor> sensors = null;
-		public List<YAMLReport> reports = null;
 	}
 	
 	private static class YAMLSensor {
@@ -296,15 +258,6 @@ public class ConfigReader {
 		public boolean debug = false;
 	}
 
-	private static class YAMLReport {
-		public String name = null;
-		public String type = null;
-		public String rows = null;
-		public String cols = null;
-		public String value = null;
-	}
-	
-	
 	public static void write( List<YAML> list) throws Exception, JsonMappingException, IOException {		
 		ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
 		mapper.writeValue(System.out, list);

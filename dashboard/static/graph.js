@@ -7,8 +7,13 @@
 // column the order is chosen so edges cross as little as possible.
 (function (root) {
   const NODE_W = 200, NODE_H = 26, GAP_Y = 10, COL_GAP = 80, PAD = 16, HEADER = 0;
+  // going down, boxes in a row are this far apart, and rows this far, which leaves room for the lines between them to bend
+  const GAP_X = 28, ROW_GAP = 40;
 
-  function layout(nodes, edges) {
+  // With down, the steps run from top to bottom, one row for each, so a long path is a column of boxes and the page grows tall
+  // and not wide. Without it they run from left to right, one column for each. Either way the same steps share a rank.
+  function layout(nodes, edges, options) {
+    const down = !!(options && options.down);
     const byId = new Map(nodes.map((n) => [n.id, n]));
     const all = new Map(nodes.map((n) => [n.id, []]));
     for (const e of edges) if (byId.has(e.from) && byId.has(e.to)) all.get(e.from).push(e);
@@ -107,6 +112,20 @@
     // every column is as tall as the tallest. A shorter one is spread over that height, each node in the middle of its
     // own share of it, so a lone node sits at the middle and the edges between columns stay level
     const tallest = Math.max(1, ...columns.map((col) => col.length));
+    if (down) {
+      const slotX = NODE_W + GAP_X, span = tallest * slotX;
+      const pos = new Map();
+      columns.forEach((col, r) => col.forEach((n, i) => {
+        const share = span / col.length;
+        pos.set(n.id, { x: PAD + (i + 0.5) * share - NODE_W / 2, y: PAD + r * (NODE_H + ROW_GAP), column: r });
+      }));
+      return {
+        pos, closing, titles, columns: columns.length, down: true,
+        width: PAD * 2 + span - GAP_X,
+        height: PAD * 2 + columns.length * NODE_H + Math.max(0, columns.length - 1) * ROW_GAP,
+        nodeW: NODE_W, nodeH: NODE_H,
+      };
+    }
     const slot = NODE_H + GAP_Y, span = tallest * slot;
     const pos = new Map();
     columns.forEach((col, c) => col.forEach((n, i) => {
@@ -133,6 +152,12 @@
   }
 
   const union = (a, b) => [...new Set([...(a || []), ...(b || [])])].sort((x, y) => x - y);
+
+  // a line from the bottom middle of a box to the top middle of the next, for a layout that runs down. a and b are those two points
+  function curveDown(a, b) {
+    const dy = Math.max(20, Math.abs(b.y - a.y) / 2);
+    return "M" + a.x + "," + a.y + " C" + a.x + "," + (a.y + dy) + " " + b.x + "," + (b.y - dy) + " " + b.x + "," + b.y;
+  }
 
   function curve(a, b, w) {
     const x1 = a.x + w, y1 = a.y, x2 = b.x, y2 = b.y;
@@ -262,7 +287,7 @@
     return head.includes("/") ? head.slice(head.lastIndexOf("/") + 1) : head;
   }
 
-  const api = { layout, through, curve, collapse, sensorFor, frameMethod };
+  const api = { layout, through, curve, curveDown, collapse, sensorFor, frameMethod };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.JotGraph = api;
 })(typeof window !== "undefined" ? window : globalThis);

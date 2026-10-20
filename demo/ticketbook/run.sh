@@ -57,8 +57,8 @@ rm -f "$CONTROL"
 LOG=${JOT_LOG:-$ROOT/jot-events.jsonl}
 export CATALINA_BASE=$BASE
 export CATALINA_HOME
-# Remove -Djot.verbose=true to quiet instrumentation errors.
-export CATALINA_OPTS="-Djot.verbose=true -Djot.output=json -Djot.output.stack=500 -Djot.output.file=$LOG -Djot.app=ticketbook \
+# The agent says nothing to the application's output. Its own log, for debugging it, is jot-agent.log. Remove -Djot.log to stop it.
+export CATALINA_OPTS="-Djot.verbose=true -Djot.log=$ROOT/jot-agent.log -Djot.output=json -Djot.output.stack=500 -Djot.output.file=$LOG -Djot.app=ticketbook \
   -Djot.control=$CONTROL -javaagent:$JAR=$HERE/jots.yaml"
 
 echo "Mode $MODE. JOT events go to $LOG"

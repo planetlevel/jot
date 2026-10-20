@@ -27,6 +27,7 @@ import org.openolly.JotScope;
  */
 public final class EventBus {
 
+	private static final org.openolly.log.FluentLogger logger = org.openolly.log.FluentLogger.forEnclosingClass();
 	private static final int DEFAULT_QUEUE_SIZE = 10000;
 
 	private static volatile boolean active = false;
@@ -44,13 +45,14 @@ public final class EventBus {
 	/** Configure from -Djot.* system properties and start delivering. */
 	public static synchronized void configureFromSystemProperties() {
 		List<EventSink> list = new ArrayList<EventSink>();
-		String outputs = System.getProperty( "jot.output", "console" );
+		// nothing is written unless it is asked for, the agent is not to show in the application's output
+		String outputs = System.getProperty( "jot.output", "" );
 		for ( String name : outputs.split( "," ) ) {
 			switch ( name.trim().toLowerCase() ) {
 			case "console": list.add( new ConsoleSink( System.err ) ); break;
 			case "json": list.add( new JsonSink( System.getProperty( "jot.output.file", "jot-events.jsonl" ) ) ); break;
 			case "": break;
-			default: System.err.println( "[JOT] Unknown jot.output '" + name.trim() + "', ignoring. Use console or json." );
+			default: logger.atWarning().log( "Unknown jot.output '" + name.trim() + "', ignoring. Use console or json." );
 			}
 		}
 		if ( System.getProperty( "jot.events", "all" ).equalsIgnoreCase( "violations" ) ) {
@@ -114,13 +116,12 @@ public final class EventBus {
 			Thread.currentThread().interrupt();
 		}
 		drain();
-		PrintStream err = System.err;
-		if ( dropped.get() > 0 ) err.println( "[JOT] " + dropped.get() + " events were dropped because the event queue was full. Raise jot.queue.size." );
+		if ( dropped.get() > 0 ) logger.atWarning().log( dropped.get() + " events were dropped because the event queue was full. Raise jot.queue.size." );
 		for ( EventSink sink : sinks ) {
 			try {
 				sink.close();
 			} catch ( Throwable t ) {
-				err.println( "[JOT] Error closing " + sink + ": " + t );
+				logger.atWarning().withCause( t ).log( "Error closing " + sink );
 			}
 		}
 		sinks.clear();
@@ -149,7 +150,7 @@ public final class EventBus {
 				sink.accept( event );
 			} catch ( Throwable t ) {
 				// a broken sink must never affect the others or the application
-				System.err.println( "[JOT] Error in " + sink + ": " + t );
+				logger.atWarning().withCause( t ).log( "Error in " + sink );
 			}
 		}
 	}

@@ -154,6 +154,13 @@ sensors:
     algorithm: "#OBJ.getAlgorithm()"
     operation: '#P0 == 1 ? "encrypt" : #P0 == 2 ? "decrypt" : "other"'
 
+- name: crypto-cipher-request
+  description: Identifies a cipher algorithm being requested, before it is used
+  methods:
+  - javax.crypto.Cipher.getInstance
+  captures:
+    algorithm: "#P0"
+
 - name: crypto-hash
   description: Identifies a hash algorithm being used
   methods:

@@ -60,7 +60,8 @@ Grids (crosstabs)
     list     rows are the code that called the instrumented method (call_site), one column for the sensor
              in cols, cells hold what it captured
     compare  rows are the values of the rows field, columns are the values of the cols field, and cells hold
-             the value field, or an x, related when they share a run and trace
+             the value field, or an x, related when they share a run and trace. With by, a fourth column of who had
+             each value, which the grid shows like true (UserB), naming them for true and not for false
     table    rows are the values of the rows field, one column per field in cols, cells hold that field,
              related by run and trace
   Rows, cols and value are written sensor.field, like http-route.path.
@@ -138,7 +139,7 @@ def build_prompt(question, schema, sensors, history=(), error=None, reports=()):
         lines += ["", "Reports defined in the .jot files"]
         for r in reports:
             lines.append("- %s (%s, rows %s, cols %s%s)" % (r["name"], r["type"], r.get("rows_sensor") or "none", r.get("cols"),
-                                                          ", value %s" % r["value"] if r.get("value") else ""))
+                                                          (", value %s" % r["value"] if r.get("value") else "") + (", by %s" % r["by"] if r.get("by") else "")))
     if history:
         lines += ["", "Earlier in this conversation, oldest first"]
         for h in history[-5:]:

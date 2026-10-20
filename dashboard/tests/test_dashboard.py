@@ -277,6 +277,38 @@ class ReportTests(unittest.TestCase):
     def test_table_has_a_column_per_sensor(self):
         self.assertEqual([("/buy", "crypto-cipher.algorithm", "DES")], self.rows("Cipher Table"))
 
+    def events_behind(self, name, row=None, col=None):
+        q = self.app.report_events(name, row, col)
+        out = self.app.sql(q["sql"], limit=5000)
+        self.assertEqual(["pk", "time", "action", "sensor", "call_site", "capture"], out["columns"], "pk first, so a row opens its event")
+        return q, out["rows"]
+
+    def test_a_cell_has_the_events_that_put_its_values_there(self):
+        q, rows = self.events_behind("Access Control Matrix", "/buy", "RoleA")
+        self.assertEqual([["auth-role-check", "RoleA"]], [[r[3], r[5]] for r in rows], "the role check of RoleA in the /buy request")
+        self.assertEqual("Events behind Access Control Matrix, /buy, RoleA", q["title"])
+
+    def test_a_row_has_all_of_its_events_and_a_column_all_of_its_events(self):
+        _, rows = self.events_behind("Access Control Matrix", "/buy", None)
+        self.assertEqual(["RoleA", "RoleB", "RoleB"], sorted(r[5] for r in rows), "every role check of that route, two of RoleB")
+        _, rows = self.events_behind("Access Control Matrix", None, "RoleB")
+        self.assertEqual(["RoleB", "RoleB"], [r[5] for r in rows])
+        _, rows = self.events_behind("Access Control Matrix")
+        self.assertEqual(4, len(rows), "no row and no column is every event the report uses, that join the route in their request")
+
+    def test_a_table_and_a_list_have_theirs_too(self):
+        _, rows = self.events_behind("Cipher Table", "/buy", "crypto-cipher.algorithm")
+        self.assertEqual([["crypto-cipher", "DES"]], [[r[3], r[5]] for r in rows])
+        _, rows = self.events_behind("Encryption Usage", "com.acme.Ticket.encrypt(Ticket.java:125)", "crypto-cipher.algorithm")
+        self.assertEqual(["DES"], [r[5] for r in rows])
+
+    def test_a_row_with_a_quote_in_it_cannot_break_the_query_and_an_unknown_report_is_refused(self):
+        _, rows = self.events_behind("Access Control Matrix", "a'b); DROP TABLE events; --", "RoleA")
+        self.assertEqual([], rows)
+        self.assertEqual(10, self.app.sql("SELECT COUNT(*) FROM events")["rows"][0][0])
+        with self.assertRaises(LookupError):
+            self.app.report_events("Nothing", None, None)
+
     def test_sensor_names_with_quotes_cannot_break_the_query(self):
         sql = store.report_sql("compare", "a'b", "c'); DROP TABLE events; --")
         self.assertEqual([], self.app.sql(sql)["rows"])
@@ -1860,6 +1892,150 @@ class DraftUiTests(unittest.TestCase):
         self.assertEqual(["crypto-cipher", "crypto-weak-key"], [x["name"] for x in saved["sensors"]])
 
 
+class DraftEditorTests(unittest.TestCase):
+    CHROME = DraftUiTests.CHROME
+    DRAFT = "name: crypto-weak-key\ndescription: Identifies a key under 2048 bits\nmethods:\n- java.security.KeyPairGenerator.initialize\ncaptures:\n  size: \"#P0\"\n"
+
+    SCRIPT = """
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const out = {};
+      try {
+        if (location.search.indexOf("broken") >= 0) {
+          const st = document.createElement("style"); st.textContent = ".cm-editor { display: none !important }"; document.head.append(st);
+        }
+        await wait(1200); location.hash = "#jots"; await wait(800);
+        document.getElementById("newJot").click(); await wait(400);
+        document.getElementById("draftRequest").value = "watch key sizes";
+        [...document.querySelectorAll("#jotDetail button")].find((b) => /^Draft/.test(b.textContent)).click();
+        await wait(2500);
+        const cm = document.querySelector("#jotDetail .cm-editor"), plain = document.querySelector("#jotDetail textarea.plainedit");
+        out.cmHeight = cm ? cm.offsetHeight : 0;
+        out.plain = plain ? plain.offsetHeight : 0;
+        out.text = draft.editor.get();
+        // what is typed in whichever editor is showing is what gets added
+        draft.editor.set(draft.editor.get() + "# edited\\n");
+        out.edited = draft.editor.get().indexOf("# edited") >= 0;
+      } catch (e) { out.error = String(e); }
+      const pre = document.createElement("pre"); pre.id = "testResult"; pre.textContent = JSON.stringify(out); document.body.append(pre);
+    })();
+    """
+
+    def run_page(self, query):
+        env = Env()
+        draft = self.DRAFT
+        app = server.App(env.db, env.ingestor, jot_paths=[env.dir], editable=True, draft=lambda *a: {"yaml": draft, "explanation": "Watches key sizes."})
+        script = self.SCRIPT
+
+        class Injected(server.Handler):
+            def do_GET(self):
+                if self.path.split("?")[0] in ("/", "/index.html"):
+                    with open(os.path.join(server.HERE, "static", "index.html"), encoding="utf-8") as fh:
+                        html = fh.read().replace("</body>", "<script>" + script + "</script></body>")
+                    return self._send(200, html.encode(), "text/html; charset=utf-8")
+                return super().do_GET()
+
+        httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), type("H", (Injected,), {"app": app, "port": 0, "enforce_host": True}))
+        httpd.RequestHandlerClass.port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        done = subprocess.run([self.CHROME, "--headless=new", "--disable-gpu", "--no-first-run", "--user-data-dir=" + tempfile.mkdtemp(),
+                               "--window-size=1400,1000", "--virtual-time-budget=30000", "--dump-dom",
+                               "http://127.0.0.1:%d/%s" % (httpd.server_address[1], query)], capture_output=True, text=True, timeout=120)
+        found = re.search(r'<pre id="testResult">(.*?)</pre>', done.stdout, re.S)
+        self.assertIsNotNone(found, done.stdout[-600:])
+        import html as htmllib
+        return json.loads(htmllib.unescape(found.group(1)))
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_a_draft_is_shown_in_an_editor_that_can_be_changed(self):
+        out = self.run_page("")
+        self.assertNotIn("error", out, out)
+        self.assertGreater(out["cmHeight"], 20, "the draft is on screen")
+        self.assertEqual(self.DRAFT.strip(), out["text"].replace("# edited\n", "").strip())
+        self.assertTrue(out["edited"])
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_when_the_code_editor_cant_show_a_plain_text_box_takes_its_place_with_the_draft(self):
+        out = self.run_page("?broken")
+        self.assertNotIn("error", out, out)
+        self.assertGreater(out["plain"], 100, "the draft is still on screen, in a text box")
+        self.assertEqual(self.DRAFT.strip(), out["text"].replace("# edited\n", "").strip())
+        self.assertTrue(out["edited"])
+
+
+class ReportCellTests(unittest.TestCase):
+    CHROME = DraftUiTests.CHROME
+
+    SCRIPT = """
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const until = async (f, ms = 6000) => { const t = Date.now(); while (Date.now() - t < ms) { const v = f(); if (v) return v; await wait(40); } return null; };
+      const out = {};
+      try {
+        location.hash = "#reports";
+        await until(() => jots && jots.reports && jots.reports.length);
+        selectReport("Access Control Matrix");
+        await until(() => document.querySelector("#reportResult table.grid td.go"));
+        out.cells = document.querySelectorAll("#reportResult table.grid td.go:not(.rowlabel)").length;
+        out.rowLabels = document.querySelectorAll("#reportResult table.grid td.rowlabel.go").length;
+        out.headers = document.querySelectorAll("#reportResult table.grid th.go").length;
+        const cell = [...document.querySelectorAll("#reportResult table.grid tbody tr")].find((tr) => tr.firstChild.textContent === "/buy").children[1];
+        cell.click();
+        await until(() => location.hash === "#events" && (document.querySelector("#results h2") || {}).textContent === "Events behind Access Control Matrix, /buy, RoleA");
+        out.hash = location.hash;
+        out.title = (document.querySelector("#results h2") || {}).textContent;
+        out.rows = document.querySelectorAll("#results tr.clickable").length;
+        out.columns = [...document.querySelectorAll("#results th")].map((th) => th.textContent);
+      } catch (e) { out.error = String(e); }
+      const pre = document.createElement("pre"); pre.id = "testResult"; pre.textContent = JSON.stringify(out); document.body.append(pre);
+    })();
+    """
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_clicking_a_cell_of_a_report_lists_the_events_behind_it(self):
+        env = Env()
+        with open(os.path.join(env.dir, "r.jot"), "w") as f:
+            f.write("sensors:\n- name: http-route\n  methods:\n  - a.b.C.m\n  captures:\n    path: '#P0'\n"
+                    "- name: auth-role-check\n  methods:\n  - a.b.C.n\n  captures:\n    role: '#P0'\n"
+                    "reports:\n- name: Access Control Matrix\n  type: compare\n  rows: http-route.path\n  cols: auth-role-check.role\n")
+        env.write(event(1, sensor="http-route", capture="/buy", trace=7, data={"path": "/buy"}),
+                  event(2, sensor="auth-role-check", capture="RoleA", trace=7, data={"role": "RoleA"}),
+                  event(3, sensor="auth-role-check", capture="RoleB", trace=7, data={"role": "RoleB"}))
+        env.ingestor.poll()
+        app = server.App(env.db, env.ingestor, jot_paths=[env.dir])
+        app.reload_jots(force=True)
+        script = self.SCRIPT
+
+        class Injected(server.Handler):
+            def do_GET(self):
+                if self.path.split("?")[0] in ("/", "/index.html"):
+                    with open(os.path.join(server.HERE, "static", "index.html"), encoding="utf-8") as fh:
+                        html = fh.read().replace("</body>", "<script>" + script + "</script></body>")
+                    return self._send(200, html.encode(), "text/html; charset=utf-8")
+                return super().do_GET()
+
+        httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), type("H", (Injected,), {"app": app, "port": 0, "enforce_host": True}))
+        httpd.RequestHandlerClass.port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        done = subprocess.run([self.CHROME, "--headless=new", "--disable-gpu", "--no-first-run", "--user-data-dir=" + tempfile.mkdtemp(),
+                               "--window-size=1400,1000", "--virtual-time-budget=30000", "--dump-dom",
+                               "http://127.0.0.1:%d/" % httpd.server_address[1]], capture_output=True, text=True, timeout=120)
+        found = re.search(r'<pre id="testResult">(.*?)</pre>', done.stdout, re.S)
+        self.assertIsNotNone(found, done.stdout[-600:])
+        import html as htmllib
+        out = json.loads(htmllib.unescape(found.group(1)))
+        self.assertNotIn("error", out, out)
+        self.assertEqual(2, out["cells"], "each filled cell can be clicked")
+        self.assertEqual(2, out["headers"], "and each column")
+        self.assertEqual(1, out["rowLabels"], "and each row")
+        self.assertEqual("#events", out["hash"])
+        self.assertEqual("Events behind Access Control Matrix, /buy, RoleA", out["title"])
+        self.assertEqual(1, out["rows"], "only the events of that cell, each of which opens")
+        self.assertEqual(["time", "action", "sensor", "call_site", "capture"], out["columns"])
+
+
 class PageIdTests(unittest.TestCase):
     def test_no_id_is_used_twice_in_the_page(self):
         with open(os.path.join(server.HERE, "static", "index.html"), encoding="utf-8") as fh:
@@ -1892,6 +2068,18 @@ class HiddenJotTests(unittest.TestCase):
         self.assertEqual(5, store.run_query(self.env.db, "SELECT COUNT(*) FROM events_raw")["rows"][0][0], "nothing is deleted")
         self.assertEqual([], self.app.set_hidden_jots([])["hidden_jots"])
         self.assertEqual(4, len(self.seen()))
+
+    def test_a_report_still_sees_a_hidden_jot_because_it_names_the_sensors_it_needs(self):
+        jot = os.path.join(self.env.dir, "r.jot")
+        with open(jot, "w") as f:
+            f.write("reports:\n- name: Ciphers\n  type: list\n  cols: crypto-hash.algorithm\n")
+        store.load_reports(self.env.ingestor.db, [jot])
+        self.env.write(event(6, sensor="crypto-hash", capture="SHA-256", data={"algorithm": "SHA-256"}, trace=9))
+        self.env.ingestor.poll()
+        self.app.set_hidden_jots(["crypto-hash"])
+        self.assertNotIn("crypto-hash", self.seen(), "gone from the events")
+        sql = next(r for r in self.app.reports() if r["name"] == "Ciphers")["sql"]
+        self.assertEqual(["SHA-256"], sorted({r[2] for r in self.app.sql(sql)["rows"]}), "but not from the report")
 
     def test_the_list_of_jots_has_what_is_in_the_files_and_the_events_with_counts(self):
         with open(os.path.join(self.env.dir, "a.jot"), "w") as f:
@@ -1964,6 +2152,10 @@ class FilterDrawerTests(unittest.TestCase):
         await until(() => draft.editor);
         out.page = currentPage;
         out.started = draft.editor.get();
+        out.cells = [["true"], ["false"], ["true", "false"], ["AES"], ["X"]].map((v) => gridCell(v).className);
+        out.items = [...gridCell(["true", "false"]).querySelectorAll("li")].map((li) => li.className);
+        out.named = [...gridCell(["false", "true"], { true: ["UserB"], false: ["UserA", "UserC"] }).querySelectorAll("li")].map((li) => li.textContent);
+        out.namedOthers = gridCell(["AES"], { AES: ["UserA", "UserB"] }).textContent;
         location.hash = "#graph";
         await wait(300);
       } catch (e) { out.error = String(e); }
@@ -2015,6 +2207,10 @@ class FilterDrawerTests(unittest.TestCase):
         self.assertEqual(["crypto-hash", "http-cache-header"], out["hiddenAfterH"])
         self.assertEqual(["http-cache-header"], out["hiddenAfterUndo"])
         self.assertEqual(["http-cache-header"], store.get_hidden_jots(env.db))
+        self.assertEqual(["on vals yes", "on vals no", "on vals mixed", "on vals ", "on"], out["cells"], "true is green and false is red")
+        self.assertEqual(["yes", "no"], out["items"])
+        self.assertEqual(["false", "true (UserB)"], out["named"], "who is named for true, not for false")
+        self.assertEqual("AES (UserA, UserB)", out["namedOthers"], "and for every value that isn't an answer")
         self.assertEqual("jots", out["page"])
         self.assertTrue(out["started"].startswith("name: ticket-encrypt\ndescription: Identifies calls to Ticket.encrypt\n"), out["started"])
         self.assertEqual([], store.check_draft(out["started"]), "what it starts with passes the same checks as a draft")

@@ -8,7 +8,7 @@ import org.openolly.config.ControlFile;
 import org.openolly.config.StartupReport;
 import org.openolly.reporting.EventBus;
 
-import com.google.common.flogger.FluentLogger;
+import org.openolly.log.FluentLogger;
 
 public class JOTAgent {
 	

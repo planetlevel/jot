@@ -10,7 +10,10 @@ mkdir -p target && javac -d target ScopeLeak.java
 fail=0
 for kind in method ctor; do
   echo "=== scope on $kind ==="
-  out=$(java -Djot.verbose=true -javaagent:$JAR=jots-$kind.yaml -cp target ScopeLeak $kind 2>&1 | grep -E '^(PASS|FAIL)|SEVERE')
+  # the agent says nothing to the console, so its errors are read from its own log
+  rm -f target/agent-$kind.log
+  out=$(java -Djot.verbose=true -Djot.log=target/agent-$kind.log -javaagent:$JAR=jots-$kind.yaml -cp target ScopeLeak $kind 2>&1 | grep -E '^(PASS|FAIL)' || true)
+  [ -f target/agent-$kind.log ] && out="$out"$'\n'"$(grep SEVERE target/agent-$kind.log || true)"
   echo "$out"
   echo "$out" | grep -qE '^FAIL|SEVERE' && fail=1
 done

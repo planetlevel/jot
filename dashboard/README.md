@@ -71,11 +71,18 @@ at `jot.output.stack` frames, 25 by default, so an older event may be missing th
 
 The **Filters** button on the Events and Graph pages opens a drawer with the filters, App events only, Blocked, Monitored, JOT control events and a list of JOTs to show or hide. The button shows how many filters are on. They apply to the events, the graph, the views, the search and the counts, and nothing is deleted.
 
-**JOTs** lists every JOT with a checkbox, ticked meaning shown. Unticking one leaves out what it observed, and ticking it brings that back. Tick all and Untick all work on the ones the search box has narrowed the list to. What a hidden rule blocked or reported still shows. A rule and its `-active`, `-blocked` and `-monitored` events are one JOT here. You can also hide one without opening the drawer. Point at a kind of event in the graph and press **H**, or use the **Hide** button in the graph's detail panel or an event's drawer. A message offers Undo for a few seconds.
+**JOTs** lists every JOT with a checkbox, ticked meaning shown. Hiding applies to the events, the graph, the views and the search, and not to the reports from your `.jot` files, which each name the sensors they need, so a column never vanishes because its sensor was hidden. Unticking one leaves out what it observed, and ticking it brings that back. Tick all and Untick all work on the ones the search box has narrowed the list to. What a hidden rule blocked or reported still shows. A rule and its `-active`, `-blocked` and `-monitored` events are one JOT here. You can also hide one without opening the drawer. Point at a kind of event in the graph and press **H**, or use the **Hide** button in the graph's detail panel or an event's drawer. A message offers Undo for a few seconds.
 
 **Blocked** and **Monitored** limit the page to events where a rule blocked a call, or where a rule reported that it would have and let the call go ahead. Tick one, or both to see both. With neither ticked everything shows. They apply to the views, the search and the counts, and they are off until you tick them.
 
 **JOT control events** shows the events the agent writes when a rule is switched between monitor and protect. They are left out by default. The Protection panel still lists the latest changes whatever this is set to.
+
+## Events behind a report
+
+A report's grid is clickable. A cell opens the events that put its values there, a row label opens all the events of that row and a
+column heading all the events of that column. They open on the Events page, newest first, and a row of them opens its event like any other.
+The events are those of the column's sensor, from the requests the report relates to that row, so the cell for `/buy` and `RoleA` is the
+role check of RoleA that happened in a `/buy` request. Reports built from your question rather than from a `.jot` file aren't clickable.
 
 ## Searching
 

@@ -31,35 +31,23 @@ class ConfigReaderTest {
 	}
 
 	@Test
-	void reportsBecomeSinksAndBadOnesAreSkipped(@TempDir Path dir) throws Exception {
+	void aReportsSectionIsForTheDashboardAndTheAgentLeavesItAlone(@TempDir Path dir) throws Exception {
 		Path jot = dir.resolve( "reports.jot" );
 		Files.writeString( jot, String.join( "\n",
+			"sensors:",
+			"- name: rep-sensor",
+			"  methods:",
+			"  - java.lang.String.length",
+			"  captures:",
+			"    value: '#P0'",
 			"reports:",
 			"- name: 'Ciphers'",
 			"  type: 'list'",
-			"  cols: 'cfg-cipher'",
-			"- name: 'Old'",
-			"  type: 'series'",
-			"  rows: 'a'",
-			"  cols: 'b'",
-			"- name: 'Incomplete'",
-			"  type: 'table'",
-			"  cols: 'b'",
+			"  cols: 'rep-sensor.value'",
 			"" ) );
-
-		PrintStream original = System.err;
-		ByteArrayOutputStream captured = new ByteArrayOutputStream();
-		System.setErr( new PrintStream( captured ) );
-		try {
-			EventBus.configure( new ArrayList<EventSink>(), 10 );
-			ConfigReader.load( jot.toFile() );
-			EventBus.publish( new Event( "cfg-cipher", "AES", Thread.currentThread().getStackTrace() ) );
-			EventBus.shutdown();
-		} finally {
-			System.setErr( original );
-		}
-		String out = captured.toString();
-		Assertions.assertTrue( out.contains( "Ciphers" ) && out.contains( "AES" ), out );
+		ConfigReader.load( jot.toFile() );
+		Assertions.assertTrue( ConfigReader.getProblems().stream().noneMatch( p -> p.contains( "report" ) ), "a reports section is not a problem" );
+		Assertions.assertTrue( Sensor.exists( "rep-sensor" ), "and the sensors beside it load" );
 	}
 
 	@Test

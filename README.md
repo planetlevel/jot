@@ -32,7 +32,7 @@ directory... and please include a comment detailing what it's intended to be use
 ## A Simple JOT
 
 Define your sensors and reports in yaml and save it in a .jot file. Sensors define what data
-to capture and "reports" tell JOT how to track the data over time. 
+to capture and "reports" tell the dashboard how to tabulate it. 
 
     sensors:
     - name: "crypto-cipher"
@@ -52,24 +52,25 @@ to capture and "reports" tell JOT how to track the data over time.
 Basically all you have to do is add JOT to the JVM
 - Download the latest jot.jar from https://github.com/planetlevel/jot/tags
 - Grab the ciphers.jot file from https://github.com/planetlevel/jot/blob/master/src/main/resources/ciphers.jot
-- Launch your app with "java -javaagent:jot.jar=ciphers.jot"
+- Launch your app with "java -javaagent:jot.jar=ciphers.jot -Djot.output=json"
 
-Then you just use your application normally and let JOT gather data for you.
-JOT will make a nice table capturing exactly where encryption is used and
-what algorithm is specified.
+Then you just use your application normally and let JOT gather data for you. The agent writes nothing
+to your application's output, the events go to `jot-events.jsonl`. Start the dashboard on that file and its
+Reports page has a table of exactly where encryption is used and what algorithm is specified.
 
-    Encryption Algorithms                                        crypto-cipher            
-    ------------------------------------------------------------ ---------------------- 
-    com.acme.ticketbook.Ticket.encrypt(Ticket.java:125)          DES                    
-    org.apache.jsp.accessA_jsp._jspService(accessA_jsp.java:212) AES                    
-    org.apache.jsp.accessA_jsp._jspService(accessA_jsp.java:213) PBEWithMD5AndTripleDES 
-    org.apache.jsp.accessB_jsp._jspService(accessB_jsp.java:212) DES                    
-    org.apache.jsp.accessC_jsp._jspService(accessC_jsp.java:212) DES/CBC/PKCS5Padding   
+    Encryption Usage         crypto-cipher-request.algorithm
+    -----------------------  --------------------------------
+    com.acme.ticketbook.Ticket.encrypt(Ticket.java:125)          DES
+    org.apache.jsp.accessA_jsp._jspService(accessA_jsp.java:212) AES
+    org.apache.jsp.accessA_jsp._jspService(accessA_jsp.java:213) PBEWithMD5AndTripleDES
+    org.apache.jsp.accessB_jsp._jspService(accessB_jsp.java:212) DES
+    org.apache.jsp.accessC_jsp._jspService(accessC_jsp.java:212) DES/CBC/PKCS5Padding
 
 ## Events and Output
 JOT reports what its sensors observe, and what they block, as events. Each event has a sensor name,
 an action (`observed`, `monitored` or `blocked`), the captured values, the calling method and, for blocks,
-the stack. Events are delivered on a background thread, so your application never waits on output.
+the stack. Events are delivered on a background thread, so your application never waits on output. Nothing is written
+unless you choose an output below. This is what `-Djot.output=console` prints.
 
     [JOT] 2026-10-15T19:27:07.301Z BLOCKED cve-log4shell-no-exec [[touch, pwned.txt]]
           CVE-2021-44228 microsandbox blocked process execution
@@ -79,7 +80,7 @@ Choose where events go with system properties.
 
 | Property | Default | Description |
 |----------|---------|-------------|
-| `jot.output` | `console` | Comma separated list of `console` (stderr) and `json` (one JSON object per line) |
+| `jot.output` | none | Comma separated list of `json` (one JSON object per line, in a file) and `console` (stderr). With none, the agent writes nothing anywhere |
 | `jot.output.file` | `jot-events.jsonl` | File for the `json` output |
 | `jot.events` | `all` | `all`, or `violations` to only report monitored and blocked events |
 | `jot.queue.size` | `10000` | Events to buffer. If the queue fills up, new events are dropped and counted. |
@@ -272,25 +273,19 @@ you observe exactly what you want. See below for all the details of writing your
 
 ## Logging with JOT
 
-JOT uses FluentLogger which takes configuration from `java.util.logging` and can be configured by the JVM with `-Djava.util.logging.config.file`
+The agent runs inside your application, so it is built to be invisible. It writes nothing to the application's console and nothing to
+the JVM's `java.util.logging`, and it takes nothing from either. Its mistakes, like a sensor that is written wrong, reach you as events
+in the event log, which the dashboard shows under the JOTs page. A rule that stops a call still throws its exception, since stopping the call is its job.
 
-This sample config will log JOT to stdout as well as to /tmp/jot.log
+To see what the agent itself is doing, ask for its log file.
 
-	handlers = java.util.logging.ConsoleHandler, java.util.logging.FileHandler
-	
-	java.util.logging.ConsoleHandler.level = ALL
-	java.util.logging.ConsoleHandler.formatter = java.util.logging.SimpleFormatter
-	java.util.logging.SimpleFormatter.format = %1$tF %1$tT %4$-7s [%2$s] - %5$s %n
-	
-	java.util.logging.FileHandler.level=ALL
-	java.util.logging.FileHandler.pattern=/tmp/jot.log
-	java.util.logging.FileHandler.formatter=java.util.logging.SimpleFormatter
-	java.util.logging.FileHandler.append=true
+| Property | Default | Description |
+|----------|---------|-------------|
+| `jot.log` | none | A file the agent appends its own messages to. Without it nothing is written |
+| `jot.log.level` | `info` | `severe`, `warning`, `info`, `fine` or `finest`. `fine` lists every method it instruments |
+| `jot.verbose` | `false` | Also writes the errors the instrumentation hit, which are otherwise suppressed, to that log |
 
-using:
-
-	java -javaagent:jot.jar=jots.yaml -Djava.util.logging.config.file=/root/jul.properties
-
+	java -javaagent:jot.jar=jots.yaml -Djot.log=/tmp/jot-agent.log -Djot.log.level=fine
 
 ## Creating Your Own JOT Sensors
 
@@ -417,11 +412,11 @@ annotation on the method or its class counts, not an annotation that is itself a
 inherited from a superclass or interface are not looked at. An annotation can't be a scope, and it doesn't select
 constructors.
 
-## Creating Your Own JOT Reports
+## Reports
 
-Reports summarize the events JOT's sensors produce. A report receives every event as it happens,
-keeps a bounded table in memory, and prints it to stderr when the JVM shuts down. Reports are
-independent of the event output, so they work the same with `jot.output=console`, `json`, or neither.
+A `reports:` section in a .jot file defines tables for the dashboard. The agent does not read it or print anything for it, the dashboard
+reads the same files, builds each report from the recorded events and shows it on the Reports page. Paths through the application, which
+used to be a report type, are the dashboard's Graph page.
 
        # Title of this report that will be displayed above the results
        - name: "example"
@@ -442,12 +437,9 @@ independent of the event output, so they work the same with `jot.output=console`
          #       ROWS: values of the field in "rows"
          #       COLS: one column per field in "cols"
          #       DATA: values of those fields
-         # 4. graph - not a table. Prints a GraphViz DOT graph of what happened inside each route.
-         #       rows: the sensor that identifies the route
-         #       cols: optional, sensors such as forwards that start a new route node
          type: "compare"
 
-         # A field to be used to populate row headers (compare, table and graph)
+         # A field to be used to populate row headers (compare and table)
          rows: "http-route.path"
 
          # A field, or a comma separated list of fields, to be used to populate columns
@@ -456,15 +448,9 @@ independent of the event output, so they work the same with `jot.output=console`
          # compare only, the field that fills the cells
          value: "auth-role-check.allowed"
 
-compare, table and graph relate a row to a column when both were observed during the same request,
-in either order. Outside of a servlet request, events are related when they happen on the same thread.
-
-A table holds at most 1000 rows and 20 values per cell. Anything beyond that is counted and a note is
-printed under the table. A graph holds at most 2000 nodes.
-
-The old `series` report type is gone. Its job, a record of every event with its caller, is what the
-event log does. Use `-Djot.output=json` to keep one. A `series` report in a .jot file is skipped
-with a warning.
+A row and a column are related when both were observed during the same request, in either order. Outside of a servlet request,
+events are related when they happen on the same thread. A report uses the events the dashboard is showing, so Clear and the other
+filters apply, but hiding a JOT does not, since a report names the sensors it needs.
 
 ## Building from Source
 

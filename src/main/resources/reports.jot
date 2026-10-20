@@ -14,6 +14,7 @@ reports:
    rows: http-route.path
    cols: auth-role-check.role
    value: auth-role-check.allowed
+   by: auth-role-check.user
    
  - name: Role Membership
    type: compare
@@ -29,8 +30,7 @@ reports:
  - name: Encryption Algorithms
    type: compare
    rows: http-route.path
-   cols: crypto-cipher.algorithm
-   value: crypto-cipher.operation
+   cols: crypto-cipher-request.algorithm
    
  - name: Unauthorized Files
    type: table
@@ -45,8 +45,7 @@ reports:
  - name: Encryption Users
    type: compare
    rows: auth-user.user
-   cols: crypto-cipher.algorithm
-   value: crypto-cipher.operation
+   cols: crypto-cipher-request.algorithm
       
  - name: HTTP Parameters
    type: table

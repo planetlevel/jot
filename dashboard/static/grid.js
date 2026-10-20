@@ -12,6 +12,8 @@
     const maxCols = (options && options.maxCols) || 80;
     const hasValue = columns.length > 2;
     const cells = new Map();   // row label -> Map(column label -> Set of values)
+    const hasWho = columns.length > 3;     // a fourth column says who had each value
+    const who = new Map();     // row label -> Map(column label -> Map(value -> Set of who))
     const seenCols = new Set();
     for (const x of rows) {
       const row = text(x[0]);
@@ -22,16 +24,34 @@
       const byCol = cells.get(row);
       if (!byCol.has(col)) byCol.set(col, new Set());
       byCol.get(col).add(value);
+      if (hasWho && x[3] !== null && x[3] !== undefined && String(x[3]) !== "") {
+        if (!who.has(row)) who.set(row, new Map());
+        const byValue = who.get(row);
+        if (!byValue.has(col)) byValue.set(col, new Map());
+        const names = byValue.get(col);
+        if (!names.has(value)) names.set(value, new Set());
+        names.get(value).add(String(x[3]));
+      }
     }
     const allCols = [...seenCols].sort(byName);
     const cols = allCols.slice(0, maxCols);
-    const body = [...cells.keys()].sort(byName).map((label) => ({
-      label,
-      cells: cols.map((c) => {
-        const set = cells.get(label).get(c);
-        return set ? [...set].sort(byName) : [];
-      }),
-    }));
+    const body = [...cells.keys()].sort(byName).map((label) => {
+      const row = {
+        label,
+        cells: cols.map((c) => {
+          const set = cells.get(label).get(c);
+          return set ? [...set].sort(byName) : [];
+        }),
+      };
+      // for each cell, who had each value, only when the result says
+      if (hasWho) {
+        row.notes = cols.map((c) => {
+          const names = who.has(label) && who.get(label).get(c);
+          return names ? Object.fromEntries([...names].map(([v, set]) => [v, [...set].sort(byName)])) : {};
+        });
+      }
+      return row;
+    });
     return { corner: columns[0] || "", columns: cols, hiddenColumns: allCols.length - cols.length, rows: body };
   }
 

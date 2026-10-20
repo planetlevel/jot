@@ -12,7 +12,7 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.Vector;
 
-import com.google.common.flogger.FluentLogger;
+import org.openolly.log.FluentLogger;
 
 public class SafeString {
 	

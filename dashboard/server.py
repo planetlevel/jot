@@ -75,6 +75,19 @@ class App:
         self.generate = generate
         self.control = control      # a ControlStore, or None when the jots file has no control
 
+    def report_events(self, name, row=None, col=None):
+        """The query for the events behind a cell of a report, or a row or a column of it, and a title for them."""
+        db = sqlite3.connect(self.db_path)
+        try:
+            found = db.execute("SELECT type, rows, cols FROM reports WHERE name = ?", (name,)).fetchone()
+        finally:
+            db.close()
+        if not found:
+            raise LookupError("no report called %s" % name)
+        sql = store.report_events_sql(found[0], found[1], found[2], row, col)
+        parts = [x for x in (row, col) if x is not None]
+        return {"sql": sql, "title": "Events behind %s%s" % (name, ", " + ", ".join(parts) if parts else "")}
+
     def sensors(self):
         db = sqlite3.connect(self.db_path)
         try:
@@ -186,10 +199,10 @@ class App:
         db = sqlite3.connect(self.db_path)
         try:
             out = []
-            for name, rtype, rows, cols, value in db.execute("SELECT name, type, rows, cols, value FROM reports ORDER BY rowid"):
+            for name, rtype, rows, cols, value, by in db.execute("SELECT name, type, rows, cols, value, by FROM reports ORDER BY rowid"):
                 try:
                     out.append({"name": name, "type": rtype, "title": name, "chart": "grid",
-                                "sql": store.report_sql(rtype, rows, cols, value)})
+                                "sql": store.report_sql(rtype, rows, cols, value, by)})
                 except ValueError:
                     continue
             return out
@@ -207,7 +220,7 @@ class App:
                                         matchers, excludes, definition, enabled FROM sensors ORDER BY rowid""").fetchall()
             issues = [{"level": l, "text": t, "file": f} for l, t, f in db.execute(
                 "SELECT level, text, source FROM jot_issues ORDER BY rowid")]
-            report_rows = db.execute("SELECT name, type, rows, cols, value, source FROM reports ORDER BY rowid").fetchall()
+            report_rows = db.execute("SELECT name, type, rows, cols, value, by, source FROM reports ORDER BY rowid").fetchall()
         finally:
             db.close()
 
@@ -241,8 +254,8 @@ class App:
             issues.append({"level": "warning", "file": None, "text": "the agent left something out, " + text})
 
         sql_by_name = {r["name"]: r["sql"] for r in self.reports()}
-        reports = [{"name": n, "type": t, "rows": r, "cols": c, "value": v, "file": f, "sql": sql_by_name.get(n)}
-                   for n, t, r, c, v, f in report_rows]
+        reports = [{"name": n, "type": t, "rows": r, "cols": c, "value": v, "by": b, "file": f, "sql": sql_by_name.get(n)}
+                   for n, t, r, c, v, b, f in report_rows]
         files = {}
         for x in sensors:
             files.setdefault(x["file"], {"sensors": 0, "rules": 0, "reports": 0})["rules" if x["kind"] == "rule" else "sensors"] += 1
@@ -426,8 +439,8 @@ class App:
         """Report definitions for the model. Names and sensor names only, no data."""
         db = sqlite3.connect(self.db_path)
         try:
-            return [{"name": n, "type": t, "rows_sensor": r, "cols": c, "value": v}
-                    for n, t, r, c, v in db.execute("SELECT name, type, rows, cols, value FROM reports ORDER BY rowid")]
+            return [{"name": n, "type": t, "rows_sensor": r, "cols": c, "value": v, "by": b}
+                    for n, t, r, c, v, b in db.execute("SELECT name, type, rows, cols, value, by FROM reports ORDER BY rowid")]
         finally:
             db.close()
 
@@ -562,6 +575,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.app.control_state())
             if url.path == "/api/sensors":
                 return self._send(200, self.app.sensors())
+            if url.path == "/api/report-events":
+                q = parse_qs(url.query)
+                try:
+                    return self._send(200, self.app.report_events(q.get("name", [""])[0], q["row"][0] if "row" in q else None,
+                                                                  q["col"][0] if "col" in q else None))
+                except LookupError as e:
+                    return self._send(404, {"error": str(e)})
             if url.path == "/api/filter-jots":
                 return self._send(200, self.app.filter_jots())
             if url.path == "/api/graph":

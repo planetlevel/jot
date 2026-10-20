@@ -35,7 +35,7 @@ import org.openolly.advice.SensorException;
 import org.openolly.reporting.Event;
 import org.openolly.reporting.EventBus;
 
-import com.google.common.flogger.FluentLogger;
+import org.openolly.log.FluentLogger;
 
 import net.bytebuddy.agent.builder.AgentBuilder;
 import net.bytebuddy.asm.Advice;
@@ -800,7 +800,7 @@ public class Sensor {
 		// add advice to "methods"
 		for ( MethodLocator method : this.getMethods() ) {
 			//System.err.println( "INSTRUMENTING " + method.className() + " -> " + method.methodName() );
-			logger.atWarning().log("INSTRUMENTING " + method.className() + " -> " + method.methodName() );
+			logger.atFine().log("INSTRUMENTING " + method.className() + " -> " + method.methodName() );
 			try {
 
 				final ElementMatcher<TypeDescription> typeMatcher = typeMatcher( method );

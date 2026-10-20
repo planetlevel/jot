@@ -13,8 +13,8 @@
 <body>
 <%@ include file="/menu.jsp" %>
 <H1>Exercise</H1>
-<p class="lead">Sends requests to every page of TicketBook, as every user, in a random order, so the sensors have something to see. The pairs of
-page and user are shuffled and dealt until none is left, and then shuffled again, so over time nothing is missed. Most values are random,
+<p class="lead">Sends requests to every page of TicketBook, as every user, in a random order, so the sensors have something to see. Each
+pass takes the users in a random order and every page in a random order for each, so it covers all the pairs, and the next pass shuffles again. Most values are random,
 and now and then a page gets its ordinary default. Leave this page open while it runs.</p>
 <p>
 	<button id="run" class="btn btn-primary">Start</button>
@@ -84,6 +84,9 @@ and now and then a page gets its ordinary default. Leave this page open while it
 
 	// one request, with the default values one time in five and random ones otherwise
 	function choose(p, attacks) {
+		// now and then a page is just opened, with no values at all, which is how a person arrives and reaches the code that
+		// only runs without them. A blocked rule, like the command page's, ends a request before the rest of the page is read.
+		if (p.post && Math.random() < 1 / 6) return { url: base + p.page, post: null, sent: "" };
 		var useDefault = Math.random() < 0.2;
 		var pool = common.concat(attacks ? attackValues : []);
 		function value(name, fallback) {
@@ -108,11 +111,12 @@ and now and then a page gets its ordinary default. Leave this page open while it
 	var tbody = document.querySelector("#results tbody"), summary = document.getElementById("summary");
 	var timer = null, sent = 0, answered = 0, failed = 0, inFlight = 0;
 
-	// Every page is visited as every user, in a random order. The pairs are shuffled into a deck and dealt until it is empty,
-	// then shuffled again, so over time nothing is left out and nothing is only ever seen in one order.
+	// Every page is visited as every user. A pass takes the users in a random order, and for each one all the pages in a random
+	// order, then the next pass shuffles again. Switching user costs a login request, so staying with one user for a run of pages
+	// covers the whole grid in about a third of the requests that switching at random would, and nothing is left out.
 	var users = ["UserA", "UserB", "UserC", "UserD", "UserE", "guest"];
 	var loginPages = ["accessA.jsp", "accessB.jsp", "accessC.jsp", "accessD.jsp", "accessE.jsp"];
-	var deck = [], passes = 0, currentUser = null, pagesSeen = {}, usersSeen = {};
+	var deck = [], passes = 0, currentUser = null, pagesSeen = {}, usersSeen = {}, pairsSeen = {};
 
 	function shuffle(list) {
 		for (var i = list.length - 1; i > 0; i--) {
@@ -123,8 +127,10 @@ and now and then a page gets its ordinary default. Leave this page open while it
 	}
 	function deal() {
 		if (!deck.length) {
-			pages.forEach(function (p) { users.forEach(function (u) { deck.push({ page: p, user: u }); }); });
-			shuffle(deck);
+			shuffle(users.slice()).forEach(function (u) {
+				shuffle(pages.slice()).forEach(function (p) { deck.push({ page: p, user: u }); });
+			});
+			deck.reverse();      // dealt from the end
 			passes++;
 		}
 		return deck.pop();
@@ -152,7 +158,7 @@ and now and then a page gets its ordinary default. Leave this page open while it
 
 	async function fire(item, attacks) {
 		var p = item.page;
-		pagesSeen[p.page] = true; usersSeen[item.user] = true;
+		pagesSeen[p.page] = true; usersSeen[item.user] = true; pairsSeen[p.page + "\u0000" + item.user] = true;
 		var c;
 		if (p.asUser) {
 			// an access page logs in as the user it is sent, which is how it is visited as that user
@@ -171,7 +177,7 @@ and now and then a page gets its ordinary default. Leave this page open while it
 	}
 
 	function progress() {
-		return Object.keys(pagesSeen).length + " of " + pages.length + " pages, " + Object.keys(usersSeen).length + " of " + users.length + " users, pass " + passes;
+		return Object.keys(pairsSeen).length + " of " + pages.length * users.length + " page and user pairs, pass " + passes;
 	}
 
 	function stop(why) {
@@ -187,7 +193,7 @@ and now and then a page gets its ordinary default. Leave this page open while it
 		var attacks = document.getElementById("attacks").checked;
 		var end = Date.now() + minutes * 60000;
 		sent = answered = failed = passes = 0;
-		deck = []; currentUser = null; pagesSeen = {}; usersSeen = {};
+		deck = []; currentUser = null; pagesSeen = {}; usersSeen = {}; pairsSeen = {};
 		tbody.textContent = "";
 		document.getElementById("run").disabled = true;
 		document.getElementById("stop").disabled = false;

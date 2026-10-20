@@ -105,7 +105,14 @@
   table.grid td.vals { text-align: left; font-weight: 500; }
   table.grid td.vals ul { margin: 0; padding-left: 18px; }
   table.grid td.vals li { margin: 2px 0; }
+  table.grid td.yes { background: transparent; color: var(--observed); }
+  table.grid td.no { background: transparent; color: var(--blocked); }
+  table.grid td.mixed { background: transparent; }
+  table.grid li.yes { color: var(--observed); }
+  table.grid li.no { color: var(--blocked); }
   table.grid td.off { background: transparent; }
+  table.grid .go { cursor: pointer; }
+  table.grid td.go:hover, table.grid th.go:hover { outline: 1px solid var(--accent); outline-offset: -1px; }
   .picker { margin-top: 10px; }
   .picker select { max-width: 100%; }
   .badge { white-space: nowrap; display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; padding: 1px 7px; border-radius: 999px; text-transform: uppercase; }
@@ -173,6 +180,8 @@
     font-size: 13px; max-height: 260px; overflow: auto; }
   table.list th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
   table.list th.sortable:hover { color: var(--text); }
+  #jotDetail .editor { min-height: 120px; }
+  #jotDetail textarea.plainedit { width: 100%; box-sizing: border-box; font: 13px ui-monospace, Menlo, Consolas, monospace; }
   #jotDetail .editor .cm-editor { max-height: 60vh; }
   #jotDetail .editor .cm-scroller { overflow: auto; }
   #jotDetail .codebox:has(.editor) .copy { z-index: 5; }
@@ -331,6 +340,7 @@
     <div class="graphtools">
       <label>Route <select id="graphRoute" aria-label="Route"><option value="">All routes</option></select></label>
       <label title="Also show the sensors that only describe the request, like who the user was and which parameters it had"><input type="checkbox" id="graphDetails"> Include request details</label>
+      <label title="Run the paths from left to right, the older way, instead of from top to bottom. A long path is then very wide"><input type="checkbox" id="graphSideways"> Lay out sideways</label>
       <label title="Fold a straight run of methods of one class, like a static initializer, constructor and init, into one node. A run that branches stays open"><input type="checkbox" id="graphCollapse" checked> Collapse setup chains</label>
       <span class="hint" id="graphSummary"></span>
     </div>
@@ -418,7 +428,7 @@
   <p class="why">The events the agent writes when a rule is switched between monitor and protect. They are left out unless you tick this.</p>
 
   <h4>JOTs</h4>
-  <p class="why" style="margin-left:0">Untick a JOT to hide what it observed. What a hidden rule blocked or reported still shows.</p>
+  <p class="why" style="margin-left:0">Untick a JOT to hide what it observed from the events, the graph and the search. What a hidden rule blocked or reported still shows, and the reports still use it, since each one names the sensors it needs.</p>
   <input type="search" id="filterJotSearch" autocomplete="off" aria-label="Find a JOT" placeholder="Find a JOT">
   <p><button type="button" class="small" id="jotsAll">Tick all</button> <button type="button" class="small" id="jotsNone">Untick all</button>
     <span class="hint">the ones listed</span></p>
@@ -774,20 +784,52 @@ function tableView(r, hint) {
 }
 
 // A lone X is centered, real values are left aligned, and several are bulleted so each can be read on its own.
-function gridCell(values) {
+// true is drawn in green and false in red, so a table of answers can be read at a glance. A cell that has both is neutral,
+// with each value in its own color
+function truth(v) { return v === "true" ? "yes" : v === "false" ? "no" : ""; }
+// notes says who had each value, like { true: ["UserB"], false: ["UserA", "UserC"] }, shown as true (UserB)
+function gridCell(values, notes) {
   if (!values.length) return el("td", { class: "off" });
+  // an answer of true or false names who only for true, the one worth knowing, and anything else names them all
+  const answers = values.includes("true") || values.includes("false");
+  const shown = (v) => notes && notes[v] && notes[v].length && !(answers && v !== "true") ? v + " (" + notes[v].join(", ") + ")" : v;
   if (values.length === 1 && values[0] === "X") return el("td", { class: "on", text: "X" });
-  if (values.length === 1) return el("td", { class: "on vals", text: values[0] });
-  return el("td", { class: "on vals" }, el("ul", {}, ...values.map((v) => el("li", { text: v }))));
+  if (values.length === 1) return el("td", { class: "on vals " + truth(values[0]), text: shown(values[0]) });
+  const kinds = new Set(values.map(truth));
+  const same = kinds.size === 1 ? [...kinds][0] : kinds.has("yes") || kinds.has("no") ? "mixed" : "";
+  return el("td", { class: "on vals " + same }, el("ul", {}, ...values.map((v) => el("li", { class: truth(v), text: shown(v) }))));
 }
 
-function gridView(r) {
+// A grid of a defined report can be clicked, a cell for the events that put its values there, a row or a column for all of its events
+async function showReportEvents(report, row, col) {
+  try {
+    const q = await api("/api/report-events?name=" + encodeURIComponent(report.name)
+      + (row !== null ? "&row=" + encodeURIComponent(row) : "") + (col !== null ? "&col=" + encodeURIComponent(col) : ""));
+    location.hash = "#events";
+    showPage("events");
+    await runSql(q.sql, { title: q.title, chart: "table", explanation: "The events a report built that cell from, newest first. Click one to open it." });
+    window.scrollTo(0, 0);
+  } catch (e) { showError(e.message); }
+}
+
+function gridView(r, report) {
   if (!r.rows.length) return el("div", { class: "empty", text: r.hint || "No matching events" });
   const g = JotGrid.pivot(r.columns, r.rows);
-  const head = el("tr", {}, el("th", { text: g.corner }), ...g.columns.map((c) => el("th", { class: "col", text: c })));
+  const open = (row, col) => report ? () => showReportEvents(report, row, col) : null;
+  const clickable = (props, row, col) => report ? { ...props, class: (props.class ? props.class + " " : "") + "go", onclick: open(row, col) } : props;
+  const head = el("tr", {}, el("th", { text: g.corner }), ...g.columns.map((c) => el("th", clickable({ class: "col", text: c,
+    title: report ? "Events of this column" : null }, null, c))));
   const body = g.rows.map((row) => el("tr", {},
-    el("td", { class: "rowlabel", title: row.label, text: row.label }),
-    ...row.cells.map(gridCell)));
+    el("td", clickable({ class: "rowlabel", title: report ? "Events of this row" : row.label, text: row.label }, row.label, null)),
+    ...row.cells.map((values, i) => {
+      const td = gridCell(values, row.notes && row.notes[i]);
+      if (report && values.length) {
+        td.classList.add("go");
+        td.title = "The events behind this cell";
+        td.addEventListener("click", open(row.label, g.columns[i]));
+      }
+      return td;
+    })));
   const wrap = el("div", { class: "tablewrap" }, el("table", { class: "grid" }, el("thead", {}, head), el("tbody", {}, ...body)));
   if (!g.hiddenColumns) return wrap;
   return el("div", {}, wrap, el("div", { class: "hint", text: g.hiddenColumns + " more columns are not shown" }));
@@ -844,7 +886,7 @@ function show(entry, r) {
   let chart = entry.chart;
   if (chart === "grid" && r.columns.length < 2) chart = "table";
   else if ((chart === "bar" || chart === "line") && !chartable(r)) chart = "table";
-  const view = chart === "grid" ? gridView(r)
+  const view = chart === "grid" ? gridView(r, entry.name && entry.type ? entry : null)
     : !r.rows.length ? tableView(r, r.hint)
     : chart === "bar" ? barView(r) : chart === "line" ? lineView(r) : tableView(r);
 
@@ -1198,7 +1240,7 @@ async function runReport({ quiet = false, scroll = false } = {}) {
     if (mine !== reportRun) return;
     box.replaceChildren(head,
       el("p", { class: "explain", text: reportExplain(report) }),
-      r.columns.length < 2 ? tableView(r, r.hint) : gridView(r),
+      r.columns.length < 2 ? tableView(r, r.hint) : gridView(r, report),
       el("div", { class: "meta" },
         el("span", { text: r.rows.length.toLocaleString() + " rows" + (r.truncated ? " (limited, there are more)" : "") + " in " + r.ms + " ms" })),
       el("details", {}, el("summary", { text: "SQL" }), el("pre", { class: "value", text: report.sql })));
@@ -1448,8 +1490,28 @@ function openDraft(initial) {
   request.focus();
 
   let timer = null, serial = 0, blocked = false;
+  // an editor is laid out when the window changes, which wakes one that was measured while it couldn't be seen
+  // If it still has no height a moment later, the code editor isn't working in this browser, and a plain text box takes its place
+  // with the same text, so a draft can always be read and changed
+  const showEditor = () => {
+    requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
+    const made = draft.editor;
+    setTimeout(() => {
+      if (!made || draft.editor !== made || host.querySelector(".cm-editor") && host.querySelector(".cm-editor").offsetHeight > 20) return;
+      const text = made.get();
+      try { made.destroy(); } catch (e) { /* it was not working */ }
+      const box = el("textarea", { class: "plainedit", rows: "14", spellcheck: "false", "aria-label": "The JOT" });
+      box.value = text;
+      box.addEventListener("input", changed);
+      host.replaceChildren(box);
+      draft.editor = { get: () => box.value, set: (t) => { box.value = t; changed(); }, problems: () => {}, focus: () => box.focus(), destroy: () => {} };
+      changed();
+    }, 600);
+  };
   const starting = () => {
+    box.hidden = false;
     draft.editor = JotEditor.create(host, { doc: initial, onChange: changed });
+    showEditor();
     draft.history.push({ request: "a sensor on this method", yaml: initial });
     const name = (/^name:\s*(\S+)/m.exec(initial) || [])[1];
     if (name && !files.value) newName.value = name + ".jot";
@@ -1495,8 +1557,11 @@ function openDraft(initial) {
       if (out.problems && out.problems.length) reply.append(el("div", { class: "editstatus bad", text: "It still has problems, fix them in the editor. " + out.problems.join(". ") }));
       log.append(reply);
       if (out.yaml) {
+        // shown before the editor is made, an editor made in a hidden box can be measured as empty and stay blank in some browsers
+        box.hidden = false;
         if (!draft.editor) draft.editor = JotEditor.create(host, { doc: out.yaml, onChange: changed });
         else draft.editor.set(out.yaml);
+        showEditor();
         draft.history.push({ request: text, yaml: out.yaml });
         const name = (/^name:\s*(\S+)/m.exec(out.yaml) || [])[1];
         if (name && !files.value) newName.value = name.replace(/["']/g, "") + ".jot";
@@ -1651,7 +1716,7 @@ function drawGraph() {
 
 function drawRoute(graph) {
   const { nodes, edges } = graph;
-  const L = JotGraph.layout(nodes, edges);
+  const L = JotGraph.layout(nodes, edges, { down: !$("graphSideways").checked });
   const mine = graph.route === graphPanel;
   const lit = graphPicked && mine && nodes.some((n) => n.id === graphPicked) ? JotGraph.through(graphPicked, nodes, edges) : null;
   const litEdges = lit && lit.edges;
@@ -1661,9 +1726,12 @@ function drawRoute(graph) {
     "aria-label": "Paths from the route " + graph.route + " through the application to what the sensors saw" });
   const label = new Map(nodes.map((n) => [n.id, n.label]));
   const mid = (id) => { const p = L.pos.get(id); return { x: p.x, y: p.y + L.nodeH / 2 }; };
+  // going down, a line leaves the bottom middle of a box and arrives at the top middle of the next
+  const bottom = (id) => { const p = L.pos.get(id); return { x: p.x + L.nodeW / 2, y: p.y + L.nodeH }; };
+  const top = (id) => { const p = L.pos.get(id); return { x: p.x + L.nodeW / 2, y: p.y }; };
   for (const e of edges) {
     if (!L.pos.has(e.from) || !L.pos.has(e.to) || L.closing.has(e)) continue;
-    const path = svgEl("path", { d: JotGraph.curve(mid(e.from), mid(e.to), L.nodeW),
+    const path = svgEl("path", { d: L.down ? JotGraph.curveDown(bottom(e.from), top(e.to)) : JotGraph.curve(mid(e.from), mid(e.to), L.nodeW),
       "stroke-width": String(Math.min(6, 1 + Math.log2(e.events) / 1.6)),
       class: "edge" + (litEdges ? (litEdges.has(e) ? " on" : " off") : "") });
     path.append(svgEl("title", {}, label.get(e.from) + " → " + label.get(e.to) + ", " + e.events + " events"));
@@ -1751,6 +1819,11 @@ function openSearch(query) {
 $("graphRoute").addEventListener("change", () => { graphPicked = graphPanel = null; history.replaceState(null, "", "#graph"); loadGraph(); });
 $("graphDetails").addEventListener("change", loadGraph);
 $("graphCollapse").addEventListener("change", loadGraph);
+try { $("graphSideways").checked = localStorage.getItem("jot-graph-sideways") === "1"; } catch (e) { /* not remembered */ }
+$("graphSideways").addEventListener("change", () => {
+  try { localStorage.setItem("jot-graph-sideways", $("graphSideways").checked ? "1" : "0"); } catch (e) { /* not remembered */ }
+  if (graphData) drawGraph();
+});
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && graphPicked && currentPage === "graph") pickNode(null); });
 
 // ---- keeping things current

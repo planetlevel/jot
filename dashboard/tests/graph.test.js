@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { layout, through, curve, collapse, sensorFor, frameMethod } = require("../static/graph.js");
+const { layout, through, curve, collapse, sensorFor, frameMethod, curveDown } = require("../static/graph.js");
 
 const n = (id, kind, events = 1) => ({ id, kind, label: id, events });
 const e = (from, to, events = 1) => ({ from, to, events });
@@ -272,4 +272,35 @@ test("a route out that comes after everything else still has its own column", ()
   const L = layout(ns, [e("r", "f"), e("f", "x")]);
   assert.strictEqual(L.pos.get("x").column, 2);
   assert.deepStrictEqual(L.titles, ["Routes in", "What was seen", "Routes out"]);
+});
+
+test("laid out down, each step is a row, and a straight path is a straight vertical line", () => {
+  const ns = [n("r", "route"), n("a", "code"), n("b", "code"), n("s", "effect")];
+  const L = layout(ns, [e("r", "a"), e("a", "b"), e("b", "s")], { down: true });
+  assert.ok(L.down);
+  const p = (id) => L.pos.get(id);
+  assert.ok(p("r").y < p("a").y && p("a").y < p("b").y && p("b").y < p("s").y, "rows go down");
+  assert.strictEqual(new Set(ns.map((x) => p(x.id).x)).size, 1, "one box to a row, so they line up");
+  assert.ok(L.width < 300, "a long path doesn't make it wide");
+  assert.ok(L.height > L.width, "it grows tall instead");
+});
+
+test("laid out down, boxes that share a step sit side by side and don't overlap", () => {
+  const ns = [n("r", "route"), n("a", "code"), n("b", "code"), n("c", "code")];
+  const L = layout(ns, [e("r", "a"), e("r", "b"), e("r", "c")], { down: true });
+  const xs = ["a", "b", "c"].map((id) => L.pos.get(id).x).sort((u, v) => u - v);
+  assert.ok(xs[1] - xs[0] >= L.nodeW && xs[2] - xs[1] >= L.nodeW, "each box has its own room");
+  assert.strictEqual(new Set(["a", "b", "c"].map((id) => L.pos.get(id).y)).size, 1, "on one row");
+  assert.ok(L.width >= xs[2] + L.nodeW, "and the picture is wide enough to hold them");
+});
+
+test("the layout still runs sideways by default", () => {
+  const ns = [n("r", "route"), n("a", "code")];
+  const L = layout(ns, [e("r", "a")]);
+  assert.ok(!L.down);
+  assert.ok(L.pos.get("a").x > L.pos.get("r").x);
+});
+
+test("a line down leaves the bottom of one box and arrives at the top of the next", () => {
+  assert.strictEqual(curveDown({ x: 100, y: 40 }, { x: 160, y: 120 }), "M100,40 C100,80 160,80 160,120");
 });

@@ -51,19 +51,24 @@ CREATE TABLE IF NOT EXISTS settings (
 -- Unless the app_only setting is 0, an observed event that has no frame from the application is left out.
 -- Blocked and reported events are never left out by that. If filter_blocked or filter_monitored is 1, only events
 -- of the ticked kinds are kept. The agent's own jot-control events, which record a rule being switched, are left out
--- unless the show_jot_control setting is 1. Observed events of a JOT in the hidden_jots setting, a JSON list of JOT names, are left
--- out as well, and what a hidden rule blocked or reported still shows.
-CREATE VIEW IF NOT EXISTS events AS
+-- unless the show_jot_control setting is 1. That is events_shown, which the reports read. The events view also leaves out the
+-- observed events of a JOT in the hidden_jots setting, a JSON list of JOT names, and what a hidden rule blocked or reported still
+-- shows. A report names the sensors it needs, so hiding one from the event list doesn't blank a column of it.
+CREATE VIEW IF NOT EXISTS events_shown AS
   SELECT * FROM events_raw
   WHERE ts >= COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'since'), 0)
     AND (COALESCE((SELECT value FROM settings WHERE key = 'app_only'), '1') <> '1'
          OR origin IS NULL OR origin IN ('app', 'none') OR action <> 'observed')
-    AND (action <> 'observed' OR (CASE WHEN sensor LIKE '%-active' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 7) WHEN sensor LIKE '%-blocked' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 8) WHEN sensor LIKE '%-monitored' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 10) ELSE sensor END) NOT IN (SELECT value FROM json_each(COALESCE((SELECT value FROM settings WHERE key = 'hidden_jots'), '[]'))))
     AND ((COALESCE((SELECT value FROM settings WHERE key = 'filter_blocked'), '0') <> '1'
           AND COALESCE((SELECT value FROM settings WHERE key = 'filter_monitored'), '0') <> '1')
          OR (action = 'blocked' AND COALESCE((SELECT value FROM settings WHERE key = 'filter_blocked'), '0') = '1')
          OR (action = 'monitored' AND COALESCE((SELECT value FROM settings WHERE key = 'filter_monitored'), '0') = '1'))
     AND (sensor <> 'jot-control' OR COALESCE((SELECT value FROM settings WHERE key = 'show_jot_control'), '0') = '1');
+
+CREATE VIEW IF NOT EXISTS events AS
+  SELECT * FROM events_shown
+  WHERE 1
+    AND (action <> 'observed' OR (CASE WHEN sensor LIKE '%-active' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 7) WHEN sensor LIKE '%-blocked' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 8) WHEN sensor LIKE '%-monitored' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 10) ELSE sensor END) NOT IN (SELECT value FROM json_each(COALESCE((SELECT value FROM settings WHERE key = 'hidden_jots'), '[]'))));
 
 CREATE TABLE IF NOT EXISTS sensors (
   name TEXT PRIMARY KEY,
@@ -93,6 +98,7 @@ CREATE TABLE IF NOT EXISTS reports (
   rows TEXT,            -- the sensor.field whose values are the rows
   cols TEXT,            -- the sensor.field, or comma separated, for the columns
   value TEXT,           -- compare only, the sensor.field that fills the cells
+  by TEXT,              -- compare only, the sensor.field that says who had each value
   source TEXT
 );
 
@@ -233,6 +239,7 @@ def init(db):
     db.execute("DROP TABLE IF EXISTS jot_issues")
     # the view is rebuilt every start, so a changed definition takes effect
     db.execute("DROP VIEW IF EXISTS events")
+    db.execute("DROP VIEW IF EXISTS events_shown")
     db.executescript(SCHEMA)
     have = {r[1] for r in db.execute("PRAGMA table_info(events_raw)")}
     for column in ("origin", "app_frame", "data"):
@@ -666,7 +673,7 @@ def rename_in_reports(text, old, new):
                 continue
             fields = {k.value: v for k, v in report.value if isinstance(k, yaml.ScalarNode)}
             used = False
-            for field in ("rows", "cols", "value"):
+            for field in ("rows", "cols", "value", "by"):
                 node = fields.get(field)
                 if not isinstance(node, yaml.ScalarNode):
                     continue
@@ -693,9 +700,9 @@ def _report_uses(doc, rename=None):
 
     for r in (doc or {}).get("reports") or []:
         if isinstance(r, dict):
-            rest = {k: v for k, v in r.items() if k not in ("rows", "cols", "value")}
+            rest = {k: v for k, v in r.items() if k not in ("rows", "cols", "value", "by")}
             out.append((rest, swap(r.get("rows")), [swap(c.strip()) for c in str(r.get("cols") or "").split(",") if c.strip()],
-                        swap(r.get("value"))))
+                        swap(r.get("value")), swap(r.get("by"))))
     return out
 
 
@@ -962,10 +969,10 @@ def load_reports(db, paths):
                 _issue(db, "info", "report %s is type %s, which the dashboard doesn't build. series reports are "
                        "replaced by the event log" % (r["name"], rtype or "(none)"), source)
                 continue
-            db.execute("INSERT OR REPLACE INTO reports VALUES (?,?,?,?,?,?)", (
-                r["name"], rtype, r.get("rows"), r.get("cols"), r.get("value"), source))
+            db.execute("INSERT OR REPLACE INTO reports VALUES (?,?,?,?,?,?,?)", (
+                r["name"], rtype, r.get("rows"), r.get("cols"), r.get("value"), r.get("by"), source))
             used = ([r["rows"]] if r.get("rows") else []) + [c.strip() for c in str(r.get("cols") or "").split(",") if c.strip()] \
-                + ([r["value"]] if r.get("value") else [])
+                + ([r["value"]] if r.get("value") else []) + ([r["by"]] if r.get("by") else [])
             for ref in used:
                 sensor, _, field = ref.partition(".")
                 have = db.execute("SELECT captures FROM sensors WHERE name = ?", (sensor,)).fetchone()
@@ -996,7 +1003,7 @@ def _values(alias, ref, n):
             "CASE %s.type WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE CAST(%s.value AS TEXT) END" % (each, each))
 
 
-def report_sql(rtype, rows, cols, value=None):
+def report_sql(rtype, rows, cols, value=None, by=None):
     """The query for a report, as rows of (row, column, value) which the dashboard turns into a grid. What it reads is
     written sensor.field. A row and a column are related when they were observed in the same request, which is the same
     run and trace."""
@@ -1006,12 +1013,12 @@ def report_sql(rtype, rows, cols, value=None):
     if rtype == "list":
         join, expr = _values("e", refs[0], 0)
         return ("SELECT DISTINCT e.call_site AS call_site, %s AS sensor, %s AS value\n"
-                "FROM events e%s WHERE e.sensor = %s AND e.call_site IS NOT NULL AND %s <> ''\n"
+                "FROM events_shown e%s WHERE e.sensor = %s AND e.call_site IS NOT NULL AND %s <> ''\n"
                 "ORDER BY call_site" % (_lit(refs[0]), expr, join, _lit(refs[0].partition(".")[0]), expr))
     if not rows:
         raise ValueError("a %s report needs rows" % rtype)
     row_join, row_expr = _values("r", rows, 1)
-    start = "FROM events r%s, events c" % row_join
+    start = "FROM events_shown r%s, events_shown c" % row_join
     relate = "r.run = c.run AND r.trace = c.trace AND r.sensor = %s" % _lit(rows.partition(".")[0])
     if rtype == "compare":
         col_join, col_expr = _values("c", refs[0], 2)
@@ -1019,8 +1026,14 @@ def report_sql(rtype, rows, cols, value=None):
             if value.partition(".")[0] != refs[0].partition(".")[0]:
                 raise ValueError("value is a field of the cols sensor")
             val_join, val_expr = _values("c", value, 3)
-            return ("SELECT DISTINCT %s AS row, %s AS col, %s AS value\n%s%s%s WHERE %s AND c.sensor = %s\nORDER BY 1, 2"
-                    % (row_expr, col_expr, val_expr, start, col_join, val_join, relate, _lit(refs[0].partition(".")[0])))
+            by_join, by_expr = "", None
+            if by:
+                if by.partition(".")[0] != refs[0].partition(".")[0]:
+                    raise ValueError("by is a field of the cols sensor")
+                by_join, by_expr = _values("c", by, 4)
+            return ("SELECT DISTINCT %s AS row, %s AS col, %s AS value%s\n%s%s%s%s WHERE %s AND c.sensor = %s\nORDER BY 1, 2"
+                    % (row_expr, col_expr, val_expr, ", %s AS who" % by_expr if by else "", start, col_join, val_join, by_join, relate,
+                       _lit(refs[0].partition(".")[0])))
         return ("SELECT DISTINCT %s AS row, %s AS col, 'x' AS value\n%s%s WHERE %s AND c.sensor = %s\nORDER BY 1, 2"
                 % (row_expr, col_expr, start, col_join, relate, _lit(refs[0].partition(".")[0])))
     if rtype == "table":
@@ -1031,6 +1044,48 @@ def report_sql(rtype, rows, cols, value=None):
                          % (row_expr, _lit(ref), col_expr, start, col_join, relate, _lit(ref.partition(".")[0])))
         return "\nUNION\n".join(parts) + "\nORDER BY 1, 2"
     raise ValueError("unknown report type %s" % rtype)
+
+
+_CELL_COLUMNS = ("c.pk AS pk, strftime('%Y-%m-%d %H:%M:%S', c.ts/1000, 'unixepoch', 'localtime') AS time, c.action AS action, "
+                 "c.sensor AS sensor, c.call_site_name AS call_site, c.capture AS capture")
+
+
+def report_events_sql(rtype, rows, cols, row=None, col=None):
+    """The query for the events behind part of a report, which is a cell with a row and a column, a whole row when there is
+    no column, or a whole column when there is no row. They are the events of the column's sensor, from the requests that
+    the report relates to that row, so they are what put the values in the cell. Each is a row of pk, time, action, sensor,
+    call_site and capture, with pk first so a row of the result opens its event."""
+    refs = [c.strip() for c in (cols or "").split(",") if c.strip()]
+    if not refs:
+        raise ValueError("a report needs cols")
+    if rtype == "list":
+        ref = col if col in refs else refs[0]
+        join, expr = _values("c", ref, 0)
+        where = ["c.sensor = %s" % _lit(ref.partition(".")[0])]
+        if row is not None:
+            where.append("c.call_site = %s" % _lit(row))
+        return ("SELECT DISTINCT %s\nFROM events_shown c%s\nWHERE %s\nORDER BY c.ts DESC LIMIT 500"
+                % (_CELL_COLUMNS, join, " AND ".join(where)))
+    if not rows:
+        raise ValueError("a %s report needs rows" % rtype)
+    row_join, row_expr = _values("r", rows, 1)
+    if rtype == "table":
+        picked = [col] if col in refs else refs
+    elif rtype == "compare":
+        picked = refs[:1]
+    else:
+        raise ValueError("unknown report type %s" % rtype)
+    parts = []
+    for ref in picked:
+        col_join, col_expr = _values("c", ref, 2)
+        where = ["r.run = c.run", "r.trace = c.trace", "r.sensor = %s" % _lit(rows.partition(".")[0]), "c.sensor = %s" % _lit(ref.partition(".")[0])]
+        if row is not None:
+            where.append("%s = %s" % (row_expr, _lit(row)))
+        if rtype == "compare" and col is not None:
+            where.append("%s = %s" % (col_expr, _lit(col)))
+        parts.append("SELECT DISTINCT %s\nFROM events_shown r%s, events_shown c%s\nWHERE %s"
+                     % (_CELL_COLUMNS, row_join, col_join, " AND ".join(where)))
+    return "\nUNION\n".join(parts) + "\nORDER BY 1 DESC LIMIT 500"
 
 
 # ---------------------------------------------------------------------------- search

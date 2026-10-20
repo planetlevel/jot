@@ -5,7 +5,7 @@ import org.openolly.MethodIndexValue;
 import org.openolly.Sensor;
 import org.openolly.SensorIndexValue;
 
-import com.google.common.flogger.FluentLogger;
+import org.openolly.log.FluentLogger;
 
 import net.bytebuddy.asm.Advice;
 
