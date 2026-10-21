@@ -56,7 +56,13 @@ application, and events with the same `run` and `trace` came from the same reque
 The **Graph** tab draws every path the application took, built from the events of each request. A path starts at
 the route of the request on the left, goes through the application methods that were running, and ends at what a
 sensor saw, like a cipher, a query, a file or a blocked call. A forward or a redirect goes on to the route it names,
-shown at the far right as an exit. Lines get wider with the number of events, and a node shows its count.
+shown as an exit right after it. Lines get wider with the number of events, and a node shows its count.
+
+The picture is a main line with branches. The main line, drawn along one row with its lines a little stronger, is what most requests of that
+route did, box after box. A branch leaves it at the box it follows and sits one column on from there, on a row above or below, and carries on
+along that row, so a box is never pushed further right than the path that led to it. Where a branch joins the main line again, its line reaches
+across. Paths that few requests took are left out so the common ones can be read. Up to ten requests everything is drawn, then a path needs two
+requests, and from twenty a tenth of them. The summary says how many were hidden, and **Show rare paths** draws them. **Lay out top to bottom** turns the same picture so the main line is a column, which suits a narrow window.
 
 Click a node to follow its paths, everything that does not lead to or from it fades. The panel beside the graph shows
 what the node captured, where it comes from and where it leads, and **Show these events** opens them in a search.

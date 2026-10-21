@@ -181,7 +181,8 @@ and now and then a page gets its ordinary default. Leave this page open while it
 	}
 
 	function stop(why) {
-		clearInterval(timer); timer = null;
+		if (timer) timer.stop();
+		timer = null;
 		document.getElementById("run").disabled = false;
 		document.getElementById("stop").disabled = true;
 		summary.textContent = why + ", " + sent + " requests sent, " + answered + " answered and " + failed + " got an error, " + progress();
@@ -197,12 +198,26 @@ and now and then a page gets its ordinary default. Leave this page open while it
 		tbody.textContent = "";
 		document.getElementById("run").disabled = true;
 		document.getElementById("stop").disabled = false;
-		timer = setInterval(function () {
+		var started = Date.now(), issued = 0;
+		function tick() {
 			var left = end - Date.now();
 			if (left <= 0) return stop("finished");
 			summary.textContent = "running, " + Math.ceil(left / 1000) + " seconds left, " + sent + " requests sent, " + progress();
-			if (inFlight < 20) fire(deal(), attacks);     // a slow page doesn't pile up requests without limit
-		}, 1000 / rate);
+			// What is due by now, not one for each tick. A browser slows the timers of a tab you aren't looking at, to one a second and
+			// then one a minute, so counting what should have been sent keeps the rate when the ticks come late.
+			var due = Math.floor((Date.now() - started) / 1000 * rate) - issued;
+			for (var i = 0; i < due && inFlight < 20; i++) { fire(deal(), attacks); issued++; }   // a slow page doesn't pile up requests without limit
+			if (due > 0 && inFlight >= 20) issued += due;        // and what it couldn't take is dropped, not saved up
+		}
+		// A worker's timer is not slowed like the page's, so it is what keeps time, with the page's own as a fallback
+		try {
+			var worker = new Worker(URL.createObjectURL(new Blob(["setInterval(function () { postMessage(1); }, 100);"], { type: "text/javascript" })));
+			worker.onmessage = tick;
+			timer = { stop: function () { worker.terminate(); } };
+		} catch (e) {
+			var t = setInterval(tick, 250);
+			timer = { stop: function () { clearInterval(t); } };
+		}
 	};
 	document.getElementById("stop").onclick = function () { stop("stopped"); };
 })();

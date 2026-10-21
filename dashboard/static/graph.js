@@ -1,25 +1,26 @@
 "use strict";
-// Places the nodes of the path graph in columns, left to right. Routes are the first column, then everything a
-// request's own path reaches, in the order it reaches it: application methods by how far they are from a route, then
-// the effects those methods led to, each at its own distance rather than all lumped into one column. An effect
-// reached by a short path and also by a longer one sits at the longer distance, so both edges draw into the one
-// shared node, the way two subway lines share a station. Finally the routes a forward or redirect leads to. Within a
-// column the order is chosen so edges cross as little as possible.
+// Places the nodes of the path graph as a main line with branches, left to right. See layout for how. Which box a line leaves
+// and where it joins again is what the edges say, and within a column the boxes are in an order that keeps the lines apart.
 (function (root) {
   const NODE_W = 200, NODE_H = 26, GAP_Y = 10, COL_GAP = 80, PAD = 16, HEADER = 0;
   // going down, boxes in a row are this far apart, and rows this far, which leaves room for the lines between them to bend
   const GAP_X = 28, ROW_GAP = 40;
 
-  // With down, the steps run from top to bottom, one row for each, so a long path is a column of boxes and the page grows tall
-  // and not wide. Without it they run from left to right, one column for each. Either way the same steps share a rank.
+  // The picture is a main line with branches. The main line is the path through the busiest nodes, from the route to the last thing
+  // that happened, one box after another along a row. Anything else sits next to where it leaves that line, one column on from
+  // the box it follows, on a row above or below, and carries on along its own row. A box is only ever as far along as the path
+  // that led to it, so nothing is pushed out to the right to line up with something else. Where a branch joins the main line
+  // again, its line just reaches across.
+  //
+  // With down, the same picture runs top to bottom, the main line a column and the branches beside it.
   function layout(nodes, edges, options) {
     const down = !!(options && options.down);
     const byId = new Map(nodes.map((n) => [n.id, n]));
     const all = new Map(nodes.map((n) => [n.id, []]));
     for (const e of edges) if (byId.has(e.from) && byId.has(e.to)) all.get(e.from).push(e);
-    // Requests that did the same things in a different order make loops. An edge that closes a loop is left out of the
-    // layout, found by walking from the routes with the busiest edges first, so the order most requests used is the one
-    // drawn and nothing runs backwards across the page. It is still counted as a path, only not drawn.
+    // Requests that did the same things in a different order make loops. An edge that closes a loop is left out of the layout,
+    // found by walking from the routes with the busiest edges first, so the order most requests used is the one drawn and
+    // nothing runs backwards across the page. It is still counted as a path, only not drawn.
     const closing = new Set(), state = new Map();
     const walk = (id) => {
       state.set(id, 1);
@@ -40,103 +41,90 @@
       inn.get(e.to).push(e.from);
     }
 
-    // how far each node on a request's path is from a route, along the longest path to it. Code and effect nodes
-    // both count, so a chain of application methods ending in an effect, and an effect that follows another effect,
-    // are placed one after the other rather than effects all being dropped into a single final column. A call cycle
-    // is cut where it closes.
-    const depth = new Map();
-    const visiting = new Set();
-    function depthOf(id) {
-      if (depth.has(id)) return depth.get(id);
-      if (visiting.has(id)) return 0;
-      visiting.add(id);
-      let d = 1;
-      for (const p of inn.get(id)) {
-        const kind = byId.get(p).kind;
-        if (kind === "code" || kind === "effect") d = Math.max(d, depthOf(p) + 1);
-      }
-      visiting.delete(id);
-      depth.set(id, d);
-      return d;
-    }
-    let maxDepth = 0;
-    for (const n of nodes) if (n.kind === "code" || n.kind === "effect") maxDepth = Math.max(maxDepth, depthOf(n.id));
-    // the first column that holds an effect, so columns before it are titled for application code and the rest for
-    // what was seen. A column can hold both kinds, when one path reaches an effect sooner than another path reaches
-    // its own deeper application code, so this is where the effects begin, not a hard boundary between the kinds.
-    let firstEffect = maxDepth + 1;
-    for (const n of nodes) if (n.kind === "effect") firstEffect = Math.min(firstEffect, depth.get(n.id));
-
-    // a route that a forward or redirect leads to sits right after the node that leads to it, side by side, rather than
-    // far off at the end. It may share a column with what else came at that distance, and the column grows taller
-    const exitColumn = (n) => {
-      const from = inn.get(n.id).filter((id) => byId.get(id).kind === "code" || byId.get(id).kind === "effect");
-      return from.length ? Math.max(...from.map((id) => depth.get(id))) + 1 : maxDepth + 1;
+    // the order to place them in, every box after the ones that lead to it
+    const order = [], seen = new Set();
+    const visit = (id) => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      for (const to of out.get(id)) visit(to);
+      order.push(id);
     };
-    const column = (n) => n.kind === "route" ? 0 : (n.kind === "code" || n.kind === "effect") ? depth.get(n.id) : exitColumn(n);
-    const columns = [];
-    for (const n of nodes) {
-      const c = column(n);
-      (columns[c] = columns[c] || []).push(n);
-    }
-    for (let c = 0; c < columns.length; c++) columns[c] = columns[c] || [];
-    const titles = ["Routes in"];
-    let labeledCode = false, labeledEffect = false;
-    for (let c = 1; c <= maxDepth; c++) {
-      if (c < firstEffect) { titles.push(labeledCode ? "" : "Application code"); labeledCode = true; }
-      else { titles.push(labeledEffect ? "" : "What was seen"); labeledEffect = true; }
-    }
-    // only a column past the last method or effect is made of routes out, an exit beside others has the column's own title
-    if (columns.length > maxDepth + 1) titles.push("Routes out");
+    for (const n of nodes) visit(n.id);
+    order.reverse();
 
-    // start with the busiest on top, then pull each node toward the middle of the nodes it is connected to
-    const y = new Map();
-    for (const col of columns) {
-      col.sort((a, b) => b.events - a.events || a.label.localeCompare(b.label));
-      col.forEach((n, i) => y.set(n.id, i));
-    }
-    const mean = (ids) => ids.reduce((s, id) => s + y.get(id), 0) / ids.length;
-    for (let pass = 0; pass < 4; pass++) {
-      const order = pass % 2 === 0 ? columns.map((_, i) => i) : columns.map((_, i) => columns.length - 1 - i);
-      for (const c of order) {
-        const col = columns[c];
-        const key = new Map(col.map((n) => {
-          const near = (pass % 2 === 0 ? inn : out).get(n.id);
-          return [n.id, near.length ? mean(near) : y.get(n.id)];
-        }));
-        col.sort((a, b) => key.get(a.id) - key.get(b.id) || b.events - a.events || a.label.localeCompare(b.label));
-        col.forEach((n, i) => y.set(n.id, i));
+    // the main line is what most requests did, the kind of request that came most often, a line in the server's words, taken in the
+    // order the boxes happen. Without a count of requests for each kind it is the path from a route through the most events, the
+    // busiest route if there are several
+    const counts = options && options.lineCounts;
+    let spine = [];
+    if (counts) {
+      let top = null;
+      for (const key of Object.keys(counts)) {
+        const mine = nodes.filter((n) => (n.lines || []).includes(Number(key))).length;
+        if (top === null || counts[key] > counts[top.key] || (counts[key] === counts[top.key] && mine > top.mine)) top = { key, mine };
       }
+      if (top) spine = order.filter((id) => (byId.get(id).lines || []).includes(Number(top.key)));
+    }
+    const best = new Map(), next = new Map();
+    for (const id of order.slice().reverse()) {
+      let top = 0, pick = null;
+      for (const to of out.get(id)) {
+        if (best.get(to) > top || (best.get(to) === top && pick !== null && byId.get(to).events > byId.get(pick).events)) { top = best.get(to); pick = to; }
+      }
+      best.set(id, byId.get(id).events + top);
+      if (pick !== null) next.set(id, pick);
+    }
+    const starts = nodes.filter((n) => !inn.get(n.id).length);
+    const routes = starts.filter((n) => n.kind === "route");
+    const first = (routes.length ? routes : starts).slice().sort((a, b) => best.get(b.id) - best.get(a.id) || a.label.localeCompare(b.label))[0];
+    if (!spine.length) for (let id = first && first.id; id !== undefined; id = next.get(id)) spine.push(id);
+    const onSpine = new Set(spine);
+
+    // columns. The main line is one column to a box. Anything else is one on from the last box before it, and the exit that
+    // a forward leads to is one on from the forward, so it sits next to it
+    const col = new Map(spine.map((id, i) => [id, i]));
+    for (const id of order) {
+      if (col.has(id)) continue;
+      const from = inn.get(id).filter((p) => col.has(p));
+      col.set(id, from.length ? Math.max(...from.map((p) => col.get(p))) + 1 : 0);
     }
 
-    // every column is as tall as the tallest. A shorter one is spread over that height, each node in the middle of its
-    // own share of it, so a lone node sits at the middle and the edges between columns stay level
-    const tallest = Math.max(1, ...columns.map((col) => col.length));
+    // rows. The main line is row 0. A branch stays on the row of the box it follows when that is free, and otherwise takes the
+    // nearest free one, going below first and then above, so the branches are spread on both sides of the line
+    const rowOf = new Map(spine.map((id) => [id, 0]));
+    const taken = new Map();       // column -> the rows in use
+    const use = (c, r) => { if (!taken.has(c)) taken.set(c, new Set()); taken.get(c).add(r); };
+    const free = (c, r) => !(taken.get(c) && taken.get(c).has(r));
+    for (const id of spine) use(col.get(id), 0);
+    const placement = order.filter((id) => !onSpine.has(id)).sort((a, b) => col.get(a) - col.get(b) || byId.get(b).events - byId.get(a).events || byId.get(a).label.localeCompare(byId.get(b).label));
+    for (const id of placement) {
+      const from = inn.get(id).filter((p) => rowOf.has(p));
+      const anchor = from.length ? Math.round(from.reduce((t, p) => t + rowOf.get(p), 0) / from.length) : 0;
+      const c = col.get(id);
+      let r = anchor;
+      for (let step = 0; !free(c, r); step++) r = anchor + (step % 2 === 0 ? step / 2 + 1 : -((step + 1) / 2));
+      rowOf.set(id, r);
+      use(c, r);
+    }
+    const rows = nodes.map((n) => rowOf.get(n.id));
+    const low = nodes.length ? Math.min(...rows) : 0, high = nodes.length ? Math.max(...rows) : 0;
+    const columns = nodes.length ? Math.max(...nodes.map((n) => col.get(n.id))) + 1 : 0;
+    const across = high - low + 1;
+
+    const pos = new Map();
     if (down) {
-      const slotX = NODE_W + GAP_X, span = tallest * slotX;
-      const pos = new Map();
-      columns.forEach((col, r) => col.forEach((n, i) => {
-        const share = span / col.length;
-        pos.set(n.id, { x: PAD + (i + 0.5) * share - NODE_W / 2, y: PAD + r * (NODE_H + ROW_GAP), column: r });
-      }));
+      for (const n of nodes) pos.set(n.id, { x: PAD + (rowOf.get(n.id) - low) * (NODE_W + GAP_X), y: PAD + col.get(n.id) * (NODE_H + ROW_GAP), column: col.get(n.id), row: rowOf.get(n.id) });
       return {
-        pos, closing, titles, columns: columns.length, down: true,
-        width: PAD * 2 + span - GAP_X,
-        height: PAD * 2 + columns.length * NODE_H + Math.max(0, columns.length - 1) * ROW_GAP,
-        nodeW: NODE_W, nodeH: NODE_H,
+        pos, closing, spine, columns, down: true, nodeW: NODE_W, nodeH: NODE_H,
+        width: PAD * 2 + Math.max(1, across) * NODE_W + Math.max(0, across - 1) * GAP_X,
+        height: PAD * 2 + Math.max(1, columns) * NODE_H + Math.max(0, columns - 1) * ROW_GAP,
       };
     }
-    const slot = NODE_H + GAP_Y, span = tallest * slot;
-    const pos = new Map();
-    columns.forEach((col, c) => col.forEach((n, i) => {
-      const share = span / col.length;
-      pos.set(n.id, { x: PAD + c * (NODE_W + COL_GAP), y: PAD + HEADER + (i + 0.5) * share - NODE_H / 2, column: c });
-    }));
+    for (const n of nodes) pos.set(n.id, { x: PAD + col.get(n.id) * (NODE_W + COL_GAP), y: PAD + HEADER + (rowOf.get(n.id) - low) * (NODE_H + GAP_Y), column: col.get(n.id), row: rowOf.get(n.id) });
     return {
-      pos, closing, titles, columns: columns.length, colX: columns.map((_, c) => PAD + c * (NODE_W + COL_GAP)),
-      width: PAD * 2 + Math.max(1, columns.length) * NODE_W + Math.max(0, columns.length - 1) * COL_GAP,
-      height: PAD * 2 + HEADER + tallest * (NODE_H + GAP_Y),
-      nodeW: NODE_W, nodeH: NODE_H,
+      pos, closing, spine, columns, down: false, nodeW: NODE_W, nodeH: NODE_H,
+      width: PAD * 2 + Math.max(1, columns) * NODE_W + Math.max(0, columns - 1) * COL_GAP,
+      height: PAD * 2 + HEADER + Math.max(1, across) * NODE_H + Math.max(0, across - 1) * GAP_Y,
     };
   }
 
@@ -257,6 +245,23 @@
     return { nodes: second.nodes, edges: second.edges, head };
   }
 
+  // Leaves out the paths few requests took, so what most did can be read. The paths are the lines between boxes, and each says
+  // which kinds of request used it, so how many requests did is the sum of the counts of those kinds. Up to ten requests nothing
+  // is left out, then a path is left out if fewer than two requests took it, and from twenty if fewer than a tenth did. A route and
+  // the line it starts are always kept, and a box that is left with no line goes with them.
+  function prune(nodes, edges, lineCounts) {
+    const counts = lineCounts || {};
+    const total = Object.keys(counts).reduce((t, k) => t + counts[k], 0);
+    const need = total >= 20 ? Math.ceil(total * 0.1) : total >= 10 ? 2 : 1;
+    if (need <= 1) return { nodes, edges, hiddenEdges: 0, hiddenNodes: 0 };
+    const requests = (edge) => (edge.lines || []).reduce((t, l) => t + (counts[l] || 0), 0);
+    const kept = edges.filter((edge) => requests(edge) >= need || !(edge.lines || []).length);
+    const used = new Set();
+    for (const edge of kept) { used.add(edge.from); used.add(edge.to); }
+    const left = nodes.filter((n) => used.has(n.id) || n.kind === "route");
+    return { nodes: left, edges: kept, hiddenEdges: edges.length - kept.length, hiddenNodes: nodes.length - left.length };
+  }
+
   // A starting JOT for an application method, from its full name like com.acme.Database.getConnection, or null when a method of
   // that name can't be watched, like a static initializer. Its name is the class and method as words, made unique among those taken.
   function sensorFor(full, taken) {
@@ -287,7 +292,7 @@
     return head.includes("/") ? head.slice(head.lastIndexOf("/") + 1) : head;
   }
 
-  const api = { layout, through, curve, curveDown, collapse, sensorFor, frameMethod };
+  const api = { layout, through, curve, curveDown, collapse, prune, sensorFor, frameMethod };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.JotGraph = api;
 })(typeof window !== "undefined" ? window : globalThis);

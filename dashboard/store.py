@@ -1003,6 +1003,11 @@ def _values(alias, ref, n):
             "CASE %s.type WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE CAST(%s.value AS TEXT) END" % (each, each))
 
 
+def _ident(text):
+    """A name to use as a column heading in SQL."""
+    return '"' + str(text).replace('"', '""') + '"'
+
+
 def report_sql(rtype, rows, cols, value=None, by=None):
     """The query for a report, as rows of (row, column, value) which the dashboard turns into a grid. What it reads is
     written sensor.field. A row and a column are related when they were observed in the same request, which is the same
@@ -1031,17 +1036,17 @@ def report_sql(rtype, rows, cols, value=None, by=None):
                 if by.partition(".")[0] != refs[0].partition(".")[0]:
                     raise ValueError("by is a field of the cols sensor")
                 by_join, by_expr = _values("c", by, 4)
-            return ("SELECT DISTINCT %s AS row, %s AS col, %s AS value%s\n%s%s%s%s WHERE %s AND c.sensor = %s\nORDER BY 1, 2"
-                    % (row_expr, col_expr, val_expr, ", %s AS who" % by_expr if by else "", start, col_join, val_join, by_join, relate,
+            return ("SELECT DISTINCT %s AS %s, %s AS col, %s AS value%s\n%s%s%s%s WHERE %s AND c.sensor = %s\nORDER BY 1, 2"
+                    % (row_expr, _ident(rows), col_expr, val_expr, ", %s AS who" % by_expr if by else "", start, col_join, val_join, by_join, relate,
                        _lit(refs[0].partition(".")[0])))
-        return ("SELECT DISTINCT %s AS row, %s AS col, 'x' AS value\n%s%s WHERE %s AND c.sensor = %s\nORDER BY 1, 2"
-                % (row_expr, col_expr, start, col_join, relate, _lit(refs[0].partition(".")[0])))
+        return ("SELECT DISTINCT %s AS %s, %s AS col, 'x' AS value\n%s%s WHERE %s AND c.sensor = %s\nORDER BY 1, 2"
+                % (row_expr, _ident(rows), col_expr, start, col_join, relate, _lit(refs[0].partition(".")[0])))
     if rtype == "table":
         parts = []
         for i, ref in enumerate(refs):
             col_join, col_expr = _values("c", ref, 2)
-            parts.append("SELECT DISTINCT %s AS row, %s AS col, %s AS value\n%s%s WHERE %s AND c.sensor = %s"
-                         % (row_expr, _lit(ref), col_expr, start, col_join, relate, _lit(ref.partition(".")[0])))
+            parts.append("SELECT DISTINCT %s AS %s, %s AS col, %s AS value\n%s%s WHERE %s AND c.sensor = %s"
+                         % (row_expr, _ident(rows), _lit(ref), col_expr, start, col_join, relate, _lit(ref.partition(".")[0])))
         return "\nUNION\n".join(parts) + "\nORDER BY 1, 2"
     raise ValueError("unknown report type %s" % rtype)
 
@@ -1285,8 +1290,10 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
     for group in _requests(rows):
         key = (group[0][0], tuple((r[3], r[4], r[5], r[6]) for r in group))
         same[key] = same.get(key, 0) + 1
+    line_counts = {}
     for number, ((route, events), count) in enumerate(same.items()):
         line[0] = number
+        line_counts[number] = count
         walk(route, events, count)
 
     out_nodes = sorted(nodes.values(), key=lambda n: (-n["events"], n["label"]))
@@ -1296,7 +1303,7 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
     for e in edges.values():
         e["lines"] = sorted(e["lines"])
     return {"nodes": out_nodes, "edges": sorted(edges.values(), key=lambda e: -e["events"]),
-            "routes": route_names, "truncated": truncated}
+            "routes": route_names, "truncated": truncated, "line_counts": line_counts}
 
 
 def build_graphs(rows, routes_seen, app_prefixes=(), details=False, truncated=False):
@@ -1311,7 +1318,7 @@ def build_graphs(rows, routes_seen, app_prefixes=(), details=False, truncated=Fa
         if not g["edges"]:
             continue   # nothing happened in it that the graph shows, like a stylesheet
         graphs.append({"route": route, "requests": sum(1 for _ in _requests(route_rows)),
-                       "events": len(route_rows), "nodes": g["nodes"], "edges": g["edges"]})
+                       "events": len(route_rows), "nodes": g["nodes"], "edges": g["edges"], "line_counts": g["line_counts"]})
     graphs.sort(key=lambda g: (g["route"] == NO_REQUEST, g["route"].lower()))
     return {"graphs": graphs, "routes": sorted(routes_seen), "truncated": truncated}
 

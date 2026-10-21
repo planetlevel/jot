@@ -1,21 +1,13 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { layout, through, curve, collapse, sensorFor, frameMethod, curveDown } = require("../static/graph.js");
+const { layout, through, curve, collapse, sensorFor, frameMethod, curveDown, prune } = require("../static/graph.js");
 
 const n = (id, kind, events = 1) => ({ id, kind, label: id, events });
 const e = (from, to, events = 1) => ({ from, to, events });
 
 const nodes = [n("r1", "route", 9), n("r2", "route", 3), n("a", "code", 9), n("b", "code", 5), n("s", "effect", 9), n("x", "exit", 1)];
 const edges = [e("r1", "a"), e("a", "b"), e("b", "s"), e("r2", "s"), e("s", "x")];
-
-test("routes are in the first column, code by distance from a route, then effects, then exits", () => {
-  const L = layout(nodes, edges);
-  const col = (id) => L.pos.get(id).column;
-  assert.deepStrictEqual(["r1", "r2", "a", "b", "s", "x"].map(col), [0, 0, 1, 2, 3, 4]);
-  assert.strictEqual(L.columns, 5);
-  assert.deepStrictEqual(L.titles, ["Routes in", "Application code", "", "What was seen", "Routes out"]);
-});
 
 test("an effect reached by a short path sits ahead of one reached by a longer path, not lumped into one column", () => {
   // r -> s1 directly, r -> a -> s2, so s1's own request span is one hop and s2's is two
@@ -49,12 +41,6 @@ test("no two nodes overlap and everything is inside the drawing", () => {
       assert.ok(apart, "nodes " + i + " and " + j + " overlap");
     }
   }
-});
-
-test("a column with no exits is not drawn, and with no code the effects follow the routes", () => {
-  const L = layout([n("r", "route"), n("s", "effect")], [e("r", "s")]);
-  assert.strictEqual(L.columns, 2);
-  assert.deepStrictEqual(L.titles, ["Routes in", "What was seen"]);
 });
 
 test("a call cycle does not hang and still gives every method a column", () => {
@@ -206,15 +192,6 @@ test("a shorter column is spread over the height of the tallest, and a lone node
   assert.ok(Math.abs(mid("x") - (top + bottom) / 2) < L.nodeH);
 });
 
-test("the nodes of a spread column keep their order and are evenly apart", () => {
-  const ns = [n("r1", "route", 9), n("r2", "route", 8), n("s1", "effect", 5), n("s2", "effect", 4), n("s3", "effect", 3), n("s4", "effect", 2)];
-  const L = layout(ns, [e("r1", "s1"), e("r1", "s2"), e("r2", "s3"), e("r2", "s4")]);
-  const ys = ["r1", "r2"].map((id) => L.pos.get(id).y);
-  const col = ["s1", "s2", "s3", "s4"].map((id) => L.pos.get(id).y).sort((p, q) => p - q);
-  assert.ok(ys[1] - ys[0] > col[1] - col[0], "two routes are further apart than four effects");
-  assert.ok(Math.abs((col[2] - col[1]) - (col[1] - col[0])) < 0.001);
-});
-
 test("an edge that closes a loop is left out of the layout, so nothing runs backwards", () => {
   // most requests did A then B, one did B then A, which makes a loop between them
   const ns = [n("r", "route"), n("A", "effect"), n("B", "effect")];
@@ -255,25 +232,6 @@ test("the method of a stack frame has no module, line or file", () => {
   assert.strictEqual(frameMethod(""), "");
 });
 
-test("a route a forward leads to sits right after the forward, in the column of what else came at that distance", () => {
-  // r -> f (forward) -> page code -> later effect, and f -> x, the route it forwards to
-  const ns = [n("r", "route", 9), n("f", "effect", 6), n("page", "code", 4), n("later", "effect", 4), n("x", "exit", 6)];
-  const L = layout(ns, [e("r", "f"), e("f", "page"), e("page", "later"), e("f", "x")]);
-  const col = (id) => L.pos.get(id).column;
-  assert.strictEqual(col("x"), col("f") + 1, "side by side with the forward, not at the far end");
-  assert.strictEqual(col("x"), col("page"));
-  assert.strictEqual(L.columns, 4, "no column of its own at the end");
-  assert.ok(!L.titles.includes("Routes out"));
-  assert.notStrictEqual(L.pos.get("x").y, L.pos.get("page").y, "the column grows taller instead of overlapping");
-});
-
-test("a route out that comes after everything else still has its own column", () => {
-  const ns = [n("r", "route"), n("f", "effect"), n("x", "exit")];
-  const L = layout(ns, [e("r", "f"), e("f", "x")]);
-  assert.strictEqual(L.pos.get("x").column, 2);
-  assert.deepStrictEqual(L.titles, ["Routes in", "What was seen", "Routes out"]);
-});
-
 test("laid out down, each step is a row, and a straight path is a straight vertical line", () => {
   const ns = [n("r", "route"), n("a", "code"), n("b", "code"), n("s", "effect")];
   const L = layout(ns, [e("r", "a"), e("a", "b"), e("b", "s")], { down: true });
@@ -303,4 +261,104 @@ test("the layout still runs sideways by default", () => {
 
 test("a line down leaves the bottom of one box and arrives at the top of the next", () => {
   assert.strictEqual(curveDown({ x: 100, y: 40 }, { x: 160, y: 120 }), "M100,40 C100,80 160,80 160,120");
+});
+
+test("the main line is the path through the busiest boxes, one box to a column, and the rest branch off it", () => {
+  const L = layout(nodes, edges);
+  const col = (id) => L.pos.get(id).column;
+  assert.deepStrictEqual(L.spine, ["r1", "a", "b", "s", "x"]);
+  assert.deepStrictEqual(["r1", "a", "b", "s", "x"].map(col), [0, 1, 2, 3, 4]);
+  assert.strictEqual(new Set(L.spine.map((id) => L.pos.get(id).row)).size, 1, "all on one row");
+  assert.notStrictEqual(L.pos.get("r2").row, L.pos.get("r1").row, "the other route is on another row");
+  assert.strictEqual(L.columns, 5);
+});
+
+test("a branch sits one column on from where it leaves the main line, not out at the end", () => {
+  const ns = [n("r", "route", 9), n("a", "code", 9), n("b", "code", 9), n("c", "code", 9), n("d", "code", 9), n("x", "effect", 2)];
+  const L = layout(ns, [e("r", "a"), e("a", "b"), e("b", "c"), e("c", "d"), e("a", "x")]);
+  assert.strictEqual(L.pos.get("x").column, 2, "right after a");
+  assert.strictEqual(L.columns, 5, "the picture is as long as the main line");
+});
+
+test("a branch that joins the main line again doesn't push the main line along", () => {
+  const ns = [n("r", "route", 9), n("a", "code", 9), n("b", "code", 9), n("c", "code", 9), n("d", "code", 9), n("x", "code", 2), n("y", "code", 2), n("z", "code", 2)];
+  const L = layout(ns, [e("r", "a"), e("a", "b"), e("b", "c"), e("c", "d"), e("a", "x"), e("x", "y"), e("y", "z"), e("z", "d")]);
+  assert.deepStrictEqual(["r", "a", "b", "c", "d"].map((id) => L.pos.get(id).column), [0, 1, 2, 3, 4], "d stays where the line puts it");
+});
+
+test("branches are spread on both sides of the main line, each on its own row in a column", () => {
+  const ns = [n("r", "route", 9), n("m", "code", 9), n("z", "code", 9), n("p", "effect", 3), n("q", "effect", 2), n("w", "effect", 1)];
+  const L = layout(ns, [e("r", "m"), e("m", "z"), e("m", "p"), e("m", "q"), e("m", "w")]);
+  const rows = ["p", "q", "w"].map((id) => L.pos.get(id).row);
+  assert.strictEqual(new Set(rows).size, 3, "no two share a row, so none overlap");
+  assert.ok(rows.some((r) => r > 0) && rows.some((r) => r < 0), "some above and some below");
+  assert.ok(!rows.includes(0), "none on the main line");
+  assert.strictEqual(L.pos.get("p").column, L.pos.get("z").column);
+});
+
+test("a route a forward leads to sits right after the forward, beside what else came then", () => {
+  const ns = [n("r", "route", 9), n("f", "effect", 6), n("page", "code", 4), n("later", "effect", 4), n("x", "exit", 6)];
+  const L = layout(ns, [e("r", "f"), e("f", "page"), e("page", "later"), e("f", "x")]);
+  const col = (id) => L.pos.get(id).column;
+  assert.strictEqual(col("x"), col("f") + 1, "next to the forward, not at the far end");
+  assert.strictEqual(col("x"), col("page"));
+  assert.notStrictEqual(L.pos.get("x").row, L.pos.get("page").row, "on its own row");
+  assert.strictEqual(L.columns, 4);
+});
+
+test("the main line is what most requests did when the server says how many did each", () => {
+  // one request went r, a, b and five went r, c, d, e. a, b are busier boxes in the sum but the five are the main line
+  const ns = [
+    { id: "r", kind: "route", label: "r", events: 6, lines: [0, 1] },
+    { id: "a", kind: "code", label: "a", events: 40, lines: [0] }, { id: "b", kind: "code", label: "b", events: 40, lines: [0] },
+    { id: "c", kind: "code", label: "c", events: 5, lines: [1] }, { id: "d", kind: "code", label: "d", events: 5, lines: [1] },
+    { id: "e", kind: "code", label: "e", events: 5, lines: [1] },
+  ];
+  const es = [{ from: "r", to: "a", events: 1, lines: [0] }, { from: "a", to: "b", events: 1, lines: [0] }, { from: "r", to: "c", events: 5, lines: [1] },
+    { from: "c", to: "d", events: 5, lines: [1] }, { from: "d", to: "e", events: 5, lines: [1] }];
+  assert.deepStrictEqual(layout(ns, es, { lineCounts: { 0: 1, 1: 5 } }).spine, ["r", "c", "d", "e"]);
+  assert.deepStrictEqual(layout(ns, es).spine, ["r", "a", "b"], "without counts it is the path through the most events");
+});
+
+test("laid out down it is the same picture with the main line a column", () => {
+  const A = layout(nodes, edges), D = layout(nodes, edges, { down: true });
+  assert.deepStrictEqual(D.spine, A.spine);
+  assert.strictEqual(D.pos.get("x").y > D.pos.get("r1").y, true);
+  assert.strictEqual(D.pos.get("x").x, D.pos.get("r1").x, "the main line shares an x");
+});
+
+const pn = (id, kind = "code") => ({ id, kind, label: id, events: 1, lines: [] });
+const pe = (from, to, lines) => ({ from, to, events: 1, lines });
+
+test("with ten requests or fewer nothing is left out", () => {
+  const ns = [pn("r", "route"), pn("a"), pn("b")];
+  const es = [pe("r", "a", [0]), pe("r", "b", [1])];
+  const out = prune(ns, es, { 0: 8, 1: 1 });
+  assert.strictEqual(out.edges.length, 2);
+  assert.strictEqual(out.hiddenEdges, 0);
+});
+
+test("a path that fewer than two of ten or more requests took is left out, with the box only it led to", () => {
+  const ns = [pn("r", "route"), pn("a"), pn("b"), pn("rare")];
+  const es = [pe("r", "a", [0, 1]), pe("a", "b", [0]), pe("a", "rare", [1])];
+  const out = prune(ns, es, { 0: 10, 1: 1 });
+  assert.deepStrictEqual(out.edges.map((x) => x.to), ["a", "b"]);
+  assert.deepStrictEqual(out.nodes.map((x) => x.id), ["r", "a", "b"]);
+  assert.strictEqual(out.hiddenEdges, 1);
+  assert.strictEqual(out.hiddenNodes, 1);
+});
+
+test("from twenty requests a path needs a tenth of them, counted over every kind of request that used it", () => {
+  const ns = [pn("r", "route"), pn("a"), pn("b")];
+  // twenty-five requests of five kinds, five each. The path to b is taken by two kinds, ten requests, so it stays
+  const es = [pe("r", "a", [0, 1, 2, 3, 4]), pe("a", "b", [0, 1])];
+  assert.strictEqual(prune(ns, es, { 0: 5, 1: 5, 2: 5, 3: 5, 4: 5 }).edges.length, 2);
+  // thirty requests, and a path only one kind of three took is two of thirty
+  const only = prune([pn("r", "route"), pn("a"), pn("c")], [pe("r", "a", [0, 1]), pe("a", "c", [2])], { 0: 14, 1: 14, 2: 2 });
+  assert.deepStrictEqual(only.edges.map((x) => x.to), ["a"]);
+});
+
+test("the route is always kept, even when every path from it is rare", () => {
+  const out = prune([pn("r", "route"), pn("a")], [pe("r", "a", [3])], { 0: 30, 3: 1 });
+  assert.deepStrictEqual(out.nodes.map((x) => x.id), ["r"]);
 });

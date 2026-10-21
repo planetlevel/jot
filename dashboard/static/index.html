@@ -267,6 +267,7 @@
   .routegraph h3 { margin: 0 0 4px; font-size: 14px; }
   svg.graph .coltitle { fill: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
   svg.graph .edge { fill: none; stroke: var(--muted); opacity: .28; }
+  svg.graph .edge.spine { opacity: .5; }
   svg.graph .edge.on { stroke: var(--accent); opacity: .9; }
   svg.graph .edge.off { opacity: .06; }
   svg.graph .node { cursor: pointer; }
@@ -340,7 +341,8 @@
     <div class="graphtools">
       <label>Route <select id="graphRoute" aria-label="Route"><option value="">All routes</option></select></label>
       <label title="Also show the sensors that only describe the request, like who the user was and which parameters it had"><input type="checkbox" id="graphDetails"> Include request details</label>
-      <label title="Run the paths from left to right, the older way, instead of from top to bottom. A long path is then very wide"><input type="checkbox" id="graphSideways"> Lay out sideways</label>
+      <label title="Also draw the paths that only a few requests took. Up to ten requests everything is drawn, then a path needs two requests, and from twenty a tenth of them"><input type="checkbox" id="graphRare"> Show rare paths</label>
+      <label title="Run the main line from top to bottom instead of from left to right, which suits a narrow window"><input type="checkbox" id="graphDown"> Lay out top to bottom</label>
       <label title="Fold a straight run of methods of one class, like a static initializer, constructor and init, into one node. A run that branches stays open"><input type="checkbox" id="graphCollapse" checked> Collapse setup chains</label>
       <span class="hint" id="graphSummary"></span>
     </div>
@@ -1694,7 +1696,14 @@ document.addEventListener("keydown", (ev) => {
 
 // Each route is drawn on its own, so a route's paths can be read without those of the others running through them
 function drawGraph() {
-  const graphs = graphData.graphs.filter((g) => g.nodes.length);
+  // the paths few requests took are left out unless asked for, and how many is said
+  let hidden = 0;
+  const graphs = graphData.graphs.map((g) => {
+    if ($("graphRare").checked) return g;
+    const kept = JotGraph.prune(g.nodes, g.edges, g.line_counts);
+    hidden += kept.hiddenEdges;
+    return kept.hiddenEdges ? Object.assign({}, g, { nodes: kept.nodes, edges: kept.edges }) : g;
+  }).filter((g) => g.nodes.length);
   if (!graphs.length) {
     $("graphScroll").replaceChildren(el("div", { class: "empty", text: "No paths yet. Use the application and they appear here." }));
     $("graphSummary").textContent = "";
@@ -1710,13 +1719,13 @@ function drawGraph() {
   const all = graphs.flatMap((g) => g.nodes);
   const count = (k) => new Set(all.filter((n) => n.kind === k).map((n) => n.id)).size;
   $("graphSummary").textContent = graphs.length + " routes, " + count("code") + " methods, " + count("effect") + " kinds of effect"
-    + (graphData.truncated ? " (only the first part of the events were used)" : "");
+    + (hidden ? ", " + hidden + " rare paths hidden" : "") + (graphData.truncated ? " (only the first part of the events were used)" : "");
   drawGraphDetail();
 }
 
 function drawRoute(graph) {
   const { nodes, edges } = graph;
-  const L = JotGraph.layout(nodes, edges, { down: !$("graphSideways").checked });
+  const L = JotGraph.layout(nodes, edges, { down: $("graphDown").checked, lineCounts: graph.line_counts });
   const mine = graph.route === graphPanel;
   const lit = graphPicked && mine && nodes.some((n) => n.id === graphPicked) ? JotGraph.through(graphPicked, nodes, edges) : null;
   const litEdges = lit && lit.edges;
@@ -1733,7 +1742,8 @@ function drawRoute(graph) {
     if (!L.pos.has(e.from) || !L.pos.has(e.to) || L.closing.has(e)) continue;
     const path = svgEl("path", { d: L.down ? JotGraph.curveDown(bottom(e.from), top(e.to)) : JotGraph.curve(mid(e.from), mid(e.to), L.nodeW),
       "stroke-width": String(Math.min(6, 1 + Math.log2(e.events) / 1.6)),
-      class: "edge" + (litEdges ? (litEdges.has(e) ? " on" : " off") : "") });
+      class: "edge" + (L.spine.includes(e.from) && L.spine.includes(e.to) && L.spine.indexOf(e.to) === L.spine.indexOf(e.from) + 1 ? " spine" : "")
+        + (litEdges ? (litEdges.has(e) ? " on" : " off") : "") });
     path.append(svgEl("title", {}, label.get(e.from) + " → " + label.get(e.to) + ", " + e.events + " events"));
     svg.append(path);
   }
@@ -1819,9 +1829,10 @@ function openSearch(query) {
 $("graphRoute").addEventListener("change", () => { graphPicked = graphPanel = null; history.replaceState(null, "", "#graph"); loadGraph(); });
 $("graphDetails").addEventListener("change", loadGraph);
 $("graphCollapse").addEventListener("change", loadGraph);
-try { $("graphSideways").checked = localStorage.getItem("jot-graph-sideways") === "1"; } catch (e) { /* not remembered */ }
-$("graphSideways").addEventListener("change", () => {
-  try { localStorage.setItem("jot-graph-sideways", $("graphSideways").checked ? "1" : "0"); } catch (e) { /* not remembered */ }
+try { $("graphDown").checked = localStorage.getItem("jot-graph-down") === "1"; } catch (e) { /* not remembered */ }
+$("graphRare").addEventListener("change", () => { if (graphData) drawGraph(); });
+$("graphDown").addEventListener("change", () => {
+  try { localStorage.setItem("jot-graph-down", $("graphDown").checked ? "1" : "0"); } catch (e) { /* not remembered */ }
   if (graphData) drawGraph();
 });
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && graphPicked && currentPage === "graph") pickNode(null); });

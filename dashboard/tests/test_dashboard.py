@@ -267,6 +267,13 @@ class ReportTests(unittest.TestCase):
         self.assertIn(("/buy", "RoleD", "true"), [tuple(r) for r in self.app.sql(sql)["rows"]])
         self.assertIn(("/buy", "RoleE", "false"), [tuple(r) for r in self.app.sql(sql)["rows"]])
 
+    def test_the_heading_of_the_row_column_is_what_the_rows_are(self):
+        for name, heading in (("Access Control Matrix", "http-route.path"), ("Cipher Table", "http-route.path"), ("Test Coverage Matrix", "http-route.path")):
+            out = self.app.sql(self.report(name)["sql"], limit=5000)
+            self.assertEqual(heading, out["columns"][0], name)
+        out = self.app.sql(store.report_sql("compare", 'weird"name.path', "auth-user.user"))
+        self.assertEqual('weird"name.path', out["columns"][0], "a quote in a name can't break the heading")
+
     def test_a_field_that_isnt_a_name_cannot_break_the_query(self):
         with self.assertRaises(ValueError):
             store.report_sql("table", "http-route.path", "a.b'); DROP TABLE events; --")
@@ -2036,6 +2043,24 @@ class ReportCellTests(unittest.TestCase):
         self.assertEqual(["time", "action", "sensor", "call_site", "capture"], out["columns"])
 
 
+class GraphLinesTests(unittest.TestCase):
+    def test_each_route_says_how_many_requests_did_each_kind_of_thing_so_the_main_line_can_be_the_commonest(self):
+        rows = []
+        # five requests of /a that did x then y, one that did only x
+        for trace in range(5):
+            rows += [("/a", "r1", trace, "s-x", "observed", "1", json.dumps(["a.b.C.x(C.java:1)"])),
+                     ("/a", "r1", trace, "s-y", "observed", "2", json.dumps(["a.b.C.y(C.java:2)"]))]
+        rows += [("/a", "r1", 99, "s-x", "observed", "1", json.dumps(["a.b.C.x(C.java:1)"]))]
+        out = store.build_graphs(rows, ["/a"], ())["graphs"]
+        self.assertEqual(1, len(out))
+        counts = out[0]["line_counts"]
+        self.assertEqual([5, 1], sorted(counts.values(), reverse=True))
+        busiest = max(counts, key=counts.get)
+        other = min(counts, key=counts.get)
+        uses = lambda line: {n["id"] for n in out[0]["nodes"] if line in n["lines"]}
+        self.assertTrue(uses(other) < uses(busiest), "what the commonest request used is a longer path that contains the other's")
+
+
 class PageIdTests(unittest.TestCase):
     def test_no_id_is_used_twice_in_the_page(self):
         with open(os.path.join(server.HERE, "static", "index.html"), encoding="utf-8") as fh:
@@ -3163,7 +3188,7 @@ class GraphTests(unittest.TestCase):
             self.assertIn(expected, text)
         self.assertNotIn("null", text.lower())
         self.assertNotIn("routegraph off", page, "only the route the node is in is lit, others are left alone")
-        self.assertRegex(page, r'class="edge on"')
+        self.assertRegex(page, r'class="edge( spine)? on"')
 
     def test_search_can_be_limited_to_one_route(self):
         every = self.app.search("crypto-cipher")["matches"]
