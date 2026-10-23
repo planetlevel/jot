@@ -17,6 +17,7 @@ import java.util.UUID;
  *   run        random id for this JVM run, with host and pid it identifies the process
  *   host, pid, app   where the event came from. app is jot.app, or else the main class
  *   id         event number, unique within a run
+ *   entry      the entry point the event ran under, left out for an event outside every one
  *   trace      events with the same trace came from the same request, or thread outside a request
  *   thread, thread_id
  *   sensor, action (observed, monitored or blocked), capture, message (blocks only)
@@ -38,6 +39,8 @@ public class JsonSink implements EventSink {
 		this.maxFrames = Integer.getInteger( "jot.output.stack", DEFAULT_FRAMES );
 		this.origin = origin();
 		try {
+			java.io.File parent = new java.io.File( path ).getAbsoluteFile().getParentFile();
+			if ( parent != null ) parent.mkdirs();
 			this.out = new BufferedWriter( new FileWriter( path, true ) );
 		} catch ( IOException e ) {
 			throw new IllegalArgumentException( "Can't write jot.output.file " + path + ": " + e.getMessage(), e );
@@ -130,6 +133,10 @@ public class JsonSink implements EventSink {
 		sb.append( origin );
 		sb.append( ",\"id\":" ).append( event.getHash() );
 		sb.append( ",\"trace\":" ).append( event.getTrace() );
+		if ( event.getEntry() != null ) {
+			sb.append( ",\"entry\":" );
+			quote( sb, event.getEntry() );
+		}
 		sb.append( ",\"thread\":" );
 		quote( sb, event.getThread() );
 		sb.append( ",\"thread_id\":" ).append( event.getThreadId() );

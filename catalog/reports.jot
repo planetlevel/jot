@@ -1,0 +1,116 @@
+# JOT catalog, reports
+# Reports that read the sensors in the other catalog files. A report only works when the sensors it reads are in the project's configuration.
+# Copy what fits into .jot/jot.yaml. The Assistant page does that for you.
+
+reports:
+
+- name: Test Coverage Matrix
+  type: compare
+  rows: http-route.path
+  cols: auth-user.user
+
+- name: Access Control Matrix
+  type: compare
+  rows: http-route.path
+  cols: auth-role-check.role
+  value: auth-role-check.allowed
+  by: auth-role-check.user
+
+- name: Role Membership
+  type: compare
+  rows: auth-role-check.user
+  cols: auth-role-check.role
+  value: auth-role-check.allowed
+
+- name: Cache Headers
+  type: table
+  rows: http-route.path
+  cols: http-cache-header.cache_control
+
+- name: Encryption Algorithms
+  type: compare
+  rows: http-route.path
+  cols: crypto-cipher-request.algorithm
+
+- name: Unauthorized Files
+  type: table
+  rows: http-route.path
+  cols: file-path.path
+
+- name: Database Queries
+  type: table
+  rows: http-route.path
+  cols: sql-statement.sql
+
+- name: Encryption Users
+  type: compare
+  rows: auth-user.user
+  cols: crypto-cipher-request.algorithm
+
+- name: HTTP Parameters
+  type: table
+  rows: http-route.path
+  cols: http-parameter-read.name, http-parameter-received.name
+
+- name: Request Forwards
+  type: table
+  rows: http-route.path
+  cols: http-forward.path
+
+- name: Encryption Usage
+  type: list
+  cols: crypto-cipher-request.algorithm
+
+- name: Hash Usage
+  type: list
+  cols: crypto-hash.algorithm
+
+- name: Models and Parameters
+  type: table
+  rows: ai-model-call.model
+  cols: ai-model-call.provider, ai-model-call.temperature, ai-model-call.max_tokens, ai-model-call.top_p, ai-model-call.tools, ai-model-call.messages
+
+- name: Token Use by Model
+  type: table
+  rows: ai-model-call.model
+  cols: "#count(ai-model-call), #total(ai-model-call.input_tokens), #total(ai-model-call.output_tokens), ai-model-call.finish_reason"
+
+- name: What the Model Asked For
+  type: table
+  rows: ai-tool-request.tool
+  cols: ai-tool-request.arguments
+
+- name: Tools Used
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: ai-tool-invoked.class
+
+- name: Tool Arguments
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: ai-tool-invoked.arguments
+
+- name: Tool Behavior
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: sql-statement.sql, file-path.path, native-process.command, net-url.host, expression-spel.expression, object-deserialization.args, crypto-cipher.algorithm, crypto-hash.algorithm
+
+- name: Data Access by Tool
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: sql-statement.sql, file-path.path
+
+- name: Reaching Out by Tool
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: net-url.host, net-url.protocol, native-process.command
+
+- name: Code Execution by Tool
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: native-process.command, expression-spel.expression, object-deserialization.args
+
+- name: Encryption by Tool
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: crypto-cipher.algorithm, crypto-cipher.key_algorithm, crypto-cipher.bits, crypto-cipher-request.algorithm

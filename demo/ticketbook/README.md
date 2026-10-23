@@ -11,16 +11,18 @@ on first use and checked against Apache's SHA-512. The application is in `webapp
 
 ## The JOTs
 
-`jots.yaml` lists the JOTs, and both the agent (`-javaagent:jot.jar=jots.yaml`) and the dashboard
-(`--jots`) read it, so they can't disagree. Directories are searched recursively, and everything listed is loaded in both modes. `MODE` only decides whether the
-rules report or block. Add your own rules by adding a path to that file.
+`.jot/jot.yaml` is all the configuration, in one file, and both the agent (`-javaagent:jot.jar`, which finds it) and the dashboard
+(`--jots`) read it, so they can't disagree. Everything in it is loaded in both modes. `MODE` only decides whether the
+rules report or block, and that state is the control file, which the dashboard writes while the app runs. Add your own sensors, rules and
+reports to the file, or list other files or directories under `jots:`.
 
-| Where | What |
+| Where in `.jot/jot.yaml` | What |
 |---|---|
-| `jots/observe.jot` | 22 sensors that only record what they see, such as routes, users, roles, ciphers, hashes, queries, files and sockets |
-| `jots/reports.jot` | the original reports, such as the Access Control Matrix and Encryption Algorithms |
-| `rules/protect.jot` | 6 rules |
-| `../../cves/` | the CVE microsandboxes, one per vulnerable library in the app |
+| `app:` and `ignore:` | the entry points, the application's own packages, and the platform work that sensors leave out |
+| `sensors:`, the first part | sensors that only record what they see, such as routes, users, roles, ciphers, hashes, queries, files and sockets |
+| `sensors:`, the second part | the rules, which block or report |
+| `reports:` | the original reports, such as the Access Control Matrix and Encryption Algorithms |
+| `jots:` lists `../../cves/` | the CVE microsandboxes, one per vulnerable library in the app, which stay separate files since other projects share them |
 
 The rules are `native-process` (a web request must not start a process), `object-deserialization`, `native-library`
 (a web request must not load native code), `jvm-exit` (a web request must not end the JVM),
@@ -35,8 +37,7 @@ off. To show the microsandbox on its own, start without `native-process`.
 
 The agent polls a control file, so the dashboard can flip the rules without a restart. Nothing connects to the agent.
 
-    python3 dashboard/server.py --log jot-events.jsonl \
-        --jots demo/ticketbook/jots.yaml
+    cd demo/ticketbook && python3 ../../dashboard/server.py
 
 The header has a Monitor and Protect toggle, and the JOTs tab has an enabled switch and a Monitor and Protect switch for each rule. `run.sh` starts each run
 with no control file, so a setting from an earlier session can't change what the run does. `MODE=monitor` is fixed for the

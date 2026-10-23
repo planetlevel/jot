@@ -78,14 +78,15 @@ public class Instrumenter {
 				.type(hasGenericSuperType(namedOneOf("javax.servlet.Servlet", "jakarta.servlet.Servlet")))
 				.transform((b, td, cl, m, pd) -> b.visit(Advice.to(TraceAdvice.class).on(named("service").and(isMethod()))));
 
+			// the application's entry points, once for all the JOTs that are scoped to it. They are put on first so they run first on the way in,
+			// which starts the trace of the entry point before the sensors on that same method record anything, and last on the way out
+			builder = AppScope.instrument( builder );
+
 			for (Sensor sensor : sensors ) {
 				//System.err.println( "[SENSOR] processing " + sensor );
 				logger.atFine().log("[SENSOR] processing " + sensor);
 				builder = sensor.instrument( builder );
 			}
-			
-			// the application's entry points, once for all the JOTs that are scoped to it
-			builder = AppScope.instrument( builder );
 
 			builder.installOn(inst);
 		} catch (Exception e) {

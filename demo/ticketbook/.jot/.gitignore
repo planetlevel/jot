@@ -1,0 +1,4 @@
+# what JOT writes while it runs stays out of git, the configuration does not
+*
+!.gitignore
+!jot.yaml

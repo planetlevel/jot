@@ -2,7 +2,7 @@
 # Runs the TicketBook demo app under Tomcat 11 with JOT attached, writing JSON events for the dashboard.
 #
 #   demo/ticketbook/run.sh            start Tomcat on port 8080, then browse http://localhost:8080/ticketbook
-#   python3 dashboard/server.py --log jot-events.jsonl --jots demo/ticketbook/jots.yaml
+#   cd demo/ticketbook && python3 ../../dashboard/server.py     the dashboard, which finds .jot/ on its own
 #
 # Tomcat 11 is downloaded into demo/ticketbook/target on first use, see tomcat.sh. To use an install you already have,
 # set CATALINA_HOME. Needs Java 17 or newer, found through JAVA_HOME or the PATH.
@@ -39,9 +39,8 @@ cat > "$BASE/conf/Catalina/localhost/ticketbook.xml" <<XML
 <Context docBase="$HERE/webapp" reloadable="false"/>
 XML
 
-# The JOTs are listed in jots.yaml, and everything listed is always loaded. jots/ holds the sensors that only record,
-# rules/ the rules that can stop a call, and ../../cves the CVE microsandboxes. The agent and the dashboard both read
-# that file. MODE is only the state the run starts in. The dashboard's Monitor and Protect toggle changes it while the
+# The configuration is .jot/jot.yaml, and what JOT writes while it runs goes in .jot/ too. It holds the sensors and the rules that can stop a call, and lists ../../cves, the CVE microsandboxes. Everything in it is always
+# loaded. The agent and the dashboard both read that file. MODE is only the state the run starts in. The dashboard's Monitor and Protect toggle changes it while the
 # app runs, nothing here locks it.
 #   MODE=protect   (default) the rules stop the call
 #   MODE=monitor   the rules only report what they would stop. The attacks still work
@@ -50,17 +49,18 @@ case "$MODE" in monitor|protect) ;; *) echo "MODE must be monitor or protect" >&
 
 # The file the dashboard writes to switch rules between monitor and block. Start from a clean one so a setting
 # left over from an earlier session can't quietly change what this run does.
-CONTROL=${JOT_CONTROL:-$ROOT/jot-control.yaml}
+mkdir -p "$HERE/.jot"
+CONTROL=${JOT_CONTROL:-$HERE/.jot/control.yaml}
 rm -f "$CONTROL"
 [ "$MODE" = monitor ] && printf 'v: 1\nprotect: false\nsensors: {}\nby: run.sh\n' > "$CONTROL"
 
-LOG=${JOT_LOG:-$ROOT/jot-events.jsonl}
+LOG=${JOT_LOG:-$HERE/.jot/events.jsonl}
 export CATALINA_BASE=$BASE
 export CATALINA_HOME
-# The agent says nothing to the application's output. Its own log, for debugging it, is jot-agent.log. Remove -Djot.log to stop it.
-export CATALINA_OPTS="-Djot.verbose=true -Djot.log=$ROOT/jot-agent.log -Djot.output=json -Djot.output.stack=500 -Djot.output.file=$LOG -Djot.app=ticketbook \
-  -Djot.control=$CONTROL -javaagent:$JAR=$HERE/jots.yaml"
+# The agent says nothing to the application's output. Its own log, for debugging it, is .jot/agent.log. Remove -Djot.log to stop it.
+export CATALINA_OPTS="-Djot.verbose=true -Djot.log=$HERE/.jot/agent.log -Djot.output=json -Djot.output.stack=500 -Djot.output.file=$LOG -Djot.app=ticketbook \
+  -Djot.control=$CONTROL -javaagent:$JAR=$HERE/.jot/jot.yaml"
 
 echo "Mode $MODE. JOT events go to $LOG"
-echo "Dashboard: python3 dashboard/server.py --log $LOG --jots $HERE/jots.yaml"
+echo "Dashboard: cd demo/ticketbook && python3 ../../dashboard/server.py"
 exec "$CATALINA_HOME/bin/catalina.sh" run

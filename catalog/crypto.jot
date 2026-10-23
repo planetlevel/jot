@@ -1,0 +1,49 @@
+# JOT catalog, crypto
+# Cryptography. Which ciphers, hashes and keys the application uses, and where.
+# Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
+
+sensors:
+
+- name: crypto-cipher
+  description: Identifies a cipher being initialized, its algorithm, whether it encrypts or decrypts, and the algorithm and size in bits of its key
+  methods:
+  - javax.crypto.Cipher.init
+  captures:
+    algorithm: "#OBJ.getAlgorithm()"
+    operation: '#P0 == 1 ? "encrypt" : #P0 == 2 ? "decrypt" : "other"'
+    key_algorithm: "#P1.getAlgorithm()"
+    bits: '#P1.getAlgorithm() == "RSA" ? #P1.getModulus().bitLength() : #P1.getEncoded().length * 8'
+
+- name: crypto-cipher-request
+  description: Identifies a cipher algorithm being requested, before it is used
+  methods:
+  - javax.crypto.Cipher.getInstance
+  captures:
+    algorithm: "#P0"
+
+- name: crypto-hash
+  description: Identifies a hash algorithm being used
+  methods:
+  - java.security.MessageDigest.getInstance
+  captures:
+    algorithm: "#P0"
+
+- name: crypto-key-size
+  description: Identifies the size of a key or key pair being generated
+  methods:
+  - java.security.KeyPairGenerator.initialize
+  - javax.crypto.KeyGenerator.init
+  captures:
+    algorithm: "#OBJ.getAlgorithm()"
+    bits: "#P0"
+  matchers:
+    algorithm:
+      - ^[\w/-]+$
+
+- name: crypto-key-spec
+  description: Identifies the algorithm and length of a secret key built from bytes, the bytes themselves are not captured
+  methods:
+  - javax.crypto.spec.SecretKeySpec.<init>
+  captures:
+    algorithm: "#P1"
+    bits: "#P0.length * 8"

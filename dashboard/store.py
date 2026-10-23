@@ -1,9 +1,12 @@
 """SQLite storage for JOT events, a log tailer that fills it, and a safe read-only query runner."""
 
+import copy
+import difflib
 import glob
 import json
 import os
 import re
+import shutil
 import sqlite3
 import threading
 import time
@@ -21,6 +24,7 @@ CREATE TABLE IF NOT EXISTS events_raw (
   app TEXT,
   id INTEGER,           -- event number, unique within a run
   trace INTEGER,        -- events with the same run and trace came from the same request or thread
+  entry TEXT,           -- the entry point the event ran under, like com.acme.tools.Calc.add, NULL for an event outside every entry point
   thread TEXT,
   thread_id INTEGER,
   sensor TEXT,          -- the sensor that produced the event
@@ -46,29 +50,26 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT
 );
 
--- What every query and view reads. Everything recorded since the start time, or all of it if none is set.
--- The start time is how the dashboard is cleared, nothing is deleted and Show all brings it back.
--- Unless the app_only setting is 0, an observed event that has no frame from the application is left out.
--- Blocked and reported events are never left out by that. If filter_blocked or filter_monitored is 1, only events
--- of the ticked kinds are kept. The agent's own jot-control events, which record a rule being switched, are left out
--- unless the show_jot_control setting is 1. That is events_shown, which the reports read. The events view also leaves out the
--- observed events of a JOT in the hidden_jots setting, a JSON list of JOT names, and what a hidden rule blocked or reported still
--- shows. A report names the sensors it needs, so hiding one from the event list doesn't blank a column of it.
+-- What every query and view reads. With no setting made, that is every event there is. A filter is a list of what is shown, kept as
+-- the list of what is not, so nothing set means everything shows. The filters are independent, and an event shows when every one of them
+-- lets it through. Reset removes them all.
+--   since           the start time, in epoch milliseconds. This is how the dashboard is cleared, nothing is deleted.
+--   hidden_actions  actions that are not shown, from observed, monitored and blocked.
+--   hidden_origins  where an event came from that is not shown, from app, library, platform and none.
+--   hidden_jots     the JOTs whose events are not shown, by name. A rule and its -active, -blocked and -monitored events are one JOT.
+-- events_shown is what the reports read, and has the first three. A report names the sensors it needs, so hiding a JOT doesn't blank a
+-- column of it, and events is events_shown with the hidden JOTs left out, which is what every other view reads.
 CREATE VIEW IF NOT EXISTS events_shown AS
   SELECT * FROM events_raw
   WHERE ts >= COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'since'), 0)
-    AND (COALESCE((SELECT value FROM settings WHERE key = 'app_only'), '1') <> '1'
-         OR origin IS NULL OR origin IN ('app', 'none') OR action <> 'observed')
-    AND ((COALESCE((SELECT value FROM settings WHERE key = 'filter_blocked'), '0') <> '1'
-          AND COALESCE((SELECT value FROM settings WHERE key = 'filter_monitored'), '0') <> '1')
-         OR (action = 'blocked' AND COALESCE((SELECT value FROM settings WHERE key = 'filter_blocked'), '0') = '1')
-         OR (action = 'monitored' AND COALESCE((SELECT value FROM settings WHERE key = 'filter_monitored'), '0') = '1'))
-    AND (sensor <> 'jot-control' OR COALESCE((SELECT value FROM settings WHERE key = 'show_jot_control'), '0') = '1');
+    AND COALESCE(action, 'observed') NOT IN
+        (SELECT value FROM json_each(COALESCE((SELECT value FROM settings WHERE key = 'hidden_actions'), '[]')))
+    AND COALESCE(origin, 'none') NOT IN
+        (SELECT value FROM json_each(COALESCE((SELECT value FROM settings WHERE key = 'hidden_origins'), '[]')));
 
 CREATE VIEW IF NOT EXISTS events AS
   SELECT * FROM events_shown
-  WHERE 1
-    AND (action <> 'observed' OR (CASE WHEN sensor LIKE '%-active' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 7) WHEN sensor LIKE '%-blocked' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 8) WHEN sensor LIKE '%-monitored' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 10) ELSE sensor END) NOT IN (SELECT value FROM json_each(COALESCE((SELECT value FROM settings WHERE key = 'hidden_jots'), '[]'))));
+  WHERE (CASE WHEN sensor LIKE '%-active' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 7) WHEN sensor LIKE '%-blocked' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 8) WHEN sensor LIKE '%-monitored' THEN SUBSTR(sensor, 1, LENGTH(sensor) - 10) ELSE sensor END) NOT IN (SELECT value FROM json_each(COALESCE((SELECT value FROM settings WHERE key = 'hidden_jots'), '[]')));
 
 CREATE TABLE IF NOT EXISTS sensors (
   name TEXT PRIMARY KEY,
@@ -102,6 +103,46 @@ CREATE TABLE IF NOT EXISTS reports (
   source TEXT
 );
 
+-- The assistant's conversations. chat_api is what the model is sent, kept exactly as it came so a conversation can be continued, and
+-- chat_items is what the page shows, in order. A proposal is a change the assistant has suggested, which nothing acts on until it is applied.
+CREATE TABLE IF NOT EXISTS chats (
+  id INTEGER PRIMARY KEY,
+  title TEXT,
+  created INTEGER,
+  updated INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS chat_api (
+  chat INTEGER,
+  n INTEGER,
+  role TEXT,
+  content TEXT,         -- JSON, the blocks of the message
+  PRIMARY KEY (chat, n)
+);
+
+CREATE TABLE IF NOT EXISTS chat_items (
+  chat INTEGER,
+  n INTEGER,
+  ts INTEGER,
+  kind TEXT,            -- user, assistant, step, applied, error
+  text TEXT,
+  PRIMARY KEY (chat, n)
+);
+
+CREATE TABLE IF NOT EXISTS chat_proposals (
+  id INTEGER PRIMARY KEY,
+  chat INTEGER,
+  item INTEGER,         -- the place in the conversation it was made
+  kind TEXT,            -- setting, sensor, report, consolidation
+  title TEXT,
+  reason TEXT,
+  payload TEXT,         -- JSON, what would be written
+  status TEXT,          -- pending, applied, discarded
+  result TEXT,          -- what happened when it was applied
+  told INTEGER DEFAULT 0,
+  created INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS sources (
   path TEXT PRIMARY KEY,
   inode INTEGER,
@@ -133,7 +174,7 @@ JOT_NAME_SQL = ("CASE WHEN sensor LIKE '%-active' THEN SUBSTR(sensor, 1, LENGTH(
 # the part of the schema the model is told about
 MODEL_TABLES = ("events", "sensors")
 
-EVENT_COLUMNS = ("time", "ts", "run", "host", "pid", "app", "id", "trace", "thread", "thread_id", "sensor",
+EVENT_COLUMNS = ("time", "ts", "run", "host", "pid", "app", "id", "trace", "entry", "thread", "thread_id", "sensor",
                  "action", "capture", "data", "message", "method", "method_name", "call_site", "call_site_name", "stack",
                  "origin", "app_frame")
 
@@ -241,8 +282,10 @@ def init(db):
     db.execute("DROP VIEW IF EXISTS events")
     db.execute("DROP VIEW IF EXISTS events_shown")
     db.executescript(SCHEMA)
+    # the filters of an older version, application only, blocked and monitored and JOT control events, do nothing now
+    db.execute("DELETE FROM settings WHERE key IN (%s)" % ", ".join("?" * len(LEGACY_FILTER_SETTINGS)), LEGACY_FILTER_SETTINGS)
     have = {r[1] for r in db.execute("PRAGMA table_info(events_raw)")}
-    for column in ("origin", "app_frame", "data"):
+    for column in ("origin", "app_frame", "data", "entry"):
         if column not in have:
             db.execute("ALTER TABLE events_raw ADD COLUMN %s TEXT" % column)
     db.commit()
@@ -373,6 +416,66 @@ def read_ignore(path):
     return [e.strip() for e in entries]
 
 
+JOT_DIR = ".jot"
+JOT_DIR_IGNORE = "# what JOT writes while it runs stays out of git, the configuration does not\n*\n!.gitignore\n!jot.yaml\n"
+FRESH_CONFIG = "# The configuration of this project. The Assistant page can set it up, and this file is the one place it lives.\n"
+
+
+def find_config(start=None):
+    """The jots file of the project in the folder, .jot/jot.yaml first and then jot.yaml, or None. The agent looks in the same two places."""
+    base = os.path.abspath(start or os.getcwd())
+    for name in (os.path.join(JOT_DIR, "jot.yaml"), "jot.yaml"):
+        found = os.path.join(base, name)
+        if os.path.isfile(found):
+            return found
+    return None
+
+
+def jot_dir(jots=None, start=None):
+    """The .jot folder, where the events, the database and the other files that JOT writes go. It is the folder the jots file is in when
+    that is a .jot, and a .jot next to it otherwise, and a .jot in the working folder when there is no jots file."""
+    if jots:
+        here = os.path.dirname(os.path.abspath(jots))
+        return here if os.path.basename(here) == JOT_DIR else os.path.join(here, JOT_DIR)
+    return os.path.join(os.path.abspath(start or os.getcwd()), JOT_DIR)
+
+
+def make_jot_dir(path):
+    """Makes the .jot folder, with a .gitignore that leaves only jot.yaml to be committed, unless it has one already."""
+    os.makedirs(path, exist_ok=True)
+    ignore = os.path.join(path, ".gitignore")
+    if not os.path.exists(ignore):
+        with open(ignore, "w") as f:
+            f.write(JOT_DIR_IGNORE)
+    return path
+
+
+def reset_project(jots, folder, also=()):
+    """Puts a project back to how it was before JOT, an empty configuration and nothing else. Everything inside the .jot folder is removed,
+    the events, the database, the control file, the logs and the remembered command, and the jots file is written as a new project has it,
+    with no sensors, reports, entry points or packages. A symbolic link is removed and never followed, so nothing outside .jot is touched.
+    Files the configuration points at from elsewhere are the person's own and are left alone. Returns what was removed."""
+    where = jot_dir(jots, folder)
+    if os.path.basename(where) != JOT_DIR:
+        raise SaveError("only a .jot folder can be reset, not %s" % where, 400)
+    removed = []
+    if os.path.isdir(where) and not os.path.islink(where):
+        for entry in sorted(os.scandir(where), key=lambda e: e.name):
+            if entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(entry.path)
+            else:
+                os.unlink(entry.path)
+            removed.append(entry.name)
+    for path in also:
+        if path and os.path.isfile(path) and not os.path.islink(path):
+            os.unlink(path)
+            removed.append(os.path.basename(path))
+    make_jot_dir(where)
+    with open(jots, "w") as f:
+        f.write(FRESH_CONFIG)
+    return removed
+
+
 def read_jots_file(path):
     """The jots file the agent also reads. Returns (jot paths, control file path or None, application packages).
     Every entry is included. Relative paths are relative to the jots file. The packages are app: packages:, which the
@@ -395,7 +498,15 @@ def read_jots_file(path):
     return jots, resolve(control) if control else None, packages
 
 
-JOTS_FILE_KEYS = ("jots", "control", "app", "ignore")
+JOTS_FILE_KEYS = ("jots", "control", "app", "ignore", "sensors", "reports")
+
+
+def config_paths(path):
+    """Everywhere the configuration is, starting with the jots file itself, which can hold sensors and reports, and then the files and
+    directories it lists. A name is defined by the first place that defines it, so what the jots file says is used over what a file it lists
+    says, which is how the agent reads them too."""
+    jots, _, _ = read_jots_file(path)
+    return [os.path.abspath(path)] + jots
 
 
 def jots_file_problems(path):
@@ -412,6 +523,213 @@ def jots_file_problems(path):
     elif isinstance(app, dict):
         problems += ["app has %s, which is not a setting, the settings are packages and entry" % k for k in app if k not in ("packages", "entry")]
     return problems
+
+
+# The places the application starts running, which the agent uses when the jots file has no app: entry: list. A JOT that writes no scopes
+# of its own only applies while one of them is running, so it leaves out startup and background threads. A test reads AppScope.java so
+# this can't drift from it.
+DEFAULT_ENTRY = ("javax.servlet.Servlet.service", "jakarta.servlet.Servlet.service")
+
+
+def entry_problems(entries):
+    """What is wrong with a list of entry points, as a list of {"index", "message"}, index counting from 0, or None for the list as a
+    whole. An entry is a method, written package.Class.method, or an annotation, written @package.Annotation, which is every method that
+    carries it. Nothing wrong is []."""
+    if not isinstance(entries, list):
+        return [{"index": None, "message": "must be a list"}]
+    problems, seen = [], set()
+    for i, value in enumerate(entries):
+        if not isinstance(value, str) or not value.strip():
+            problems.append({"index": i, "message": "is empty, write a method like javax.servlet.Servlet.service or an annotation like @com.acme.Handler"})
+            continue
+        value = value.strip()
+        problem = None
+        if value.startswith("!"):
+            problem = "can't start with !, an entry point is something to enter and not something to leave out"
+        elif method_problem(value, annotation_ok=True):
+            problem = method_problem(value, annotation_ok=True)
+        elif value.endswith(".<init>"):
+            problem = "is a constructor, which can't be an entry point of the application"
+        elif value in seen:
+            problem = "is listed twice"
+        if problem:
+            problems.append({"index": i, "message": problem})
+        seen.add(value)
+    return problems
+
+
+def read_entry(path):
+    """The entry points the jots file lists, as {"entry", "problems"}. entry is a list, [] when the file says there is no application scope,
+    and None when it doesn't say, which is the default list. A list the agent couldn't use is None, with the problems."""
+    with open(path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh) or {}
+    app = doc.get("app") if isinstance(doc, dict) else None
+    if not isinstance(app, dict) or "entry" not in app:
+        return {"entry": None, "problems": []}
+    entry = app["entry"]
+    if not isinstance(entry, list) or not all(isinstance(e, str) for e in entry):
+        return {"entry": None, "problems": [{"index": None, "message": "app: entry: must be a list of methods, so the default list is used"}]}
+    return {"entry": [e.strip() for e in entry], "problems": entry_problems([e.strip() for e in entry])}
+
+
+_UNCHECKED = object()
+
+
+def _list_text(indent, key, values):
+    quote = lambda e: '"%s"' % e if e.startswith("@") else e
+    if not values:
+        return "%s%s: []\n" % (indent, key)
+    return "%s%s:\n%s" % (indent, key, "".join("%s  - %s\n" % (indent, quote(e)) for e in values))
+
+
+_entry_text = lambda indent, entries: _list_text(indent, "entry", entries)
+
+
+def _read_list(before, parent, key):
+    """The list a setting has in a parsed jots file, [] when it is empty, None when the file doesn't have it or it isn't a list of text."""
+    where = before.get(parent) if parent else before
+    if not isinstance(where, dict) or key not in where:
+        return None
+    value = where[key]
+    return [v.strip() for v in value] if isinstance(value, list) and all(isinstance(v, str) for v in value) else None
+
+
+def _write_list_setting(path, parent, key, values, original, check, noun):
+    """Writes a list setting into the jots file, key at the top of it or under parent, a list or None for not having it, which takes the key
+    out. Only that key is touched, and the rest of the file stays as written, comments and the other settings included, but a comment
+    inside the old list is lost with it. original is the list the editor started from. If the file no longer says that, someone else
+    changed it and nothing is written. check says what is wrong with a list, as {"index", "message"}. Returns the path written."""
+    if values is not None:
+        if not isinstance(values, list):
+            raise SaveError("not saved, the %s must be a list" % noun)
+        values = [v.strip() if isinstance(v, str) else v for v in values]
+        problems = check(values)
+        if problems:
+            raise SaveError("not saved, %s %s %s" % (noun, problems[0]["index"] + 1 if problems[0]["index"] is not None else "list", problems[0]["message"]))
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    before = yaml.safe_load(text) or {}
+    if not isinstance(before, dict):
+        raise SaveError("not saved, %s isn't a jots file, which is a mapping" % os.path.basename(path))
+    if original is not _UNCHECKED and original != _read_list(before, parent, key):
+        raise SaveError("not saved, %s has changed since this was opened. Close it and open it again" % os.path.basename(path), 409)
+    root = yaml.compose(text) if text.strip() else None
+    container = root if isinstance(root, yaml.MappingNode) else None
+    parent_key = None
+    if parent and container is not None:
+        container = None
+        for k, v in root.value:
+            if k.value == parent:
+                parent_key, container = k, v
+        if parent_key is not None and not (isinstance(container, yaml.MappingNode) and not container.flow_style and container.value):
+            raise SaveError("not saved, %s: in %s isn't written as a block of settings, edit it by hand" % (parent, os.path.basename(path)))
+    line_start = lambda i: text.rfind("\n", 0, i) + 1
+    line_end = lambda i: (len(text) if text.find("\n", i) < 0 else text.find("\n", i) + 1)
+    if container is None or (root is None and not text.strip()):
+        # there is nowhere for it yet, so it goes at the end
+        if values is None:
+            return path
+        body = _list_text("  " if parent else "", key, values)
+        result = (text.rstrip("\n") + "\n" if text.strip() else "") + ("%s:\n%s" % (parent, body) if parent else body)
+    else:
+        first = container.value[0][0]
+        indent = " " * first.start_mark.column
+        found = next(((k, v) for k, v in container.value if k.value == key), None)
+        if found:
+            start, end = line_start(found[0].start_mark.index), line_end(_last_end(found[1]))
+            if values is None and parent and len(container.value) == 1:
+                start = line_start(parent_key.start_mark.index)     # the only setting under it, so the empty parent goes too
+            result = text[:start] + ("" if values is None else _list_text(indent, key, values)) + text[end:]
+        elif values is None:
+            return path
+        elif parent:
+            at = line_start(first.start_mark.index)
+            result = text[:at] + _list_text(indent, key, values) + text[at:]
+        else:
+            result = text.rstrip("\n") + "\n" + _list_text("", key, values)
+    expected = copy.deepcopy(before)
+    holder = expected
+    if parent:
+        if not isinstance(expected.get(parent), dict):
+            if values is None:
+                holder = None
+            else:
+                expected[parent] = {}
+        holder = expected.get(parent) if isinstance(expected.get(parent), dict) else None
+    if holder is not None:
+        if values is None:
+            holder.pop(key, None)
+            if parent and not holder:
+                expected.pop(parent, None)
+        else:
+            holder[key] = values
+    if (yaml.safe_load(result) or {}) != expected:
+        raise SaveError("not saved, putting this in the file would have changed something else in it")
+    mode = os.stat(path).st_mode
+    tmp = path + ".saving"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(result)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+    return path
+
+
+def write_entry(path, entries, original=_UNCHECKED):
+    """Writes the entry points into the jots file, a list, or None for the default, which takes the app: entry: key out."""
+    return _write_list_setting(path, "app", "entry", entries, original, entry_problems, "entry point")
+
+
+_PACKAGE = re.compile(r"^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$")
+
+
+def package_problems(packages):
+    """What is wrong with a list of the application's packages, like com.acme, as {"index", "message"}. A package is dotted names."""
+    if not isinstance(packages, list):
+        return [{"index": None, "message": "must be a list"}]
+    problems, seen = [], set()
+    for i, value in enumerate(packages):
+        if not isinstance(value, str) or not _PACKAGE.match(value.strip()):
+            problems.append({"index": i, "message": "isn't a package, write it like com.acme"})
+        elif value.strip() in seen:
+            problems.append({"index": i, "message": "is listed twice"})
+        if isinstance(value, str):
+            seen.add(value.strip())
+    return problems
+
+
+def ignore_problems(entries):
+    """What is wrong with the ignore list, as {"index", "message"}. An entry is a package, a class or a class and method, in dotted names,
+    and it matches itself and everything inside it."""
+    if not isinstance(entries, list):
+        return [{"index": None, "message": "must be a list"}]
+    problems, seen = [], set()
+    for i, value in enumerate(entries):
+        if not isinstance(value, str) or not _PACKAGE.match(value.strip()):
+            problems.append({"index": i, "message": "isn't a package, a class or a method, write it like java.lang.ClassLoader"})
+        elif value.strip() in seen:
+            problems.append({"index": i, "message": "is listed twice"})
+        if isinstance(value, str):
+            seen.add(value.strip())
+    return problems
+
+
+def read_settings(path):
+    """The list settings of the jots file as they are written, each a list, [] for an empty one, or None when the file doesn't say, which is the
+    default: {"entry", "ignore", "packages"}."""
+    with open(path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh) or {}
+    doc = doc if isinstance(doc, dict) else {}
+    return {"entry": _read_list(doc, "app", "entry"), "ignore": _read_list(doc, None, "ignore"), "packages": _read_list(doc, "app", "packages")}
+
+
+def write_ignore(path, entries, original=_UNCHECKED):
+    """Writes the ignore list, the platform work that sensors leave out, or None for the default list."""
+    return _write_list_setting(path, None, "ignore", entries, original, ignore_problems, "ignore entry")
+
+
+def write_packages(path, packages, original=_UNCHECKED):
+    """Writes app: packages:, the application's own code, or None for none."""
+    return _write_list_setting(path, "app", "packages", packages, original, package_problems, "package")
 
 
 def jot_files(paths):
@@ -556,6 +874,7 @@ def check_jot_text(text):
                     if not _FIELD.match(text_of(field) or ""):
                         add(field, "%s should be a lower case name like path or remote_ip" % text_of(field))
                     _must_be_text(expression, add)
+                    _unknown_functions(expression, add)
         if "matchers" in keys:
             matchers = keys["matchers"][1]
             if not isinstance(matchers, yaml.MappingNode):
@@ -578,6 +897,8 @@ def check_jot_text(text):
             kind = node.tag.rsplit(":", 1)[-1] if isinstance(node, yaml.ScalarNode) else None
             if kind not in ("bool", "str") or (kind == "str" and not node.value.strip()):
                 add(node, "must be true, or an expression for when the call is blocked, like #P0 < 2048")
+            else:
+                _unknown_functions(node, add)
         if "protect" in keys and "block-when" not in keys:
             add(keys["protect"][0], "protect only matters for a rule, which has a block-when")
     return problems
@@ -624,6 +945,15 @@ def _last_end(node):
 def sensor_spans(text):
     """Where each sensor is written in a .jot file, as {name: {"start", "end", "column", "text"}}. The text is the sensor as
     written, comments and quotes included, moved to the left edge. The first sensor of a name wins, like the agent."""
+    return _spans(text, "sensors")
+
+
+def report_spans(text):
+    """Where each report is written in a .jot file, the same way sensor_spans says it for sensors."""
+    return _spans(text, "reports")
+
+
+def _spans(text, list_key):
     try:
         root = yaml.compose(text)
     except yaml.YAMLError:
@@ -632,7 +962,7 @@ def sensor_spans(text):
     if not isinstance(root, yaml.MappingNode):
         return spans
     for key, value in root.value:
-        if key.value != "sensors" or not isinstance(value, yaml.SequenceNode):
+        if key.value != list_key or not isinstance(value, yaml.SequenceNode):
             continue
         for item in value.value:
             if not isinstance(item, yaml.MappingNode):
@@ -645,6 +975,29 @@ def sensor_spans(text):
             body = [lines[0]] + [l[column:] if l[:column].strip() == "" else l for l in lines[1:]]
             spans[name] = {"start": start, "end": end, "column": column, "text": "\n".join(body).rstrip()}
     return spans
+
+
+def _item_head(text, start):
+    """Where the list item whose mapping starts at index start begins, as (the index of the start of its first line, the text before the
+    item's own text on that line, like "  - "), or None when it isn't written as a block list item. An item is usually written
+    "- name: x", and it can also be a dash alone, or a dash and a comment, with the mapping on the lines after it."""
+    line_start = text.rfind("\n", 0, start) + 1
+    prefix = text[line_start:start]
+    if re.match(r"^\s*-\s+$", prefix):
+        return line_start, prefix
+    if prefix.strip():
+        return None
+    at = line_start
+    while at > 0:
+        prev_start = text.rfind("\n", 0, at - 1) + 1
+        line = text[prev_start:at - 1]
+        found = re.match(r"^(\s*)-[ \t]*(#.*)?$", line)
+        if found:
+            return prev_start, found.group(1) + "- "
+        if line.strip() and not line.lstrip().startswith("#"):
+            return None
+        at = prev_start
+    return None
 
 
 class SaveError(Exception):
@@ -695,8 +1048,9 @@ def _report_uses(doc, rename=None):
     out = []
 
     def swap(ref):
-        sensor, dot, field = str(ref).partition(".")
-        return (rename[1] if rename and sensor == rename[0] else sensor) + dot + field if ref else ref
+        if not ref or not rename:
+            return ref
+        return re.sub(r"(?<![\w.-])%s(?![\w-])" % re.escape(rename[0]), rename[1], str(ref))
 
     for r in (doc or {}).get("reports") or []:
         if isinstance(r, dict):
@@ -707,6 +1061,23 @@ def _report_uses(doc, rename=None):
 
 
 _FORBIDDEN_IN_EXPRESSIONS = re.compile(r"\bT\(|\bnew\s")
+
+# What an expression can call as #name(...). The agent registers these in Expression and ExpressionFunctions, and a test reads both
+# so this list can't drift from them. A name that isn't here is nothing, and the agent only says so in its log, so a typo like #match(
+# would leave the field empty without a word.
+EXPRESSION_FUNCTIONS = ("kind", "list", "luhn", "matches", "matching", "sort", "toLower", "toUpper")
+_FUNCTION_CALL = re.compile(r"#([A-Za-z_]\w*)\s*\(")
+_QUOTED = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"")
+
+
+def _unknown_functions(node, add):
+    """Says so for every #name( in an expression that is not a function the agent has. What is inside quotes is text, and a variable like
+    #P0 followed by a method is not a function call, so neither counts."""
+    if not isinstance(node, yaml.ScalarNode):
+        return
+    for name in dict.fromkeys(_FUNCTION_CALL.findall(_QUOTED.sub("''", node.value))):
+        if name not in EXPRESSION_FUNCTIONS:
+            add(node, "#%s() is not a function an expression can call. The functions are %s" % (name, ", ".join("#" + f for f in EXPRESSION_FUNCTIONS)))
 
 
 def check_draft(text, taken=()):
@@ -741,6 +1112,118 @@ def check_draft(text, taken=()):
     return problems
 
 
+REPORT_KEYS = ("name", "type", "rows", "cols", "value", "by")
+REPORT_TYPES = ("list", "compare", "table")
+
+
+def _reference_problem(ref, sensors):
+    """Why sensor.field can't be read from the loaded JOTs, or None. A bare sensor name is allowed, it is everything captured."""
+    sensor, dot, field = ref.partition(".")
+    if sensor not in sensors:
+        near = difflib.get_close_matches(sensor, list(sensors), n=1)
+        return "%s is not a JOT that is defined%s" % (sensor, ", did you mean %s" % near[0] if near else "")
+    if dot and field not in sensors[sensor]:
+        have = ", ".join(sensors[sensor]) or "nothing"
+        return "%s doesn't capture %s, its fields are %s" % (sensor, field, have)
+    return None
+
+
+def check_report_text(text, sensors, taken=()):
+    """What is wrong with a report as written, as a list of {"line", "message"}, line counting from 1, like check_jot_text does for a
+    JOT. sensors is {name: [fields]} of the JOTs that are defined, and a report can only read those. taken are report names that
+    are used already. Nothing wrong is []."""
+    if len(text or "") > 16 * 1024:
+        return [{"line": 1, "message": "is too large to be one report"}]
+    try:
+        root = yaml.compose(text or "")
+    except yaml.YAMLError as e:
+        mark = getattr(e, "problem_mark", None)
+        return [{"line": mark.line + 1 if mark else 1, "message": (getattr(e, "problem", None) or "isn't valid YAML").strip()}]
+    if root is None:
+        return [{"line": 1, "message": "is empty"}]
+    if not isinstance(root, yaml.MappingNode):
+        return [{"line": 1, "message": "must be a report, with a name, type and cols"}]
+    problems = []
+
+    def add(node, message):
+        problems.append({"line": node.start_mark.line + 1, "message": message})
+
+    keys = {}
+    for key, value in root.value:
+        name = key.value if isinstance(key, yaml.ScalarNode) else None
+        if name not in REPORT_KEYS:
+            add(key, "reports: is a list of reports in a file, write just the one report" if name == "reports"
+                else "%s isn't something a report has. These are %s" % (name, ", ".join(REPORT_KEYS)))
+        else:
+            keys[name] = (key, value)
+
+    def text_of(name):
+        node = keys[name][1] if name in keys else None
+        if node is None:
+            return None
+        if not isinstance(node, yaml.ScalarNode) or not node.value.strip() or node.tag.endswith(":null"):
+            add(node, "%s must be text" % name)
+            return None
+        return node.value.strip()
+
+    name = text_of("name")
+    if "name" not in keys:
+        add(root, "needs a name")
+    elif name == "example":
+        add(keys["name"][1], "example is not a name that is shown, choose another")
+    elif name in set(taken):
+        add(keys["name"][1], "the name %s is already used by another report" % name)
+    rtype = (text_of("type") or "").lower()
+    if "type" not in keys:
+        add(root, "needs a type, one of %s" % ", ".join(REPORT_TYPES))
+    elif rtype and rtype not in REPORT_TYPES:
+        add(keys["type"][1], "type must be one of %s, not %s" % (", ".join(REPORT_TYPES), rtype))
+        rtype = ""
+    rows, cols, value, by = (text_of(k) for k in ("rows", "cols", "value", "by"))
+    refs = [c.strip() for c in (cols or "").split(",") if c.strip()]
+    if "cols" not in keys:
+        add(root, "needs cols, the field the columns come from, like crypto-cipher.algorithm")
+    elif not refs and cols is not None:
+        add(keys["cols"][1], "cols has nothing in it")
+    if rtype in ("compare", "table") and "rows" not in keys:
+        add(root, "a %s report needs rows, the field the rows come from, like http-route.path" % rtype)
+    if rtype == "list" and "rows" in keys:
+        add(keys["rows"][0], "a list report has no rows, its rows are the code that called the method")
+    if rtype in ("list", "compare") and len(refs) > 1:
+        add(keys["cols"][1], "a %s report reads one column, only a table has several" % rtype)
+    if rtype in ("list", "table"):
+        for k in ("value", "by"):
+            if k in keys:
+                add(keys[k][0], "only a compare report has %s" % k)
+    if "by" in keys and "value" not in keys and rtype == "compare":
+        add(keys["by"][0], "by names who had each value, so it needs value")
+    named = []
+    for r in refs:
+        try:
+            named += [("cols", x) for x in column_refs(r)]
+        except ValueError as e:
+            add(keys["cols"][1], str(e))
+    for k, ref in [("rows", rows)] + named + [("value", value), ("by", by)]:
+        problem = _reference_problem(ref, sensors) if ref else None
+        if problem:
+            add(keys[k][1], problem)
+    if rtype == "compare" and refs:
+        for k, ref in (("value", value), ("by", by)):
+            if ref and ref.partition(".")[0] != refs[0].partition(".")[0]:
+                add(keys[k][1], "%s is a field of the cols sensor, %s" % (k, refs[0].partition(".")[0]))
+    if not problems and rtype:
+        try:
+            report_sql(rtype, rows, cols, value, by)
+        except ValueError as e:
+            add(root, str(e))
+    return problems
+
+
+def check_report_draft(text, sensors, taken=()):
+    """What is wrong with a report a model wrote, as messages. The checks of the editor, as lines of text."""
+    return ["line %d %s" % (p["line"], p["message"]) for p in check_report_text(text, sensors, taken)]
+
+
 def stage_rule(text):
     """A drafted rule starts with protect: false, so it only reports until someone turns it on. Written into the text,
     with everything else as it was."""
@@ -764,15 +1247,35 @@ def add_sensor(paths, file, text):
     that is loaded. A name that isn't loaded and ends in .jot makes a new file in the first directory that was listed. Returns the
     path written."""
     names = set()
-    sources = {}
     for path in jot_files(paths):
         with open(path, encoding="utf-8") as fh:
-            for found in sensor_spans(fh.read()):
-                names.add(found)
-                sources.setdefault(found, os.path.basename(path))
+            names.update(sensor_spans(fh.read()))
     problems = check_draft(text, names)
     if problems:
         raise SaveError("not added, " + problems[0])
+    return _add_entry(paths, file, text, "sensors")
+
+
+def report_names(paths):
+    """The names of the reports in the loaded files."""
+    names = set()
+    for path in jot_files(paths):
+        names.update(str(r["name"]) for r in _read_jot(path).get("reports") or [] if isinstance(r, dict) and r.get("name"))
+    return names
+
+
+def add_report(paths, file, text, sensors):
+    """Adds a report to the reports: list of a file, in the same way a JOT is added. sensors is {name: [fields]} of the loaded JOTs,
+    which the report is checked against. Returns the path written."""
+    problems = check_report_draft(text, sensors, report_names(paths))
+    if problems:
+        raise SaveError("not added, " + problems[0])
+    return _add_entry(paths, file, text, "reports")
+
+
+def _add_entry(paths, file, text, key):
+    """Writes one already checked entry into the list called key, sensors or reports, of a loaded file, after the last one in it, and
+    leaves everything else in the file as it was. Returns the path written."""
     written = yaml.safe_load(text)
     new_text = text.strip("\n") + "\n"
 
@@ -788,8 +1291,8 @@ def add_sensor(paths, file, text):
         target = os.path.join(directory, file)
         if os.path.exists(target):
             raise SaveError("not added, %s already exists but isn't loaded" % target, 409)
-        result = "sensors:\n" + "- " + new_text.replace("\n", "\n  ").rstrip(" ")
-        if yaml.safe_load(result) != {"sensors": [written]}:
+        result = key + ":\n" + "- " + new_text.replace("\n", "\n  ").rstrip(" ")
+        if yaml.safe_load(result) != {key: [written]}:
             raise SaveError("not added, the new file would not have said what was meant")
         with open(target, "x", encoding="utf-8") as fh:
             fh.write(result)
@@ -804,15 +1307,15 @@ def add_sensor(paths, file, text):
     root = yaml.compose(text_before) if text_before.strip() else None
     items = None
     if isinstance(root, yaml.MappingNode):
-        for key, value in root.value:
-            if key.value == "sensors" and isinstance(value, yaml.SequenceNode) and value.value:
+        for k, value in root.value:
+            if k.value == key and isinstance(value, yaml.SequenceNode) and value.value:
                 items = value.value
     if items:
         last = items[-1]
-        line_start = text_before.rfind("\n", 0, last.start_mark.index) + 1
-        prefix = text_before[line_start:last.start_mark.index]
-        if not re.match(r"^\s*-\s+$", prefix):
-            raise SaveError("not added, the sensors in %s aren't written as a block list, add it by hand" % file)
+        head = _item_head(text_before, last.start_mark.index)
+        prefix = head[1] if head else ""
+        if not head:
+            raise SaveError("not added, the %s in %s aren't written as a block list, add it by hand" % (key, file))
         pad = " " * len(prefix)
         lines = new_text.rstrip("\n").split("\n")
         block = prefix + lines[0] + "".join("\n" + (pad + l if l.strip() else l) for l in lines[1:]) + "\n"
@@ -821,14 +1324,20 @@ def add_sensor(paths, file, text):
         at = len(text_before) if eol < 0 else eol + 1
         lead = "" if eol >= 0 else "\n"
         result = text_before[:at] + lead + "\n" + block + text_before[at:]
-    elif isinstance(root, yaml.MappingNode) and "sensors" in before:
-        raise SaveError("not added, the sensors list in %s is empty or written inline, add it by hand" % file)
+    elif isinstance(root, yaml.MappingNode) and key in before:
+        # an empty list, written as [] or with nothing after the key, which is what a new configuration has. It is filled in place.
+        value = next((v for k, v in root.value if k.value == key), None)
+        empty = (isinstance(value, yaml.SequenceNode) and not value.value) or (isinstance(value, yaml.ScalarNode) and value.tag.endswith(":null"))
+        if not empty:
+            raise SaveError("not added, the %s list in %s is written in a way that can't be added to here, add it by hand" % (key, file))
+        body = "- " + new_text.rstrip("\n").replace("\n", "\n  ")
+        result = text_before[:value.start_mark.index].rstrip(" \t") + "\n" + body + text_before[value.end_mark.index:]
     else:
         base = text_before if not text_before.strip() else text_before.rstrip("\n") + "\n\n"
-        result = base + "sensors:\n- " + new_text.replace("\n", "\n  ").rstrip(" ")
+        result = base + key + ":\n- " + new_text.replace("\n", "\n  ").rstrip(" ")
     after = yaml.safe_load(result) or {}
-    if after.get("sensors") != (before.get("sensors") or []) + [written] or \
-            {k: v for k, v in after.items() if k != "sensors"} != {k: v for k, v in before.items() if k != "sensors"}:
+    if after.get(key) != (before.get(key) or []) + [written] or \
+            {k: v for k, v in after.items() if k != key} != {k: v for k, v in before.items() if k != key}:
         raise SaveError("not added, putting this in %s would have changed something else in it" % file)
     mode = os.stat(path).st_mode
     tmp = path + ".saving"
@@ -837,6 +1346,168 @@ def add_sensor(paths, file, text):
     os.chmod(tmp, mode)
     os.replace(tmp, path)
     return path
+
+
+def _list_items(text, key):
+    """The items of the list called key at the top of a file as [(name, text)], the text being the item with the comments before it and
+    moved to the left edge, so it can be put in another list. The first item takes what is between the key and itself, and what
+    comes after the last item belongs to nothing and is left. Returns [] for a file with no such list or one that isn't YAML."""
+    try:
+        root = yaml.compose(text)
+    except yaml.YAMLError:
+        return []
+    if not isinstance(root, yaml.MappingNode):
+        return []
+    for k, value in root.value:
+        if k.value != key or not isinstance(value, yaml.SequenceNode) or not value.value:
+            continue
+        out, at = [], text.find("\n", k.end_mark.index) + 1
+        for item in value.value:
+            end = text.find("\n", _last_end(item))
+            end = len(text) if end < 0 else end + 1
+            column = item.start_mark.column
+            dash = text[text.rfind("\n", 0, item.start_mark.index) + 1:item.start_mark.index]
+            indent = len(dash) - len(dash.lstrip(" "))
+            lines = text[at:end].split("\n")
+            lines = [l[indent:] if l[:indent].strip() == "" else l for l in lines]
+            name = next((v.value for kk, v in item.value if kk.value == "name" and isinstance(v, yaml.ScalarNode)), None) if isinstance(item, yaml.MappingNode) else None
+            body = "\n".join(lines).rstrip("\n") + "\n"
+            out.append((name, body))
+            at = end
+        return out
+    return []
+
+
+def _leading_comments(text):
+    """The comment lines at the top of a file, before anything else, which say what the file is for."""
+    out = []
+    for line in text.split("\n"):
+        if line.startswith("#"):
+            out.append(line)
+        elif (line.strip() == "" or line.strip() == "---") and not out:
+            continue
+        else:
+            break
+    return out
+
+
+def _indented(block, indent):
+    pad = " " * indent
+    return "".join((pad + l if l.strip() else l) + "\n" for l in block.rstrip("\n").split("\n"))
+
+
+def _append_list_items(text, key, block):
+    """The text with block, a list as items at the left edge, added to the end of the list called key, which is made at the end of the
+    file when there is none. The items are indented to line up with the list that is there."""
+    root = yaml.compose(text) if text.strip() else None
+    if isinstance(root, yaml.MappingNode):
+        for k, value in root.value:
+            if k.value == key:
+                if not isinstance(value, yaml.SequenceNode) or value.flow_style or not value.value:
+                    raise SaveError("not combined, %s: in the jots file isn't a list written one item to a line, combine it by hand" % key)
+                last = value.value[-1]
+                dash = text[text.rfind("\n", 0, last.start_mark.index) + 1:last.start_mark.index]
+                end = text.find("\n", _last_end(last))
+                at = len(text) if end < 0 else end + 1
+                lead = "" if end >= 0 else "\n"
+                return text[:at] + lead + "\n" + _indented(block, len(dash) - len(dash.lstrip(" "))) + text[at:]
+    return (text.rstrip("\n") + "\n\n" if text.strip() else "") + key + ":\n" + block
+
+
+def consolidate(path, out=None, keep=(), write=True):
+    """Moves everything the jots file lists into the jots file itself, so the configuration is one file. The sensors, the rules and the
+    reports of each listed file are added to the lists of the jots file, with the comments that were in the files, and the jots: list is taken
+    out, or left with the entries named in keep, which are libraries that stay where they are. A name is defined by the first place that
+    defines it, as the agent reads them, so a sensor or report a file defines that an earlier one already did is left out and said so.
+    Nothing is written until the result has been read back and every sensor and report in it is exactly what was in its file. The files
+    that were listed are not touched, and the jots file is copied to a .bak beside it when it is rewritten in place. With write false nothing
+    is written, and the result is in the text of what is returned. Returns what was done."""
+    path = os.path.abspath(path)
+    out = os.path.abspath(out) if out else path
+    base = os.path.dirname(path)
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    before = yaml.safe_load(text) or {}
+    if not isinstance(before, dict):
+        raise SaveError("not combined, %s isn't a jots file, which is a mapping" % os.path.basename(path))
+    listed, _, _ = read_jots_file(path)
+    kept_paths = {os.path.normpath(os.path.join(base, k)) for k in keep}
+    merged_from = [p for p in listed if os.path.normpath(p) not in kept_paths]
+    seen = {"sensors": set(sensor_spans(text)), "reports": {r.get("name") for r in before.get("reports") or [] if isinstance(r, dict)}}
+    result, skipped, files, missing = text, [], [], []
+    for entry in merged_from:
+        if not os.path.exists(entry):
+            missing.append(entry)
+            continue
+        for f in jot_files([entry]):
+            with open(f, encoding="utf-8") as fh:
+                source = fh.read()
+            label = os.path.relpath(f, base)
+            blocks = {}
+            for key in ("sensors", "reports"):
+                taken = []
+                for name, body in _list_items(source, key):
+                    if name in seen[key]:
+                        skipped.append({"kind": key[:-1], "name": name, "file": label})
+                        continue
+                    seen[key].add(name)
+                    taken.append(body)
+                if taken:
+                    blocks[key] = taken
+            if not blocks:
+                continue
+            files.append(label)
+            header = ["# ---- from %s ----" % label] + _leading_comments(source)
+            for key, taken in blocks.items():
+                comment = "\n".join(header) + "\n"
+                result = _append_list_items(result, key, comment + "".join(taken))
+    # the jots: list goes, or is left with what is kept
+    root = yaml.compose(result)
+    for k, value in root.value:
+        if k.value == "jots":
+            line_start = result.rfind("\n", 0, k.start_mark.index) + 1
+            end = result.find("\n", _last_end(value))
+            end = len(result) if end < 0 else end + 1
+            kept = [e for e in keep]
+            replacement = "jots:\n" + "".join("  - %s\n" % e for e in kept) if kept else ""
+            result = result[:line_start] + replacement + result[end:]
+            break
+    # what is written is read back, and each sensor and report must be what its file had
+    after = yaml.safe_load(result) or {}
+    original = {"sensors": {}, "reports": {}}
+    for key in original:
+        for item in before.get(key) or []:
+            if isinstance(item, dict) and item.get("name") not in original[key]:
+                original[key][item.get("name")] = item
+    for entry in merged_from:
+        for f in jot_files([entry]) if os.path.exists(entry) else []:
+            doc = _read_jot(f)
+            for key in original:
+                for item in doc.get(key) or []:
+                    if isinstance(item, dict) and item.get("name") not in original[key]:
+                        original[key][item.get("name")] = item
+    for key in original:
+        found = {item.get("name"): item for item in after.get(key) or [] if isinstance(item, dict)}
+        if found != original[key]:
+            raise SaveError("not combined, the %s in the result are not what was in the files, so nothing was written" % key)
+    expected = {k: v for k, v in before.items() if k not in ("jots", "sensors", "reports")}
+    if {k: v for k, v in after.items() if k not in ("jots", "sensors", "reports")} != expected or (after.get("jots") or []) != list(keep):
+        raise SaveError("not combined, the rest of the jots file would have changed, so nothing was written")
+    if not write:
+        return {"out": out, "backup": None, "sensors": len(after.get("sensors") or []), "reports": len(after.get("reports") or []), "from": files,
+                "skipped": skipped, "missing": missing, "kept": list(keep), "text": result}
+    backup = None
+    if out == path and result != text:
+        backup = path + ".bak"
+        shutil.copy2(path, backup)
+    tmp = out + ".saving"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(result)
+    if os.path.exists(out):
+        os.chmod(tmp, os.stat(out).st_mode)
+    os.replace(tmp, out)
+    return {"out": out, "backup": backup, "sensors": len(after.get("sensors") or []), "reports": len(after.get("reports") or []),
+            "from": files, "skipped": skipped, "missing": missing, "kept": list(keep)}
 
 
 def save_sensor(paths, name, original, new_text):
@@ -862,8 +1533,7 @@ def save_sensor(paths, name, original, new_text):
             continue
         if (original or "").rstrip() != span["text"]:
             raise SaveError("not saved, %s has changed since this was opened. Close it and open it again" % os.path.basename(path), 409)
-        line_start = text.rfind("\n", 0, span["start"]) + 1
-        if not re.match(r"^\s*-\s+$", text[line_start:span["start"]]):
+        if not _item_head(text, span["start"]):
             raise SaveError("not saved, this sensor isn't written as a block in the list, edit the file by hand")
         pad = " " * span["column"]
         lines = new_text.rstrip().split("\n")
@@ -897,6 +1567,104 @@ def save_sensor(paths, name, original, new_text):
             os.replace(tmp, target)
         return path, updated
     raise SaveError("not saved, no loaded file has a sensor called %s" % name, 404)
+
+
+def save_report(paths, name, original, new_text, sensors, taken=()):
+    """Writes the new text of one report into the .jot file that has it, leaving the rest of the file as it was, the way save_sensor
+    does for a sensor. original is what the editor started from, and if the file no longer says that nothing is written. sensors is
+    {name: [fields]} of the loaded JOTs and taken the names of the other reports, since a report can be renamed to a name that is free.
+    Returns the path written."""
+    new_text = (new_text or "").rstrip() + "\n"
+    problems = check_report_text(new_text, sensors, [t for t in taken if t != name])
+    if problems:
+        raise SaveError("not saved, line %d %s" % (problems[0]["line"], problems[0]["message"]))
+    written = yaml.safe_load(new_text)
+    for path in jot_files(paths):
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        span = report_spans(text).get(name)
+        if not span:
+            continue
+        if (original or "").rstrip() != span["text"]:
+            raise SaveError("not saved, %s has changed since this was opened. Close it and open it again" % os.path.basename(path), 409)
+        if not _item_head(text, span["start"]):
+            raise SaveError("not saved, this report isn't written as a block in the list, edit the file by hand")
+        pad = " " * span["column"]
+        lines = new_text.rstrip().split("\n")
+        body = "\n".join([lines[0]] + [pad + l if l.strip() else l for l in lines[1:]])
+        result = text[:span["start"]] + body + text[span["end"]:]
+        before, after = yaml.safe_load(text) or {}, yaml.safe_load(result) or {}
+        expected = [written if x.get("name") == name else x for x in before.get("reports") or []]
+        if after.get("reports") != expected or {k: v for k, v in after.items() if k != "reports"} != {k: v for k, v in before.items() if k != "reports"}:
+            raise SaveError("not saved, putting this in the file would have changed something else in it")
+        mode = os.stat(path).st_mode
+        tmp = path + ".saving"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(result)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+        return path
+    raise SaveError("not saved, no loaded file has a report called %s" % name, 404)
+
+
+def delete_entry(paths, key, name, original):
+    """Removes one sensor or report, key being sensors or reports, from the .jot file that has it, and leaves everything else in the file
+    as it was, comments included. original is what the editor started from, and if the file no longer says that nothing is removed.
+    A list left with nothing in it is written as []. Returns the path written."""
+    spans = sensor_spans if key == "sensors" else report_spans
+    for path in jot_files(paths):
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        span = spans(text).get(name)
+        if not span:
+            continue
+        if (original or "").rstrip() != span["text"]:
+            raise SaveError("not deleted, %s has changed since this was opened. Close it and open it again" % os.path.basename(path), 409)
+        head = _item_head(text, span["start"])
+        if not head:
+            raise SaveError("not deleted, this isn't written as a block in the list, edit the file by hand")
+        line_start = head[0]
+        end = text.find("\n", span["end"])
+        end = len(text) if end < 0 else end + 1
+        result = text[:line_start] + text[end:]
+        before, after = yaml.safe_load(text) or {}, yaml.safe_load(result) or {}
+        if not after.get(key):
+            result = re.sub(r"^%s:[ \t]*(#.*)?$" % key, key + ": []", result, count=1, flags=re.M)
+            after = yaml.safe_load(result) or {}
+        expected = [x for x in before.get(key) or [] if not (isinstance(x, dict) and x.get("name") == name)]
+        if (after.get(key) or []) != expected or {k: v for k, v in after.items() if k != key} != {k: v for k, v in before.items() if k != key}:
+            raise SaveError("not deleted, taking this out of the file would have changed something else in it")
+        mode = os.stat(path).st_mode
+        tmp = path + ".saving"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(result)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+        return path
+    raise SaveError("not deleted, no loaded file has a %s called %s" % (key[:-1], name), 404)
+
+
+def reports_using(paths, sensor):
+    """The names of the reports, in any loaded file, that read the sensor."""
+    names = []
+    for path in jot_files(paths):
+        with open(path, encoding="utf-8") as fh:
+            names += rename_in_reports(fh.read(), sensor, sensor)[1]
+    return names
+
+
+def report_definitions(paths):
+    """{(file name, report name): the report as written in the file}, for the editor."""
+    out = {}
+    for path in jot_files(paths):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                spans = report_spans(fh.read())
+        except OSError:
+            continue
+        for name, span in spans.items():
+            out[(os.path.basename(path), name)] = span["text"]
+    return out
 
 
 def _block_condition(sensor):
@@ -971,7 +1739,13 @@ def load_reports(db, paths):
                 continue
             db.execute("INSERT OR REPLACE INTO reports VALUES (?,?,?,?,?,?,?)", (
                 r["name"], rtype, r.get("rows"), r.get("cols"), r.get("value"), r.get("by"), source))
-            used = ([r["rows"]] if r.get("rows") else []) + [c.strip() for c in str(r.get("cols") or "").split(",") if c.strip()] \
+            columns = []
+            for c in str(r.get("cols") or "").split(","):
+                try:
+                    columns += column_refs(c.strip()) if c.strip() else []
+                except ValueError as e:
+                    _issue(db, "warning", "report %s has a column that isn't understood, %s" % (r["name"], e), source)
+            used = ([r["rows"]] if r.get("rows") else []) + columns \
                 + ([r["value"]] if r.get("value") else []) + ([r["by"]] if r.get("by") else [])
             for ref in used:
                 sensor, _, field = ref.partition(".")
@@ -1008,13 +1782,154 @@ def _ident(text):
     return '"' + str(text).replace('"', '""') + '"'
 
 
+# A column of a table report can be an expression, written in Spring EL's style. #total(ai-model-call.input_tokens) adds up what the events of
+# that sensor captured, once for each event, and #count, #average, #min and #max do what they say. They can be added, subtracted,
+# multiplied and divided, so #total(a.x) / #count(a.x) is an average. The dashboard evaluates these itself, so only this much of Spring EL is understood.
+REPORT_FUNCTIONS = {"total": "SUM(CAST(v AS REAL))", "count": "COUNT(DISTINCT pk)", "average": "AVG(CAST(v AS REAL))",
+                    "min": "MIN(CAST(v AS REAL))", "max": "MAX(CAST(v AS REAL))"}
+_REPORT_REF = re.compile(r"[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9_]*)?$")
+
+
+def is_expression(col):
+    return str(col).lstrip().startswith("#")
+
+
+def parse_report_expression(text):
+    """An expression of a report column as (the tree, the calls in it as [(function, sensor.field)]). The tree is a number as
+    ("num", text), a call as ("call", index), and ("bin", operator, left, right) or ("neg", tree). A ValueError says what is wrong."""
+    tokens, i, calls = [], 0, []
+    text = str(text)
+    while i < len(text):
+        if text[i].isspace():
+            i += 1
+            continue
+        m = re.compile(r"\d+(?:\.\d+)?").match(text, i)
+        if m:
+            tokens.append(("num", m.group(0)))
+        elif text[i] == "#":
+            m = re.compile(r"#([A-Za-z]\w*)\s*\(\s*([^()]*?)\s*\)").match(text, i)
+            if not m:
+                raise ValueError("%s isn't a call, write it like #total(ai-model-call.input_tokens)" % text[i:i + 20].strip())
+            name, ref = m.group(1), m.group(2)
+            if name not in REPORT_FUNCTIONS:
+                raise ValueError("#%s isn't something a report can call, these are %s" % (name, ", ".join("#" + f for f in REPORT_FUNCTIONS)))
+            if not _REPORT_REF.match(ref):
+                raise ValueError("#%s reads one sensor.field, like ai-model-call.input_tokens, not %s" % (name, ref or "nothing"))
+            if "." not in ref and name != "count":
+                raise ValueError("#%s needs a field, like %s.field" % (name, ref))
+            calls.append((name, ref))
+            tokens.append(("call", len(calls) - 1))
+        elif text[i] in "+-*/()":
+            m = re.compile(r".").match(text, i)
+            tokens.append(("op", text[i]))
+        else:
+            raise ValueError("%s isn't understood in an expression" % text[i:i + 12].strip())
+        i = m.end()
+    pos = [0]
+
+    def peek():
+        return tokens[pos[0]] if pos[0] < len(tokens) else (None, None)
+
+    def take():
+        pos[0] += 1
+        return tokens[pos[0] - 1]
+
+    def factor():
+        kind, value = peek()
+        if kind == "num":
+            take()
+            return ("num", value)
+        if kind == "call":
+            take()
+            return ("call", value)
+        if (kind, value) == ("op", "-"):
+            take()
+            return ("neg", factor())
+        if (kind, value) == ("op", "("):
+            take()
+            inner = expr()
+            if peek() != ("op", ")"):
+                raise ValueError("a ( has no closing )")
+            take()
+            return inner
+        raise ValueError("an expression needs a number or a call like #total(a.x)" + (", not %s" % value if value else " at its end"))
+
+    def term():
+        left = factor()
+        while peek() in (("op", "*"), ("op", "/")):
+            left = ("bin", take()[1], left, factor())
+        return left
+
+    def expr():
+        left = term()
+        while peek() in (("op", "+"), ("op", "-")):
+            left = ("bin", take()[1], left, term())
+        return left
+
+    if not tokens:
+        raise ValueError("the expression is empty")
+    tree = expr()
+    if pos[0] < len(tokens):
+        raise ValueError("%s doesn't belong after the expression" % tokens[pos[0]][1])
+    if not calls:
+        raise ValueError("an expression has to read something, like #total(ai-model-call.input_tokens)")
+    return tree, calls
+
+
+def column_refs(col):
+    """The sensor.field a column reads. That is the column itself, or the fields of the calls in an expression."""
+    return [ref for _, ref in parse_report_expression(col)[1]] if is_expression(col) else [col]
+
+
+def _expression_sql(tree):
+    kind = tree[0]
+    if kind == "num":
+        return tree[1]
+    if kind == "call":
+        return "f%d.x" % tree[1]
+    if kind == "neg":
+        return "(-%s)" % _expression_sql(tree[1])
+    op, left, right = tree[1], _expression_sql(tree[2]), _expression_sql(tree[3])
+    return "(%s * 1.0 / NULLIF(%s, 0))" % (left, right) if op == "/" else "(%s %s %s)" % (left, op, right)
+
+
+def _relate(rows, sensor):
+    """How a column's event is tied to the row's event, the same request, and for a column of the row's own sensor the very same event.
+    Two events of a sensor in one request are two rows, and one must not read the other's values."""
+    row_sensor = rows.partition(".")[0]
+    return "r.run = c.run AND r.trace = c.trace AND r.sensor = %s%s" % (_lit(row_sensor), " AND r.pk = c.pk" if sensor == row_sensor else "")
+
+
+def _expression_part(text, rows, row_join, row_expr):
+    """The query for one expression column, as rows of (row, column, value). Each call is added up over the events of its sensor in the
+    requests of each row, counting every event once, then the arithmetic is done on those."""
+    tree, calls = parse_report_expression(text)
+    sources = []
+    for i, (fn, ref) in enumerate(calls):
+        sensor, _, field = ref.partition(".")
+        if field:
+            join, expr = _values("c", ref, 2)
+            have = "%s IS NOT NULL AND %s <> ''" % (expr, expr)
+        else:
+            join, expr, have = "", "1", "1"
+        inner = ("SELECT DISTINCT %s AS rowv, c.pk AS pk, %s AS v FROM events_shown r%s, events_shown c%s WHERE %s AND c.sensor = %s AND %s"
+                 % (row_expr, expr, row_join, join, _relate(rows, sensor), _lit(sensor), have))
+        sources.append("(SELECT rowv, %s AS x FROM (%s) GROUP BY rowv) f%d" % (REPORT_FUNCTIONS[fn], inner, i))
+    value = _expression_sql(tree)
+    joined = sources[0] + "".join(" LEFT JOIN %s ON f0.rowv = f%d.rowv" % (src, i) for i, src in enumerate(sources[1:], 1))
+    return ("SELECT f0.rowv AS %s, %s AS col, CASE WHEN %s = CAST(%s AS INTEGER) THEN CAST(%s AS INTEGER) ELSE ROUND(%s, 2) END AS value\n"
+            "FROM %s WHERE f0.rowv IS NOT NULL" % (_ident(rows), _lit(text), value, value, value, value, joined))
+
+
 def report_sql(rtype, rows, cols, value=None, by=None):
     """The query for a report, as rows of (row, column, value) which the dashboard turns into a grid. What it reads is
     written sensor.field. A row and a column are related when they were observed in the same request, which is the same
-    run and trace."""
+    run and trace. A table column can also be an expression like #total(ai-model-call.input_tokens)."""
     refs = [c.strip() for c in (cols or "").split(",") if c.strip()]
     if not refs:
         raise ValueError("a report needs cols")
+    if rtype != "table" and any(is_expression(c) for c in refs):
+        raise ValueError("only a table report can have an expression in cols")
     if rtype == "list":
         join, expr = _values("e", refs[0], 0)
         return ("SELECT DISTINCT e.call_site AS call_site, %s AS sensor, %s AS value\n"
@@ -1024,8 +1939,8 @@ def report_sql(rtype, rows, cols, value=None, by=None):
         raise ValueError("a %s report needs rows" % rtype)
     row_join, row_expr = _values("r", rows, 1)
     start = "FROM events_shown r%s, events_shown c" % row_join
-    relate = "r.run = c.run AND r.trace = c.trace AND r.sensor = %s" % _lit(rows.partition(".")[0])
     if rtype == "compare":
+        relate = _relate(rows, refs[0].partition(".")[0])
         col_join, col_expr = _values("c", refs[0], 2)
         if value:
             if value.partition(".")[0] != refs[0].partition(".")[0]:
@@ -1043,16 +1958,39 @@ def report_sql(rtype, rows, cols, value=None, by=None):
                 % (row_expr, _ident(rows), col_expr, start, col_join, relate, _lit(refs[0].partition(".")[0])))
     if rtype == "table":
         parts = []
-        for i, ref in enumerate(refs):
+        for ref in refs:
+            if is_expression(ref):
+                parts.append(_expression_part(ref, rows, row_join, row_expr))
+                continue
             col_join, col_expr = _values("c", ref, 2)
             parts.append("SELECT DISTINCT %s AS %s, %s AS col, %s AS value\n%s%s WHERE %s AND c.sensor = %s"
-                         % (row_expr, _ident(rows), _lit(ref), col_expr, start, col_join, relate, _lit(ref.partition(".")[0])))
+                         % (row_expr, _ident(rows), _lit(ref), col_expr, start, col_join, _relate(rows, ref.partition(".")[0]), _lit(ref.partition(".")[0])))
         return "\nUNION\n".join(parts) + "\nORDER BY 1, 2"
     raise ValueError("unknown report type %s" % rtype)
 
 
 _CELL_COLUMNS = ("c.pk AS pk, strftime('%Y-%m-%d %H:%M:%S', c.ts/1000, 'unixepoch', 'localtime') AS time, c.action AS action, "
                  "c.sensor AS sensor, c.call_site_name AS call_site, c.capture AS capture")
+
+
+def sensor_report_sql(name, fields, rule=False):
+    """The report every sensor has without anyone writing one, as the (row, col, value) the grid pivots. One row for each entry point
+    and one column for each field the sensor captures, holding the values it captured under that entry point. The entry point is the
+    route when a request has one and else the entry point the event ran under, like the graph. A sensor with no fields has one
+    column, how many times it fired. A rule is read through the events it names, -active, -blocked and -monitored."""
+    names = [name] + ([name + s for s in ("-active", "-blocked", "-monitored")] if rule else [])
+    which = "e.sensor IN (%s)" % ", ".join(_lit(n) for n in names)
+    route = ("COALESCE((SELECT %s FROM events_raw r WHERE r.run = e.run AND r.trace = e.trace AND r.sensor IN %s ORDER BY r.pk LIMIT 1), e.entry, %s)"
+             % (route_of("r"), ROUTE_SENSORS_SQL, _lit(NO_ENTRY)))
+    if not fields:
+        return ("SELECT %s AS entry, 'events' AS \"column\", CAST(COUNT(*) AS TEXT) AS value\nFROM events_shown e\nWHERE %s\nGROUP BY 1"
+                % (route, which))
+    parts = []
+    for n, field in enumerate(fields):
+        join, value = _values("e", name + "." + field, n)
+        parts.append("SELECT %s AS entry, %s AS \"column\", %s AS value\nFROM events_shown e%s\nWHERE %s AND %s IS NOT NULL AND %s <> ''"
+                     % (route, _lit(field), value, join, which, value, value))
+    return "SELECT DISTINCT entry, \"column\", value FROM (\n" + "\nUNION ALL\n".join(parts) + "\n)\nORDER BY 1, 2, 3"
 
 
 def report_events_sql(rtype, rows, cols, row=None, col=None):
@@ -1075,7 +2013,7 @@ def report_events_sql(rtype, rows, cols, row=None, col=None):
         raise ValueError("a %s report needs rows" % rtype)
     row_join, row_expr = _values("r", rows, 1)
     if rtype == "table":
-        picked = [col] if col in refs else refs
+        picked = [r for c in ([col] if col in refs else refs) for r in column_refs(c)]
     elif rtype == "compare":
         picked = refs[:1]
     else:
@@ -1083,7 +2021,7 @@ def report_events_sql(rtype, rows, cols, row=None, col=None):
     parts = []
     for ref in picked:
         col_join, col_expr = _values("c", ref, 2)
-        where = ["r.run = c.run", "r.trace = c.trace", "r.sensor = %s" % _lit(rows.partition(".")[0]), "c.sensor = %s" % _lit(ref.partition(".")[0])]
+        where = [_relate(rows, ref.partition(".")[0]), "c.sensor = %s" % _lit(ref.partition(".")[0])]
         if row is not None:
             where.append("%s = %s" % (row_expr, _lit(row)))
         if rtype == "compare" and col is not None:
@@ -1097,7 +2035,7 @@ def report_events_sql(rtype, rows, cols, row=None, col=None):
 
 # word:value narrows by a field, for example sensor:crypto-hash or action:blocked
 SEARCH_FIELDS = {"sensor": "contains", "action": "equals", "origin": "equals", "app": "equals", "run": "equals",
-                 "host": "equals", "trace": "number", "pid": "number", "route": "route"}
+                 "host": "equals", "trace": "number", "pid": "number", "route": "route", "entry": "route"}
 # a plain word is looked for in all of these
 SEARCH_COLUMNS = ("capture", "message", "sensor", "action", "method_name", "call_site", "app_frame", "stack")
 SEARCH_TEXT = " || ' ' || ".join("COALESCE(%s, '')" % c for c in SEARCH_COLUMNS)
@@ -1136,10 +2074,10 @@ def search_where(query):
         if field is None:
             cond = "(%s) LIKE %s" % (SEARCH_TEXT, _like(text))
         elif SEARCH_FIELDS[field] == "route":
-            # the request an event happened in came in at this route, as the http-route sensor saw it
+            # the request an event happened in came in at this route, as the http-route sensor saw it, or ran under this entry point
             seen = "SELECT run, trace FROM events_raw WHERE sensor IN %s" % ROUTE_SENSORS_SQL
-            cond = ("(run, trace) NOT IN (%s)" % seen if text == NO_REQUEST
-                    else "(run, trace) IN (%s AND capture = %s)" % (seen, _lit(text)))
+            cond = ("((run, trace) NOT IN (%s) AND entry IS NULL)" % seen if text == NO_REQUEST
+                    else "((run, trace) IN (%s AND %s = %s) OR entry = %s)" % (seen, route_of(), _lit(text), _lit(text)))
         elif SEARCH_FIELDS[field] == "number":
             if not text.isdigit():
                 raise ValueError("%s: needs a number" % field)
@@ -1155,12 +2093,22 @@ def search_where(query):
 # ---------------------------------------------------------------------------- graph
 
 NO_REQUEST = "(outside a request)"
-# the sensor that says which route a request came in at. It has been called get-routes and get-route, and the log still
-# has events from the old names
-ROUTE_SENSORS = ("http-route", "get-route", "get-routes")
+NO_ENTRY = "(outside every entry)"
+# the sensor that says which route a request came in at, and the sensors whose capture is another route
+ROUTE_SENSORS = ("http-route",)
 ROUTE_SENSORS_SQL = "(%s)" % ", ".join("'%s'" % x for x in ROUTE_SENSORS)
-# sensors whose capture is another route, under the names they had before they were http-forward and http-redirect too
-JUMPS = ("http-forward", "http-redirect", "get-forward", "get-forwards", "get-redirect", "get-redirects")
+JUMPS = ("http-forward", "http-redirect")
+
+
+def route_of(alias=""):
+    """SQL for the route an http-route event says. The sensor captures the path and the method, so its capture text reads
+    path=/buy, method=GET and the route is the path field."""
+    return "json_extract(%sdata, '$.path')" % (alias + "." if alias else "")
+
+
+def method_of(alias=""):
+    """SQL for the HTTP method an http-route event says, NULL for a route sensor that doesn't capture it."""
+    return "json_extract(%sdata, '$.method')" % (alias + "." if alias else "")
 
 
 def _short(name):
@@ -1174,19 +2122,67 @@ def _page_of(route):
     return last.replace(".", "_") if last else None
 
 
-def graph_rows(db_path, route=None):
+def graph_rows(db_path, route=None, method=None):
     """The events of the graph in the order they happened, request by request. The route is the first request the
-    event happened in, as the http-route sensor saw it. Events of one request are together and in the agent's own
-    order, which is the order the application caused them."""
-    where = "WHERE sensor NOT IN %s AND stack IS NOT NULL" % ROUTE_SENSORS_SQL
-    sql = """SELECT route, run, trace, sensor, action, capture, stack FROM (
-               SELECT (SELECT r.capture FROM events_raw r WHERE r.run = e.run AND r.trace = e.trace AND r.sensor IN %s
-                       ORDER BY r.pk LIMIT 1) AS route, e.run, e.trace, e.id, e.sensor, e.action, e.capture, e.stack
-               FROM events e %s) %s ORDER BY run, trace, id""" % (ROUTE_SENSORS_SQL, where, "WHERE route = %s" % _lit(route) if route else "")
-    return run_query(db_path, sql, limit=GRAPH_ROW_LIMIT)
+    event happened in, as the http-route sensor saw it, and the method is the HTTP method that same event captured, None for a
+    request that didn't say. Events of one request are together and in the agent's own order, which is the order the application
+    caused them. Each row ends with the method. A method limits the rows to the requests that used it, and the route NO_REQUEST is
+    the events that happened outside any request.
+
+    There is a limit on how many events are used, since each carries its stack. It is shared out by route, so a busy route can't use up
+    what the others need, and a route over its share is drawn from its newest requests. Nothing a route's sensors saw is lost to that.
+    The newest request that each sensor was seen in, in each route, is always used in full, so every sensor of a route is in its
+    graph. The result says whether any route was cut short."""
+    # what the first route event of a request says, looked up by the request's trace, which is an index
+    first = lambda what: ("(SELECT %s FROM events_raw r WHERE r.run = e.run AND r.trace = e.trace AND r.sensor IN %s ORDER BY r.pk LIMIT 1)"
+                          % (what, ROUTE_SENSORS_SQL))
+    where = []
+    if route == NO_REQUEST:
+        where.append("route IS NULL")
+    elif route:
+        where.append("route = %s" % _lit(route))
+    if method:
+        where.append("upper(COALESCE(method, '')) = %s" % _lit(method.upper()))
+    if route and route != NO_REQUEST:
+        share = GRAPH_ROW_LIMIT
+    else:
+        routes = run_query(db_path, "SELECT COUNT(DISTINCT %s) FROM events_raw WHERE sensor IN %s" % (route_of(), ROUTE_SENSORS_SQL))["rows"][0][0]
+        share = max(GRAPH_MIN_ROUTE_ROWS, GRAPH_ROW_LIMIT // max(1, routes + 1))
+    sql = """WITH ev AS (
+           SELECT COALESCE(%s, e.entry) AS route, %s AS method, %s AS started, e.run AS run, e.trace AS trace, e.id AS id, e.sensor AS sensor,
+                  e.action AS action, e.capture AS capture, e.stack AS stack
+           FROM events e WHERE e.sensor NOT IN %s AND e.stack IS NOT NULL),
+         chosen AS (SELECT * FROM ev %s)
+         SELECT route, run, trace, sensor, action, capture, stack, method, total FROM (
+           SELECT *, ROW_NUMBER() OVER (PARTITION BY route ORDER BY started DESC, run, trace, id) AS n,
+                  COUNT(*) OVER (PARTITION BY route) AS total
+           FROM chosen)
+         WHERE n <= %d OR (run, trace) IN (
+           SELECT run, trace FROM (SELECT run, trace, ROW_NUMBER() OVER (PARTITION BY route, sensor ORDER BY started DESC) AS newest FROM chosen)
+           WHERE newest = 1)
+         ORDER BY run, trace, id""" % (first(route_of("r")), first(method_of("r")), first("r.ts"), ROUTE_SENSORS_SQL,
+                                       "WHERE " + " AND ".join(where) if where else "", share)
+    found = run_query(db_path, sql, limit=GRAPH_ROW_LIMIT + GRAPH_COVERAGE_ROWS, timeout=GRAPH_TIMEOUT)
+    cut = found["truncated"] or any(r[8] > share for r in found["rows"])
+    return {"columns": found["columns"][:8], "rows": [r[:8] for r in found["rows"]], "truncated": cut, "ms": found["ms"]}
+
+
+def graph_methods(db_path):
+    """The HTTP methods the requests in the graph used, from what the http-route sensor captured, in the order they are colored
+    GET, POST and then the others alphabetically. Empty when the sensor doesn't capture it."""
+    rows = run_query(db_path, "SELECT DISTINCT upper(%s) FROM events_raw WHERE sensor IN %s AND ts >= %d AND %s IS NOT NULL" % (
+        method_of(), ROUTE_SENSORS_SQL, get_since(db_path) or 0, method_of()), limit=50)["rows"]
+    return sorted((r[0] for r in rows if r[0]), key=lambda m: (METHOD_ORDER.index(m) if m in METHOD_ORDER else len(METHOD_ORDER), m))
+
+
+METHOD_ORDER = ("GET", "POST", "PUT", "DELETE", "PATCH")
 
 
 GRAPH_ROW_LIMIT = 50000
+# the least a route is given when there are many routes, and what is allowed on top of the limit for the newest request of each sensor
+GRAPH_MIN_ROUTE_ROWS = 500
+GRAPH_COVERAGE_ROWS = 20000
+GRAPH_TIMEOUT = 30.0
 
 
 def _requests(rows):
@@ -1203,7 +2199,7 @@ def _requests(rows):
         yield group
 
 
-def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=False):
+def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=False, methods_seen=(), entries=False):
     """Nodes and edges for the paths through the application, drawn like subway lines. A request is one line. It starts
     at the route, and each event is a stop along it in the order the events happened. Between stops it passes through
     the application methods that were newly entered, since the stack of the last stop is still in force for the methods
@@ -1212,7 +2208,14 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
     are one stop. A forward or a redirect also leads on to the route it names, which is an exit. Plumbing that only
     describes the request, like who the user is, is left out unless details is set. Every node and edge says which
     lines use it, so what goes through a node can be told from what can merely be reached from it. One request that did
-    A and then B and another that did B and then A make a loop between them, and following edges would join them."""
+    A and then B and another that did B and then A make a loop between them, and following edges would join them. Requests that
+    used different HTTP methods are different lines even when they did the same things, and line_methods says which method each
+    line used, so a node or an edge can be told to belong to one method or to be common to several.
+
+    A line starts at its entry point. For a request that is the route the http-route sensor saw. Otherwise it is the entry point method
+    itself, like the tool of an agent, and the frames above that method are left out, since in a large application they are the same
+    long chain for every line. When entries is set, what happened outside every entry point is drawn from the method that called it
+    only, for the same reason."""
     nodes, edges = {}, {}
     line = [0]                 # the line being walked, a request that did the same things in the same order as others
 
@@ -1232,7 +2235,9 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
 
     def walk(route, events, count):
         route = route or NO_REQUEST
-        start = node("route", route, route)
+        # the route of a request is its path, and otherwise it is the method of the entry point, which has no slash
+        by_entry = route != NO_REQUEST and "/" not in route
+        start = node("route", route, _short(route) if by_entry else route, route)
         # the page the route names is compiled to a class, and every method of it, like the tag helpers Jasper
         # generates, is that page. The route already stands for it, so it isn't drawn again
         page = _page_of(route)
@@ -1257,6 +2262,10 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
                         names.append(name)
                 if page:
                     names = [x for x in names if not x.startswith("org.apache.jsp.%s." % page)]
+                if by_entry and route in names:
+                    names = names[names.index(route) + 1:]
+                elif entries and route == NO_REQUEST:
+                    names = names[-1:]
             effect = node("effect", sensor, sensor)
             shared = 0
             while shared < min(len(held), len(names)) and held[shared] == names[shared]:
@@ -1288,12 +2297,14 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
     # requests that did the same things in the same order are drawn once, and counted
     same = {}
     for group in _requests(rows):
-        key = (group[0][0], tuple((r[3], r[4], r[5], r[6]) for r in group))
+        method = (group[0][7] or "").upper() or None if len(group[0]) > 7 else None
+        key = (group[0][0], method, tuple((r[3], r[4], r[5], r[6]) for r in group))
         same[key] = same.get(key, 0) + 1
-    line_counts = {}
-    for number, ((route, events), count) in enumerate(same.items()):
+    line_counts, line_methods = {}, {}
+    for number, ((route, method, events), count) in enumerate(same.items()):
         line[0] = number
         line_counts[number] = count
+        line_methods[number] = method
         walk(route, events, count)
 
     out_nodes = sorted(nodes.values(), key=lambda n: (-n["events"], n["label"]))
@@ -1303,24 +2314,28 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
     for e in edges.values():
         e["lines"] = sorted(e["lines"])
     return {"nodes": out_nodes, "edges": sorted(edges.values(), key=lambda e: -e["events"]),
-            "routes": route_names, "truncated": truncated, "line_counts": line_counts}
+            "routes": route_names, "methods": list(methods_seen), "truncated": truncated,
+            "line_counts": line_counts, "line_methods": line_methods}
 
 
-def build_graphs(rows, routes_seen, app_prefixes=(), details=False, truncated=False):
+def build_graphs(rows, routes_seen, app_prefixes=(), details=False, truncated=False, methods_seen=(), all_requests=None, entries=False):
     """One graph for each route, in alphabetical order, so each can be read and laid out on its own. A route is
-    where a request came in, and its graph holds only what requests that came in there did."""
+    where a request came in, and its graph holds only what requests that came in there did. all_requests is how many requests there
+    were at each route, which is more than its graph has when the route was too busy to draw every one of them."""
     by_route = {}
     for row in rows:
         by_route.setdefault(row[0] or NO_REQUEST, []).append(row)
     graphs = []
     for route, route_rows in by_route.items():
-        g = build_graph(route_rows, routes_seen, app_prefixes, details, truncated)
+        g = build_graph(route_rows, routes_seen, app_prefixes, details, truncated, methods_seen, entries)
         if not g["edges"]:
             continue   # nothing happened in it that the graph shows, like a stylesheet
         graphs.append({"route": route, "requests": sum(1 for _ in _requests(route_rows)),
-                       "events": len(route_rows), "nodes": g["nodes"], "edges": g["edges"], "line_counts": g["line_counts"]})
+                       "events": len(route_rows), "nodes": g["nodes"], "edges": g["edges"], "line_counts": g["line_counts"],
+                       "line_methods": g["line_methods"]})
+        graphs[-1]["all_requests"] = max(graphs[-1]["requests"], (all_requests or {}).get(route, 0))
     graphs.sort(key=lambda g: (g["route"] == NO_REQUEST, g["route"].lower()))
-    return {"graphs": graphs, "routes": sorted(routes_seen), "truncated": truncated}
+    return {"graphs": graphs, "routes": sorted(routes_seen), "methods": list(methods_seen), "truncated": truncated}
 
 
 # ---------------------------------------------------------------------------- queries
@@ -1404,39 +2419,8 @@ def set_since(db, value):
     db.commit()
 
 
-def get_app_only(db_path):
-    """True unless the application only filter has been switched off."""
-    db = sqlite3.connect(db_path)
-    try:
-        row = db.execute("SELECT value FROM settings WHERE key = 'app_only'").fetchone()
-        return not row or row[0] == "1"
-    finally:
-        db.close()
-
-
-def get_action_filter(db_path):
-    """Which kinds of event the toolbar is limited to, as {"blocked": bool, "monitored": bool}. With neither on,
-    every kind shows. Both off unless they have been switched on."""
-    db = sqlite3.connect(db_path)
-    try:
-        rows = dict(db.execute("SELECT key, value FROM settings WHERE key IN ('filter_blocked', 'filter_monitored')"))
-        return {"blocked": rows.get("filter_blocked") == "1", "monitored": rows.get("filter_monitored") == "1"}
-    finally:
-        db.close()
-
-
-def get_show_jot_control(db_path):
-    """True if the agent's own jot-control events are shown. They are left out unless it has been switched on."""
-    db = sqlite3.connect(db_path)
-    try:
-        row = db.execute("SELECT value FROM settings WHERE key = 'show_jot_control'").fetchone()
-        return bool(row) and row[0] == "1"
-    finally:
-        db.close()
-
-
 def get_hidden_jots(db_path):
-    """The names of the JOTs whose observed events are left out, as a list."""
+    """The names of the JOTs whose events are left out, as a list."""
     db = sqlite3.connect(db_path)
     try:
         row = db.execute("SELECT value FROM settings WHERE key = 'hidden_jots'").fetchone()
@@ -1446,7 +2430,7 @@ def get_hidden_jots(db_path):
 
 
 def set_hidden_jots(db, names):
-    """Leave out the observed events of these JOTs, by name, or show everything again with an empty list."""
+    """Leave out every event of these JOTs, by name, or show everything again with an empty list."""
     names = sorted({str(n) for n in names})
     if len(names) > 1000 or any(len(n) > 200 for n in names):
         raise ValueError("too many or too long")
@@ -1457,20 +2441,57 @@ def set_hidden_jots(db, names):
     db.commit()
 
 
-def set_show_jot_control(db, on):
-    db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('show_jot_control', ?)", ("1" if on else "0",))
+ACTIONS = ("observed", "monitored", "blocked")
+ORIGINS = ("app", "library", "platform", "none")
+FILTER_SETTINGS = ("since", "hidden_actions", "hidden_origins", "hidden_jots")
+# settings of the filters there were before they were all lists of what is shown. They do nothing now, and are removed
+LEGACY_FILTER_SETTINGS = ("app_only", "filter_blocked", "filter_monitored", "show_jot_control")
+
+
+def reset_filters(db, keep=()):
+    """Take every filter off, so every event shows. The start time, the actions and the origins that are shown and the hidden JOTs are the
+    filters there are, and with none of them set the views read the whole log. Nothing is deleted. keep names settings to leave as they are."""
+    drop = [k for k in FILTER_SETTINGS + LEGACY_FILTER_SETTINGS if k not in keep]
+    db.execute("DELETE FROM settings WHERE key IN (%s)" % ", ".join("?" * len(drop)), drop)
     db.commit()
 
 
-def set_action_filter(db, blocked=None, monitored=None):
-    """Limit what is shown to blocked events, to monitored ones, or to both. A kind that is None is left as it is."""
-    for key, on in (("filter_blocked", blocked), ("filter_monitored", monitored)):
-        if on is not None:
-            db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, "1" if on else "0"))
+def _get_shown(db_path, key, everything):
+    db = sqlite3.connect(db_path)
+    try:
+        row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        hidden = set(json.loads(row[0])) if row else set()
+        return [v for v in everything if v not in hidden]
+    finally:
+        db.close()
+
+
+def _set_shown(db, key, shown, everything):
+    if not isinstance(shown, (list, tuple)) or any(v not in everything for v in shown):
+        raise ValueError("what is shown must be a list of %s" % ", ".join(everything))
+    hidden = [v for v in everything if v not in shown]
+    if hidden:
+        db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, json.dumps(hidden)))
+    else:
+        db.execute("DELETE FROM settings WHERE key = ?", (key,))
     db.commit()
 
 
-def set_app_only(db, on):
-    """Leave out observed events that have no frame from the application, or show them again."""
-    db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('app_only', ?)", ("1" if on else "0",))
-    db.commit()
+def get_shown_actions(db_path):
+    """The actions that are shown, from observed, monitored and blocked, in that order. All of them unless some have been hidden."""
+    return _get_shown(db_path, "hidden_actions", ACTIONS)
+
+
+def set_shown_actions(db, shown):
+    """Show these actions and no others. All of them shows every event again."""
+    _set_shown(db, "hidden_actions", shown, ACTIONS)
+
+
+def get_shown_origins(db_path):
+    """The places events came from that are shown, from app, library, platform and none, in that order. All of them unless some are hidden."""
+    return _get_shown(db_path, "hidden_origins", ORIGINS)
+
+
+def set_shown_origins(db, shown):
+    """Show events from these places and no others. All of them shows every event again."""
+    _set_shown(db, "hidden_origins", shown, ORIGINS)

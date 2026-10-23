@@ -8,8 +8,8 @@ import net.bytebuddy.asm.Advice;
 public class AppScopeAdvice {
 
 	@Advice.OnMethodEnter()
-	public static void enter() {
-		AppScope.enter();
+	public static void enter(@Advice.Origin("#t.#m") String entry) {
+		AppScope.enter( entry );
 	}
 
 	// onThrowable ensures we leave the scope when the method exits exceptionally

@@ -26,7 +26,7 @@ class ConfigReaderTest {
 
 	@Test
 	void readerTest() throws IOException {
-		File jots = new File("src/test/resources/jots.yaml");
+		File jots = new File("src/test/resources/jot.yaml");
 		ConfigReader.init( jots.getAbsolutePath() );
 	}
 
@@ -259,7 +259,7 @@ class ConfigReaderTest {
 		EventBus.configure( java.util.List.of( new EventSink() {
 			public void accept( Event e ) { if ( "jot-config".equals( e.getRule() ) ) said.add( e.getCapture() ); }
 		} ), 10000 );   // the report names every sensor loaded so far, by every test before this one
-		org.openolly.config.StartupReport.publish( "jots.yaml" );
+		org.openolly.config.StartupReport.publish( "jot.yaml" );
 		EventBus.shutdown();
 		Assertions.assertTrue( said.stream().anyMatch( x -> x.startsWith( "problem=report.jot sr-bad exception is no longer a setting" ) ), said.toString() );
 	}
@@ -268,14 +268,93 @@ class ConfigReaderTest {
 	void everyJotFileInTheRepositoryLoadsWithNoProblems() throws Exception {
 		int before = ConfigReader.getProblems().size();
 		int files = 0;
-		for ( String where : java.util.List.of( "cves", "demo/ticketbook/jots", "demo/ticketbook/rules", "src/main/resources" ) ) {
+		for ( String where : java.util.List.of( "cves", "catalog" ) ) {
 			for ( File f : ConfigReader.jotFiles( new File( where ) ) ) {
 				ConfigReader.load( f );
 				files++;
 			}
 		}
-		Assertions.assertTrue( files > 15, "found only " + files + " files" );
+		// the demo's configuration is one file, which is a jots file with its sensors, rules and reports in it
+		ConfigReader.load( new File( "demo/ticketbook/.jot/jot.yaml" ), true );
+		files++;
+		Assertions.assertTrue( files > 10, "found only " + files + " files" );
 		Assertions.assertEquals( java.util.List.of(), ConfigReader.getProblems().subList( before, ConfigReader.getProblems().size() ) );
+	}
+
+	private static java.util.List<String> newProblems(int before) {
+		return new java.util.ArrayList<String>( ConfigReader.getProblems().subList( before, ConfigReader.getProblems().size() ) );
+	}
+
+	@Test
+	void aJotsFileCanHoldItsOwnSensorsAndReportsAndTheRestOfTheConfigurationBesideThem(@TempDir Path dir) throws Exception {
+		Path file = dir.resolve( "jot.yaml" );
+		Files.writeString( file, String.join( "\n",
+			"app:", "  entry:", "  - com.acme.Main.main", "  packages:", "  - com.acme",
+			"ignore:", "- java.lang.ClassLoader",
+			"sensors:", "- name: 'one-file-sensor'", "  methods:", "  - 'java.lang.String.length'", "  captures:", "    value: '#P0'",
+			"- name: 'one-file-rule'", "  description: 'Identifies a call'", "  methods:", "  - 'java.lang.String.isBlank'", "  block-when: true", "  protect: false",
+			"reports:", "- name: 'One file report'", "  type: 'list'", "  cols: 'one-file-sensor.value'", "" ) );
+		int before = ConfigReader.getProblems().size();
+		ConfigReader.init( file.toString() );
+		Assertions.assertTrue( Sensor.exists( "one-file-sensor" ), "a sensor of the jots file itself is loaded" );
+		Assertions.assertTrue( Sensor.exists( "one-file-rule" ), "and so is a rule" );
+		Assertions.assertEquals( java.util.List.of(), newProblems( before ), "none of it is a mistake, sensors, reports, app and ignore are all settings of this file" );
+		Assertions.assertEquals( 1, AppScope.entries().size(), "the entry points of the same file are used" );
+		Assertions.assertTrue( Sensor.getSensors().stream().anyMatch( x -> "one-file-rule".equals( x.getName() ) && x.getBlockWhen() != null ) );
+	}
+
+	@Test
+	void whatTheJotsFileDefinesIsUsedOverWhatAFileItListsDefinesAndTheRestOfThatFileStillLoads(@TempDir Path dir) throws Exception {
+		Files.writeString( dir.resolve( "lib.jot" ), String.join( "\n",
+			"sensors:", "- name: 'one-file-dup'", "  description: 'Identifies the one in the library'", "  methods:", "  - 'java.lang.String.length'", "  captures:", "    value: '#P0'",
+			"- name: 'one-file-library-only'", "  methods:", "  - 'java.lang.String.isEmpty'", "  captures:", "    value: '#P0'", "" ) );
+		Path file = dir.resolve( "jot.yaml" );
+		Files.writeString( file, String.join( "\n",
+			"jots:", "- lib.jot",
+			"sensors:", "- name: 'one-file-dup'", "  description: 'Identifies the one in the jots file'", "  methods:", "  - 'java.lang.String.length'", "  captures:", "    value: '#P0'", "" ) );
+		ConfigReader.init( file.toString() );
+		Assertions.assertEquals( "Identifies the one in the jots file", Sensor.getSensors().stream().filter( x -> "one-file-dup".equals( x.getName() ) ).findFirst().get().getDescription(),
+			"the first definition wins, and the jots file is read first, so a library can be listed and still be overridden" );
+		Assertions.assertTrue( Sensor.exists( "one-file-library-only" ), "and the library's other sensor is loaded" );
+	}
+
+	@Test
+	void aJotFileThatIsNotTheJotsFileStillMayNotHaveTheSettingsOfOne(@TempDir Path dir) throws Exception {
+		Path jot = dir.resolve( "not-main.jot" );
+		Files.writeString( jot, "app:\n  entry: []\nignore: []\nsensors:\n- name: 'one-file-not-main'\n  methods:\n  - 'java.lang.String.length'\n  captures:\n    value: '#P0'\n" );
+		int before = ConfigReader.getProblems().size();
+		ConfigReader.load( jot.toFile() );
+		java.util.List<String> said = newProblems( before );
+		Assertions.assertTrue( said.stream().anyMatch( t -> t.contains( "app is not a section" ) ), said.toString() );
+		Assertions.assertTrue( said.stream().anyMatch( t -> t.contains( "ignore is not a section" ) ), said.toString() );
+		Assertions.assertTrue( Sensor.exists( "one-file-not-main" ), "and the sensor in it is still loaded" );
+	}
+
+	@Test
+	void aSettingThatIsNotOneIsSaidEvenInTheJotsFile(@TempDir Path dir) throws Exception {
+		Path file = dir.resolve( "jot.yaml" );
+		Files.writeString( file, "colour: red\nsensors:\n- name: 'one-file-colour'\n  methods:\n  - 'java.lang.String.length'\n  captures:\n    value: '#P0'\n" );
+		int before = ConfigReader.getProblems().size();
+		ConfigReader.init( file.toString() );
+		java.util.List<String> said = newProblems( before );
+		Assertions.assertTrue( said.stream().anyMatch( t -> t.contains( "colour is not a setting of a jots file" ) && t.contains( "sensors and reports" ) ), said.toString() );
+		Assertions.assertTrue( Sensor.exists( "one-file-colour" ), "and what is right in the file is loaded" );
+	}
+
+	@Test
+	void theTicketbookConfigurationIsOneFileAndTheAgentLoadsAllOfItWithNoProblems() throws Exception {
+		int before = ConfigReader.getProblems().size();
+		int sensors = Sensor.getSensors().size();
+		ConfigReader.init( "demo/ticketbook/.jot/jot.yaml" );
+		System.clearProperty( "jot.control" );
+		Assertions.assertEquals( java.util.List.of(), newProblems( before ), "nothing in it is a mistake" );
+		Assertions.assertEquals( 2, AppScope.entries().size(), "its own entry points are the application's scope" );
+		// what the file defines itself, and not only what it lists, which is the point of one file
+		for ( String name : java.util.List.of( "http-route", "auth-user", "crypto-cipher", "http-parameter-sensitive-name", "http-cookie-sensitive-value", "native-process", "jvm-exit" ) ) {
+			Assertions.assertTrue( Sensor.exists( name ), name + " is defined in jot.yaml and was not loaded" );
+		}
+		Assertions.assertTrue( Sensor.exists( "cve-2022-22965" ), "and so is a library it lists" );
+		Assertions.assertTrue( Sensor.getSensors().size() >= sensors, "nothing was lost" );
 	}
 
 	@Test
@@ -284,7 +363,7 @@ class ConfigReaderTest {
 		Files.writeString( dir.resolve( "base.jot" ), "sensors:\n- name: 'jots-base'\n  methods:\n  - 'java.lang.String.length'\n" );
 		Files.writeString( rules.resolve( "r.jot" ), "sensors:\n- name: 'jots-rule'\n  methods:\n  - 'java.lang.String.isEmpty'\n" );
 		Files.writeString( rules.resolve( "notes.txt" ), "not a jot" );
-		Path jotsFile = dir.resolve( "jots.yaml" );
+		Path jotsFile = dir.resolve( "jot.yaml" );
 		Files.writeString( jotsFile, String.join( "\n",
 			"jots:",
 			"- base.jot",
@@ -304,4 +383,18 @@ class ConfigReaderTest {
 		System.clearProperty( "jot.control" );
 	}
 
+
+	@Test
+	public void theJotsFileIsFoundInTheDotJotDirectoryFirstThenTheFolderItself() throws Exception {
+		java.nio.file.Path dir = java.nio.file.Files.createTempDirectory( "locate" );
+		File plain = new File( dir.toFile(), "jot.yaml" );
+		java.nio.file.Files.writeString( plain.toPath(), "sensors: []\n" );
+		Assertions.assertEquals( plain.getPath(), ConfigReader.locate( dir.toString() ), "jot.yaml in the folder" );
+		File hidden = new File( dir.toFile(), ".jot/jot.yaml" );
+		hidden.getParentFile().mkdirs();
+		java.nio.file.Files.writeString( hidden.toPath(), "sensors: []\n" );
+		Assertions.assertEquals( hidden.getPath(), ConfigReader.locate( dir.toString() ), ".jot/jot.yaml wins over jot.yaml" );
+		Assertions.assertEquals( hidden.getPath(), ConfigReader.locate( hidden.getParent() ), "the .jot directory itself" );
+		Assertions.assertEquals( plain.getPath(), ConfigReader.locate( plain.getPath() ), "a file is used as it is" );
+	}
 }

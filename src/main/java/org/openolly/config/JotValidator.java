@@ -37,6 +37,11 @@ final class JotValidator {
 
 	/** What is wrong with the top of a file, such as sensor: where sensors: was meant. */
 	static List<String> fileProblems( JsonNode root ) {
+		return fileProblems( root, Set.of() );
+	}
+
+	/** also is the sections the file may have besides sensors and reports, which is the settings of a jots file when this is one. */
+	static List<String> fileProblems( JsonNode root, Set<String> also ) {
 		List<String> problems = new ArrayList<String>();
 		if ( root == null || root.isMissingNode() || root.isNull() ) {
 			problems.add( "is empty" );
@@ -46,7 +51,7 @@ final class JotValidator {
 			Iterator<String> keys = root.fieldNames();
 			while ( keys.hasNext() ) {
 				String key = keys.next();
-				if ( !SECTIONS.contains( key ) ) problems.add( key + " is not a section, the sections are sensors and reports" );
+				if ( !SECTIONS.contains( key ) && !also.contains( key ) ) problems.add( key + " is not a section, the sections are sensors and reports" );
 			}
 		}
 		return problems;

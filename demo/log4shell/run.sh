@@ -28,6 +28,6 @@ run() {
 }
 echo "=== without JOT ==="; run
 echo; echo "=== with JOT, monitor only (-Djot.protect=false). The attack still works and is recorded ==="
-run -Djot.protect=false -javaagent:$JAR=jots.yaml
+run -Djot.protect=false -javaagent:$JAR=jot.yaml
 echo; echo "=== with JOT, enforcing (log4shell.jot). The attack is stopped ==="
-run -javaagent:$JAR=jots.yaml
+run -javaagent:$JAR=jot.yaml

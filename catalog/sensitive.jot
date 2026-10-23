@@ -1,0 +1,46 @@
+# JOT catalog, sensitive
+# Sensitive data in requests, found by name and by value, kept apart so a report can say how it was found. Only names and kinds are recorded, never the value.
+# Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
+
+sensors:
+
+# Something sensitive in a request, found two ways that are kept apart, since they mean different things. A name that says password is
+# a field that probably holds one, and a value that is an SSN or a card number is the thing itself. The value sensors say which kind of
+# value it was, in kinds, one for each name and in the same order. Only names and kinds are recorded, never a value.
+# Each way is its own sensor because a list with nothing in it records nothing, so each stays quiet for a request it has nothing to report on.
+# A parameter is reported for a token too, by name or by value, since a token in a form field is worth knowing about. A cookie is not. A
+# session id, a csrf token and a login token are in a cookie on purpose, and the browser sends them with every request, so reporting them
+# would make every request an event. A cookie is reported for what it should never hold, a password, a secret, an SSN or a card number.
+- name: http-parameter-sensitive-name
+  description: Identifies a request parameter whose name says it holds something sensitive, such as a password, a secret, a token or an SSN
+  methods:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
+  captures:
+    names: '#P0.parameterMap.keySet().?[#matches(#this, "(?i)password|passwd|token|secret|api[_-]?key|(^|[^a-z])ssn([^a-z]|$)|credit[_-]?card|(^|[^a-z])card([^a-z]|$)|card[_-]?(num|no)")]'
+
+- name: http-parameter-sensitive-value
+  description: Identifies a request parameter whose value looks sensitive, such as an SSN, a credit card number, a web token or a long token, and says which
+  methods:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
+  captures:
+    names: '#P0.parameterMap.entrySet().?[#kind(value) != null].![key]'
+    kinds: '#P0.parameterMap.entrySet().?[#kind(value) != null].![#kind(value)]'
+
+- name: http-cookie-sensitive-name
+  description: Identifies a request cookie whose name says it holds something it should not, such as a password, a secret, an SSN or a credit card number
+  methods:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
+  captures:
+    names: '#list(#P0.cookies).?[#matches(name, "(?i)password|passwd|secret|(^|[^a-z])ssn([^a-z]|$)|credit[_-]?card|(^|[^a-z])card([^a-z]|$)|card[_-]?(num|no)")].![name]'
+
+- name: http-cookie-sensitive-value
+  description: Identifies a request cookie whose value is an SSN or a credit card number, and says which
+  methods:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
+  captures:
+    names: '#list(#P0.cookies).?[#kind(value) == "ssn" or #kind(value) == "card"].![name]'
+    kinds: '#list(#P0.cookies).?[#kind(value) == "ssn" or #kind(value) == "card"].![#kind(value)]'

@@ -1,0 +1,39 @@
+# JOT catalog, runtime
+# The runtime. Threads, native libraries and expression evaluation.
+# Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
+
+sensors:
+
+- name: thread-runnable
+  description: Identifies a thread being created with a Runnable and the code that created it
+  methods:
+  - java.lang.Thread.<init>
+  captures:
+    runnable_classes: "#ARGS.![#this?.getClass()?.getName()]"
+    caller: "#CALLER"
+  matchers:
+    runnable_classes:
+    - '!^java\.lang\.(String|ThreadGroup|Long|Boolean)$'
+
+# Native code loaded by a web request can do anything the JVM can. Libraries are loaded once, often on first use inside the
+# first request (a JDBC driver extracting its native part, for example), so run in monitor for a while, see what loads, then
+# move to protect.
+- name: native-library
+  description: Identifies loading a native library
+  methods:
+  - java.lang.System.load
+  - java.lang.System.loadLibrary
+  - java.lang.Runtime.load
+  - java.lang.Runtime.loadLibrary
+  captures:
+    name: "#P0"
+  matchers:
+    name:
+      - "!null"
+
+- name: expression-spel
+  description: Identifies a Spring expression being evaluated, which can run any code in the JVM when the text comes from outside
+  methods:
+  - org.springframework.expression.spel.standard.SpelExpression.getValue
+  captures:
+    expression: "#OBJ.expressionString"

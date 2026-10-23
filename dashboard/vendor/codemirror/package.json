@@ -6,6 +6,7 @@
     "build": "esbuild entry.js --bundle --minify --format=iife --global-name=JotEditor --target=es2019 --outfile=../../static/codemirror.js"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "6.18.6",
     "@codemirror/commands": "6.8.1",
     "@codemirror/lang-yaml": "6.1.2",
     "@codemirror/language": "6.11.0",

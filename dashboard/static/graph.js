@@ -249,17 +249,35 @@
   // which kinds of request used it, so how many requests did is the sum of the counts of those kinds. Up to ten requests nothing
   // is left out, then a path is left out if fewer than two requests took it, and from twenty if fewer than a tenth did. A route and
   // the line it starts are always kept, and a box that is left with no line goes with them.
+  // A rare path is not an unimportant one, the one request in a hundred that read /etc/passwd is the one to see. So what a sensor saw is
+  // never left out. If every path to it is rare, the most common of them is kept, and if a rule blocked or reported something it, all of
+  // its paths are kept, since those are the requests that mattered.
   function prune(nodes, edges, lineCounts) {
     const counts = lineCounts || {};
     const total = Object.keys(counts).reduce((t, k) => t + counts[k], 0);
     const need = total >= 20 ? Math.ceil(total * 0.1) : total >= 10 ? 2 : 1;
     if (need <= 1) return { nodes, edges, hiddenEdges: 0, hiddenNodes: 0 };
     const requests = (edge) => (edge.lines || []).reduce((t, l) => t + (counts[l] || 0), 0);
-    const kept = edges.filter((edge) => requests(edge) >= need || !(edge.lines || []).length);
-    const used = new Set();
-    for (const edge of kept) { used.add(edge.from); used.add(edge.to); }
+    const kept = new Set(edges.filter((edge) => requests(edge) >= need || !(edge.lines || []).length));
+    const pathOf = (line) => edges.filter((edge) => (edge.lines || []).includes(line));
+    const reached = () => {
+      const used = new Set();
+      for (const edge of kept) { used.add(edge.from); used.add(edge.to); }
+      return used;
+    };
+    const effects = nodes.filter((n) => n.kind === "effect" && (n.lines || []).length);
+    for (const n of effects) {
+      if ((n.blocked || 0) > 0 || (n.monitored || 0) > 0) for (const line of n.lines) for (const edge of pathOf(line)) kept.add(edge);
+    }
+    for (const n of effects) {
+      if (reached().has(n.id)) continue;
+      const commonest = n.lines.reduce((best, line) => ((counts[line] || 0) > (counts[best] || 0) ? line : best), n.lines[0]);
+      for (const edge of pathOf(commonest)) kept.add(edge);
+    }
+    const keptEdges = edges.filter((edge) => kept.has(edge));
+    const used = reached();
     const left = nodes.filter((n) => used.has(n.id) || n.kind === "route");
-    return { nodes: left, edges: kept, hiddenEdges: edges.length - kept.length, hiddenNodes: nodes.length - left.length };
+    return { nodes: left, edges: keptEdges, hiddenEdges: edges.length - keptEdges.length, hiddenNodes: nodes.length - left.length };
   }
 
   // A starting JOT for an application method, from its full name like com.acme.Database.getConnection, or null when a method of
@@ -292,7 +310,27 @@
     return head.includes("/") ? head.slice(head.lastIndexOf("/") + 1) : head;
   }
 
-  const api = { layout, through, curve, curveDown, collapse, prune, sensorFor, frameMethod };
+  // The node nearest to one in a direction, for the arrow keys, or null when there is none that way. Boxes are all the same size, so the difference of
+  // their corners is the difference of their centers. A node counts when it is on that side of this one, and the nearest has the least distance
+  // along the direction plus a heavier distance across it, so a key follows the row or the column the eye is on and doesn't jump to a far box
+  // that happens to be a little closer in a straight line. Ties go to the one that was drawn first.
+  function neighbor(pos, from, dir) {
+    const at = pos.get(from);
+    if (!at) return null;
+    const vertical = dir === "up" || dir === "down";
+    const sign = dir === "right" || dir === "down" ? 1 : -1;
+    let best = null, bestScore = Infinity;
+    for (const [id, p] of pos) {
+      if (id === from) continue;
+      const along = (vertical ? p.y - at.y : p.x - at.x) * sign;
+      if (along <= 0) continue;
+      const score = along + 2.5 * Math.abs(vertical ? p.x - at.x : p.y - at.y);
+      if (score < bestScore) { best = id; bestScore = score; }
+    }
+    return best;
+  }
+
+  const api = { layout, through, curve, curveDown, collapse, prune, sensorFor, frameMethod, neighbor };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.JotGraph = api;
 })(typeof window !== "undefined" ? window : globalThis);

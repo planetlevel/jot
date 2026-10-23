@@ -6,7 +6,7 @@ That makes "#P0" and "!null" double quoted, '!\.class' and '#P0 + ": " + #RET' s
 Everything else is left as written, comments and layout included. Every file is parsed before and after and left alone if the
 two aren't the same.
 
-    python3 tools/unquote_jot.py cves/*.jot demo/ticketbook/jots/*.jot
+    python3 tools/unquote_jot.py cves/*.jot demo/ticketbook/.jot/jot.yaml
 
 needs_quotes and quote are also what the CVE generator uses, so regenerated files come out the same way.
 """

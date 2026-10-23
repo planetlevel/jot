@@ -1,0 +1,137 @@
+# JOT catalog, data
+# Data and resources. SQL, files, network connections and serialized objects.
+# Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
+
+sensors:
+
+- name: sql-statement
+  description: Identifies unparameterized database queries
+  methods:
+  - java.sql.Statement.execute
+  - java.sql.Statement.addBatch
+  - java.sql.Statement.executeQuery
+  - java.sql.Statement.executeUpdate
+  excludes:
+  - java.sql.PreparedStatement   # these calls are harmless in PreparedStatement
+  captures:
+    sql: "#ARGS"
+
+- name: sql-prepared
+  description: Identifies parameterized database queries
+  methods:
+  - java.sql.Connection.prepareCall
+  - java.sql.Connection.prepareStatement
+  captures:
+    sql: "#ARGS"
+
+- name: sql-connection
+  description: Identifies a database connection being opened, the JDBC URL it connects to and the database and driver behind it
+  methods:
+  - java.sql.DriverManager.getConnection
+  captures:
+    url: "#P0"
+    product: "#RET?.getMetaData()?.getDatabaseProductName()"
+    version: "#RET?.getMetaData()?.getDatabaseProductVersion()"
+    driver: "#RET?.getMetaData()?.getDriverName()"
+    user: "#RET?.getMetaData()?.getUserName()"
+
+- name: sql-update
+  description: Identifies a database update being run and how many rows it changed
+  methods:
+  - java.sql.Statement.executeUpdate
+  - java.sql.Statement.executeLargeUpdate
+  captures:
+    sql: "#P0"
+    rows: "#RET"
+    database: "#OBJ.getConnection().getMetaData().getDatabaseProductName()"
+    auto_commit: "#OBJ.getConnection().getAutoCommit()"
+
+- name: sql-result
+  description: Identifies the shape of what a query returned, its columns, their types and the tables they came from
+  methods:
+  - java.sql.Statement.executeQuery
+  captures:
+    sql: "#P0"
+    column_count: "#RET.getMetaData().getColumnCount()"
+    columns: "{1,2,3,4,5,6,7,8}.?[#this <= #RET.getMetaData().getColumnCount()].![#RET.getMetaData().getColumnLabel(#this)]"
+    types: "{1,2,3,4,5,6,7,8}.?[#this <= #RET.getMetaData().getColumnCount()].![#RET.getMetaData().getColumnTypeName(#this)]"
+    tables: "{1,2,3,4,5,6,7,8}.?[#this <= #RET.getMetaData().getColumnCount()].![#RET.getMetaData().getTableName(#this)]"
+    result_set_type: "#RET.getType()"
+    fetch_size: "#RET.getFetchSize()"
+
+- name: sql-metadata
+  description: Identifies result set metadata being requested, with the number of columns and the table of the first column
+  methods:
+  - java.sql.ResultSet.getMetaData
+  captures:
+    column_count: "#RET?.getColumnCount()"
+    first_table: "#RET?.getTableName(1)"
+    first_column: "#RET?.getColumnName(1)"
+
+- name: sql-schema-lookup
+  description: Identifies the database schema being inspected for its tables, columns, keys or indexes, and the names it was asked about
+  methods:
+  - java.sql.DatabaseMetaData.getTables
+  - java.sql.DatabaseMetaData.getColumns
+  - java.sql.DatabaseMetaData.getPrimaryKeys
+  - java.sql.DatabaseMetaData.getImportedKeys
+  - java.sql.DatabaseMetaData.getExportedKeys
+  - java.sql.DatabaseMetaData.getIndexInfo
+  captures:
+    args: "#ARGS"
+
+- name: file-path
+  description: Identifies file and directory use
+  methods:
+  - java.io.File.<init>
+  captures:
+    path: "#OBJ.getCanonicalPath()"
+  # leaves out the JDK and servlet container files that are read all the time
+  matchers:
+    path:
+      - "!/apache-tomcat"
+      - "!/tomcat-base"
+      - "!/openjdk"
+      - "!/Cellar/"
+      - "!/candidates/java/"
+
+- name: net-socket
+  description: Identifies a socket being opened
+  methods:
+  - java.net.Socket.<init>
+  captures:
+    host: "#P0"
+    port: "#P1"
+  matchers:
+    host:
+      - "!null"
+    port:
+      - "!^8080$"
+
+- name: net-url
+  description: Identifies the host and protocol of a URL being connected to
+  methods:
+  - java.net.URL.openConnection
+  captures:
+    host: "#OBJ.getHost()"
+    protocol: "#OBJ.getProtocol()"
+    port: "#OBJ.getPort() == -1 ? #OBJ.getDefaultPort() : #OBJ.getPort()"
+  matchers:
+    protocol:
+      - (?i)^(https?|ftp)$
+
+- name: object-class
+  description: Identifies the classes an ObjectInputStream turns bytes into
+  methods:
+  - java.io.ObjectInputStream.resolveClass
+  captures:
+    class: "#P0.getName()"
+
+# A web request must never deserialize objects.
+- name: object-deserialization
+  description: Identifies deserializing an object
+  methods:
+  - java.io.ObjectInputStream.readObject
+  - java.io.ObjectInputStream.readUnshared
+  captures:
+    args: "#ARGS"

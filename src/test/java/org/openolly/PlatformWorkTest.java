@@ -86,7 +86,7 @@ class PlatformWorkTest {
 	@Test
 	void theJotsFileSetsTheListAndAWrongOneKeepsTheDefault(@TempDir Path dir) throws Exception {
 		Files.writeString( dir.resolve( "none.jot" ), "sensors: []\n" );
-		Path jots = dir.resolve( "jots.yaml" );
+		Path jots = dir.resolve( "jot.yaml" );
 		Files.writeString( jots, "jots:\n- none.jot\nignore:\n- javax.vendor\n- org.other.loader\n" );
 		ConfigReader.readJotsFile( jots.toFile() );
 		Assertions.assertEquals( List.of( "javax.vendor", "org.other.loader" ), PlatformWork.ignored() );

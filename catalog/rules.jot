@@ -1,11 +1,6 @@
----
-# TicketBook demo, the rules. A sensor with a block-when is a rule. Its description says what was found, and when the
-# condition is not just true the message adds the condition.
-# run.sh always loads this file. MODE decides what the rules do.
-#   monitor   the rules only report, nothing is stopped, the attacks still work
-#   protect   the rules stop the call
-# The dashboard's Protection panel can switch single rules between the two while the app runs.
-# Each rule lists both the javax and the jakarta names, so these work on Tomcat 9 and Tomcat 11.
+# JOT catalog, rules
+# Rules that can stop a call. A sensor with block-when is a rule. When the Assistant copies one it adds protect: false, so it only reports what it would stop until the Monitor and Protect switch in the dashboard turns blocking on. Each rule lists both the javax and the jakarta names.
+# Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
 
 sensors:
 
@@ -17,15 +12,6 @@ sensors:
   captures:
     command: "#ARGS"
   block-when: true
-
-# A web request must never deserialize objects.
-- name: object-deserialization
-  description: Identifies deserializing an object
-  methods:
-  - java.io.ObjectInputStream.readObject
-  - java.io.ObjectInputStream.readUnshared
-  captures:
-    args: "#ARGS"
 
 # The microsandbox for expression injection. Evaluating an expression is allowed, but while one is being
 # evaluated it can't start a process or open a socket.
@@ -68,19 +54,3 @@ sensors:
   captures:
     args: "#ARGS"
   block-when: true
-
-# Native code loaded by a web request can do anything the JVM can. Libraries are loaded once, often on first use inside the
-# first request (a JDBC driver extracting its native part, for example), so run in monitor for a while, see what loads, then
-# move to protect.
-- name: native-library
-  description: Identifies loading a native library
-  methods:
-  - java.lang.System.load
-  - java.lang.System.loadLibrary
-  - java.lang.Runtime.load
-  - java.lang.Runtime.loadLibrary
-  captures:
-    name: "#P0"
-  matchers:
-    name:
-      - "!null"

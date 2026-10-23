@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { layout, through, curve, collapse, sensorFor, frameMethod, curveDown, prune } = require("../static/graph.js");
+const { layout, through, curve, collapse, sensorFor, frameMethod, curveDown, prune, neighbor } = require("../static/graph.js");
 
 const n = (id, kind, events = 1) => ({ id, kind, label: id, events });
 const e = (from, to, events = 1) => ({ from, to, events });
@@ -361,4 +361,87 @@ test("from twenty requests a path needs a tenth of them, counted over every kind
 test("the route is always kept, even when every path from it is rare", () => {
   const out = prune([pn("r", "route"), pn("a")], [pe("r", "a", [3])], { 0: 30, 3: 1 });
   assert.deepStrictEqual(out.nodes.map((x) => x.id), ["r"]);
+});
+
+const fx = (id, extra = {}) => Object.assign({ id, kind: "effect", label: id, events: 1, lines: [], blocked: 0, monitored: 0 }, extra);
+
+test("what a sensor saw is never left out, even when only one request in a hundred did it", () => {
+  // the xxe page, 99 ordinary requests and one that read a file
+  const ns = [pn("r", "route"), pn("cache", "effect"), fx("file", { lines: [1] })];
+  ns[1].lines = [0];
+  const es = [pe("r", "cache", [0]), pe("r", "file", [1])];
+  const out = prune(ns, es, { 0: 99, 1: 1 });
+  assert.deepStrictEqual(out.nodes.map((x) => x.id), ["r", "cache", "file"], "the file read is drawn");
+  assert.strictEqual(out.edges.length, 2);
+  assert.strictEqual(out.hiddenEdges, 0);
+});
+
+test("when every path to a sensor's box is rare the commonest one is kept, and not all of them", () => {
+  const ns = [pn("r", "route"), pn("a"), pn("b"), fx("file", { lines: [1, 2] })];
+  const es = [pe("r", "a", [0, 1, 2]), pe("a", "file", [1, 2]), pe("r", "b", [1]), pe("b", "file", [1])];
+  // 100 requests, 97 did something else, 2 took the path through a, and 1 the path through b
+  const out = prune(ns, es, { 0: 97, 1: 1, 2: 2 });
+  assert.deepStrictEqual(out.edges.map((x) => x.to).sort(), ["a", "file"], "the edge through a is common enough, the one through b is not brought back");
+  assert.strictEqual(out.hiddenEdges, 2);
+});
+
+test("a box with a rare path and a common one keeps only the common one", () => {
+  const ns = [pn("r", "route"), pn("a"), pn("rare"), fx("file", { lines: [0, 1] })];
+  const es = [pe("r", "a", [0, 1]), pe("a", "file", [0]), pe("r", "rare", [1]), pe("rare", "file", [1])];
+  const out = prune(ns, es, { 0: 99, 1: 1 });
+  assert.deepStrictEqual(out.nodes.map((x) => x.id), ["r", "a", "file"], "the sensor is drawn, so there is nothing to bring back");
+});
+
+test("everything a rule blocked or reported keeps every path to it, however rare", () => {
+  const ns = [pn("r", "route"), pn("a"), pn("rare"), fx("exec", { lines: [0, 1], blocked: 1 })];
+  const es = [pe("r", "a", [0]), pe("a", "exec", [0]), pe("r", "rare", [1]), pe("rare", "exec", [1])];
+  const out = prune(ns, es, { 0: 99, 1: 1 });
+  assert.strictEqual(out.edges.length, 4, "the one request that was blocked is drawn along with the others");
+  assert.strictEqual(out.hiddenEdges, 0);
+  const reported = prune([pn("r", "route"), pn("a"), pn("rare"), fx("exec", { lines: [0, 1], monitored: 3 })], es, { 0: 99, 1: 1 });
+  assert.strictEqual(reported.edges.length, 4, "and the same for what was only reported");
+});
+
+test("a path that leads to no sensor is still left out when it is rare", () => {
+  const ns = [pn("r", "route"), pn("a"), pn("dead"), fx("cache", { lines: [0] })];
+  const es = [pe("r", "a", [0, 1]), pe("a", "cache", [0]), pe("a", "dead", [1])];
+  const out = prune(ns, es, { 0: 99, 1: 1 });
+  assert.deepStrictEqual(out.nodes.map((x) => x.id), ["r", "a", "cache"]);
+  assert.strictEqual(out.hiddenEdges, 1);
+});
+
+test("a sensor with no line of its own is left to the rule for every other box", () => {
+  const out = prune([pn("r", "route"), fx("odd")], [pe("r", "odd", [])], { 0: 99, 1: 1 });
+  assert.strictEqual(out.edges.length, 1, "an edge with no lines is always kept, and nothing here is brought back");
+});
+
+// boxes at (x, y), the top left corner of each, laid out like columns of a left to right graph
+const grid = new Map([["r", { x: 0, y: 100 }], ["a", { x: 200, y: 0 }], ["b", { x: 200, y: 100 }], ["c", { x: 200, y: 200 }], ["s", { x: 400, y: 100 }], ["t", { x: 400, y: 260 }]]);
+
+test("an arrow key goes to the nearest box on that side", () => {
+  assert.strictEqual(neighbor(grid, "r", "right"), "b", "straight along the row, not the box above or below");
+  assert.strictEqual(neighbor(grid, "b", "right"), "s");
+  assert.strictEqual(neighbor(grid, "s", "left"), "b");
+  assert.strictEqual(neighbor(grid, "b", "left"), "r");
+  assert.strictEqual(neighbor(grid, "b", "up"), "a");
+  assert.strictEqual(neighbor(grid, "b", "down"), "c");
+});
+
+test("a key follows the row or column it is on and doesn't jump to a box that is only a little closer in a straight line", () => {
+  // from c, s is 200 right and 100 up, t is 200 right and 60 down, and t is the closer to the same row
+  assert.strictEqual(neighbor(grid, "c", "right"), "t");
+  // from a, the box straight below is chosen over one that is nearer the diagonal
+  assert.strictEqual(neighbor(grid, "a", "down"), "b");
+});
+
+test("there is nothing to go to past the edge, and a box that is not drawn goes nowhere", () => {
+  assert.strictEqual(neighbor(grid, "r", "left"), null);
+  assert.strictEqual(neighbor(grid, "a", "up"), null);
+  assert.strictEqual(neighbor(grid, "s", "right"), null);
+  assert.strictEqual(neighbor(grid, "nope", "right"), null);
+});
+
+test("boxes in the same column are not to the left or the right of each other", () => {
+  assert.strictEqual(neighbor(new Map([["p", { x: 0, y: 0 }], ["q", { x: 0, y: 80 }]]), "p", "right"), null);
+  assert.strictEqual(neighbor(new Map([["p", { x: 0, y: 0 }], ["q", { x: 0, y: 80 }]]), "p", "down"), "q");
 });

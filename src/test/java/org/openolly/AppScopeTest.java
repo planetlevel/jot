@@ -127,7 +127,7 @@ class AppScopeTest {
 	@Test
 	void theJotsFileSetsTheEntryPointsIncludingAnnotationsAndABadOneKeepsTheDefault(@TempDir Path dir) throws Exception {
 		Files.writeString( dir.resolve( "none.jot" ), "sensors: []\n" );
-		Path jots = dir.resolve( "jots.yaml" );
+		Path jots = dir.resolve( "jot.yaml" );
 		Files.writeString( jots, "jots:\n- none.jot\napp:\n  packages:\n  - com.acme\n  entry:\n  - jakarta.servlet.Servlet.service\n  - '@dev.langchain4j.agent.tool.Tool'\n" );
 		ConfigReader.readJotsFile( jots.toFile() );
 		Assertions.assertEquals( 2, AppScope.entries().size() );
@@ -150,5 +150,35 @@ class AppScopeTest {
 		}
 		Assertions.assertEquals( 5, ConfigReader.getProblems().size() - before, "each of them is said out loud" );
 		Assertions.assertEquals( AppScope.DEFAULT_ENTRY.size(), AppScope.entries().size(), "and the default is used" );
+	}
+
+	@org.junit.jupiter.api.Test
+	void everyOutermostEntryIsATraceOfItsOwnAndWhatHappensBetweenThemIsNot() {
+		long before = org.openolly.reporting.Trace.currentId();
+		AppScope.enter();
+		long first = org.openolly.reporting.Trace.currentId();
+		AppScope.enter();
+		org.junit.jupiter.api.Assertions.assertEquals( first, org.openolly.reporting.Trace.currentId(), "a nested entry stays in the trace" );
+		AppScope.leave();
+		org.junit.jupiter.api.Assertions.assertEquals( first, org.openolly.reporting.Trace.currentId() );
+		AppScope.leave();
+		long between = org.openolly.reporting.Trace.currentId();
+		AppScope.enter();
+		long second = org.openolly.reporting.Trace.currentId();
+		AppScope.leave();
+		org.junit.jupiter.api.Assertions.assertNotEquals( before, first );
+		org.junit.jupiter.api.Assertions.assertNotEquals( first, between, "the work between two entries is not the first one's" );
+		org.junit.jupiter.api.Assertions.assertNotEquals( between, second );
+		org.junit.jupiter.api.Assertions.assertNotEquals( first, second );
+	}
+
+	@org.junit.jupiter.api.Test
+	void everyEventSaysTheOutermostEntryPointItRanUnder() {
+		AppScope.enter( "com.acme.Calc.add" );
+		AppScope.enter( "com.acme.Other.helper" );   // an entry point that calls another is still the first one's work
+		org.junit.jupiter.api.Assertions.assertEquals( "com.acme.Calc.add", new org.openolly.reporting.Event( "s", "c", null ).getEntry() );
+		AppScope.leave();
+		AppScope.leave();
+		org.junit.jupiter.api.Assertions.assertNull( new org.openolly.reporting.Event( "s", "c", null ).getEntry(), "between entries there is none" );
 	}
 }

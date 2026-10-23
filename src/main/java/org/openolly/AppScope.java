@@ -64,12 +64,22 @@ public final class AppScope {
 		return depth.inScope();
 	}
 
+	/**
+	 * An outermost entry point is one unit of the application's work, so the events from it share a trace, the way a servlet request does,
+	 * and every event of it says which entry point it began at. What the thread does between entry points, like asking a model what to do next, is not part of the last one.
+	 */
 	public static void enter() {
+		enter( null );
+	}
+
+	public static void enter(String entry) {
+		if ( !depth.inScope() ) org.openolly.reporting.Trace.start( entry );
 		depth.enterScope();
 	}
 
 	public static void leave() {
 		depth.leaveScope();
+		if ( !depth.inScope() ) org.openolly.reporting.Trace.start();
 	}
 
 	/** Puts the advice on every entry point. One advice for all of them, however many JOTs use the application scope. */

@@ -11,6 +11,7 @@ sensors:
   - jakarta.servlet.Servlet.service
   captures:
     path: "#P0.getRequestURI()"
+    method: "#P0.getMethod()"
 
   
 - name: auth-user

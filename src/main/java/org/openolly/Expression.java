@@ -51,7 +51,7 @@ public class Expression {
 	private static StandardEvaluationContext newContext() throws NoSuchMethodException {
 		StandardEvaluationContext context = new StandardEvaluationContext();
 		context.registerFunction("toUpper", StringUtils.class.getMethod("upperCase", String.class));
-		context.registerFunction("toLower", StringUtils.class.getMethod("upperCase", String.class));
+		context.registerFunction("toLower", StringUtils.class.getMethod("lowerCase", String.class));
 		// so a map can be read as #ANNOTATION.roles as well as #ANNOTATION['roles']
 		context.addPropertyAccessor(new org.springframework.expression.PropertyAccessor() {
 			public Class<?>[] getSpecificTargetClasses() { return new Class<?>[] { java.util.Map.class }; }
@@ -65,6 +65,10 @@ public class Expression {
 			public void write(org.springframework.expression.EvaluationContext c, Object target, String name, Object value) { }
 		});
 		context.registerFunction("sort", Collections.class.getMethod("sort", List.class));
+		// list, matches, matching and luhn, which work on any kind of value and are safe to run on a request's data
+		for ( java.lang.reflect.Method function : ExpressionFunctions.class.getDeclaredMethods() ) {
+			if ( ExpressionFunctions.isFunction( function ) ) context.registerFunction( function.getName(), function );
+		}
 		return context;
 	}
 

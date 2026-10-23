@@ -80,11 +80,32 @@ class AgentIsSilentTest {
 	}
 
 	@Test
-	void withNoOutputSettingNothingIsWritten() throws Exception {
-		System.clearProperty( "jot.output" );
-		EventBus.configureFromSystemProperties();
+	void withTheOutputSetToNothingNothingIsWritten() throws Exception {
+		System.setProperty( "jot.output", "" );
+		try {
+			EventBus.configureFromSystemProperties();
+		} finally {
+			System.clearProperty( "jot.output" );
+		}
 		EventBus.publish( new org.openolly.reporting.Event( "quiet", "x", Thread.currentThread().getStackTrace() ) );
 		EventBus.shutdown();
+		Assertions.assertEquals( "", errBytes.toString() );
+		Assertions.assertEquals( "", outBytes.toString() );
+	}
+
+	@Test
+	void withNoOutputSettingEventsGoToAFileInTheDotJotFolderAndNotToTheApplication(@org.junit.jupiter.api.io.TempDir Path dir) throws Exception {
+		System.clearProperty( "jot.output" );
+		System.clearProperty( "jot.output.file" );
+		System.setProperty( "jot.dir", dir.resolve( ".jot" ).toString() );
+		try {
+			EventBus.configureFromSystemProperties();
+			EventBus.publish( new org.openolly.reporting.Event( "quiet", "x", Thread.currentThread().getStackTrace() ) );
+			EventBus.shutdown();
+		} finally {
+			System.clearProperty( "jot.dir" );
+		}
+		Assertions.assertTrue( Files.size( dir.resolve( ".jot/events.jsonl" ) ) > 0, "the event is in the file" );
 		Assertions.assertEquals( "", errBytes.toString() );
 		Assertions.assertEquals( "", outBytes.toString() );
 	}

@@ -27,6 +27,12 @@ public class JOTAgent {
 	public static void transform(String yaml, Instrumentation inst) {
 		JotScope.enter();
 		try {
+			yaml = ConfigReader.locate(yaml);
+			if ( yaml != null && System.getProperty( "jot.dir" ) == null ) {
+				// what the agent writes goes beside the file it reads, whatever directory the application was started in
+				java.io.File folder = new java.io.File( yaml ).getAbsoluteFile().getParentFile();
+				System.setProperty( "jot.dir", folder.getName().equals( ".jot" ) ? folder.getPath() : new java.io.File( folder, ".jot" ).getPath() );
+			}
 			EventBus.configureFromSystemProperties();
 			ConfigReader.init(yaml);
 			Instrumenter.instrument(inst, Sensor.getSensors());

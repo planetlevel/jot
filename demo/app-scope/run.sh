@@ -11,7 +11,7 @@ OUT=target
 mkdir -p $OUT
 javac -d $OUT Demo.java
 : > $OUT/events.jsonl
-java -Djot.output=json -Djot.output.file=$OUT/events.jsonl -javaagent:$JAR=jots.yaml -cp $OUT Demo 2>/dev/null
+java -Djot.output=json -Djot.output.file=$OUT/events.jsonl -javaagent:$JAR=jot.yaml -cp $OUT Demo 2>/dev/null
 
 count() { grep -c "\"sensor\":\"$1\"" $OUT/events.jsonl || true; }
 in_app=$(count file-in-app); digests=$(count digest-in-app); anywhere=$(count file-anywhere); entries=$(count on-entry)

@@ -1,5 +1,6 @@
----
-# Java Observability Toolkit (JOT)
+# JOT catalog, web
+# Web requests. What came in, who the user was, what was read from it and where the application sent the response. These watch the servlet API, so they cover javax and jakarta applications.
+# Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
 
 sensors:
 
@@ -10,8 +11,8 @@ sensors:
   - jakarta.servlet.Servlet.service
   captures:
     path: "#P0.getRequestURI()"
+    method: "#P0.getMethod()"
 
-  
 - name: auth-user
   description: Identifies the user making a request, or Guest when no one is signed in
   methods:
@@ -19,8 +20,7 @@ sensors:
   - jakarta.servlet.Servlet.service
   captures:
     user: '#P0.getRemoteUser()==null ? "Guest" : #P0.getRemoteUser()'
-  
-  
+
 - name: auth-role-check
   description: Identifies an authorization check and whether the current user has the role
   methods:
@@ -35,8 +35,7 @@ sensors:
       - "!null"
     allowed:
       - "!null"
-    
-  
+
 - name: http-parameter-received
   description: Identifies the parameter names a request was sent with
   methods:
@@ -47,7 +46,6 @@ sensors:
   matchers:
     name:
       - "!null"
-
 
 - name: http-parameter-read
   description: Identifies the parameter names the application reads
@@ -62,7 +60,6 @@ sensors:
     name:
       - "!null"
 
-
 - name: http-redirect
   description: Identifies a redirect being sent
   methods:
@@ -73,7 +70,6 @@ sensors:
   matchers:
     url:
       - "!null"
-
 
 - name: http-forward
   description: Identifies a request being forwarded
@@ -88,7 +84,6 @@ sensors:
     path:
       - "!null"
 
-
 - name: http-filter-registered
   description: Identifies a filter being added at run time
   methods:
@@ -99,7 +94,6 @@ sensors:
   matchers:
     urls:
       - "!null"
-
 
 - name: http-servlet-registered
   description: Identifies a servlet being added at run time
@@ -112,7 +106,6 @@ sensors:
     urls:
       - "!null"
 
-
 - name: http-cache-header
   description: Identifies a cache header being set
   methods:
@@ -124,56 +117,26 @@ sensors:
     cache_control:
       - "!null"
 
-
-- name: get-privacy
-  description: Identifies personal information in a request parameter
+- name: http-cookie-set
+  description: Identifies a cookie being set and whether it is Secure and HttpOnly
   methods:
-  - javax.servlet.ServletRequest.getParameter
-  - jakarta.servlet.ServletRequest.getParameter
-  - javax.servlet.ServletRequest.getParameterValues
-  - jakarta.servlet.ServletRequest.getParameterValues
-  scopes:
-  - javax.servlet.Servlet.service
-  - jakarta.servlet.Servlet.service
+  - javax.servlet.http.HttpServletResponse.addCookie
+  - jakarta.servlet.http.HttpServletResponse.addCookie
   captures:
-    value: "#P0"
+    name: "#P0.getName()"
+    secure: "#P0.getSecure()"
+    http_only: "#P0.isHttpOnly()"
+
+- name: http-security-header
+  description: Identifies a security header being set and its value
+  methods:
+  - javax.servlet.ServletResponse.setHeader
+  - jakarta.servlet.ServletResponse.setHeader
+  - javax.servlet.ServletResponse.addHeader
+  - jakarta.servlet.ServletResponse.addHeader
+  captures:
+    name: "#P0"
+    value: "#P1"
   matchers:
-    value:
-      - (?!000|666)[0-8][0-9]{2}-(?!00)[0-9]{2}-(?!0000)[0-9]{4}
-      - (?<visa>4[0-9]{12}(?:[0-9]{3})?)
-      - (?<mastercard>5[1-5][0-9]{14})
-      - (?<discover>6(?:011|5[0-9]{2})[0-9]{12})
-      - (?<amex>3[47][0-9]{13})
-      - (?<diners>3(?:0[0-5]|[68][0-9])?[0-9]{11})
-      - (?<jcb>(?:2131|1800|35[0-9]{3})[0-9]{11})
-  
-
-##### detect attacks #####
-
-- name: expression-suspicious
-  description: Identifies an expression that contains reflection or process APIs
-  methods:
-  - javax.servlet.jsp.el.ExpressionEvaluator.evaluate
-  - jakarta.servlet.jsp.el.ExpressionEvaluator.evaluate
-  - org.springframework.expression.parseExpression
-  captures:
-    expression: "#P0"
-  matchers:
-    expression:
-      - \.class
-  block-when: true
-  
-
-- name: expression
-  description: Identifies an expression being evaluated starting a process or opening a socket
-  methods:
-  - java.lang.ProcessBuilder.<init>
-  - java.io.Socket.<init>
-  scopes:
-  - javax.servlet.jsp.el.ExpressionEvaluator.evaluate
-  - jakarta.servlet.jsp.el.ExpressionEvaluator.evaluate
-  - org.springframework.expression.parseExpression
-  captures:
-    expression: "#P0"
-  block-when: true
-
+    name:
+      - (?i)^(Content-Security-Policy|Strict-Transport-Security|X-Frame-Options|X-Content-Type-Options|Referrer-Policy|Permissions-Policy|X-XSS-Protection|Cross-Origin-[\w-]+)$

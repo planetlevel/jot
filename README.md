@@ -51,12 +51,23 @@ to capture and "reports" tell the dashboard how to tabulate it.
 
 Basically all you have to do is add JOT to the JVM
 - Download the latest jot.jar from https://github.com/planetlevel/jot/tags
-- Grab the ciphers.jot file from https://github.com/planetlevel/jot/blob/master/src/main/resources/ciphers.jot
-- Launch your app with "java -javaagent:jot.jar=ciphers.jot -Djot.output=json"
+- Start the dashboard in your project's folder (`python3 dashboard/server.py`) and open the Assistant page. Give it the folder of your project
+  and it looks through the code for how the application starts, then proposes the entry points, packages, sensors, rules and reports that fit, from
+  the `catalog/` folder of this repository. You apply each proposal, and they are written to `.jot/jot.yaml` in your project.
+- Launch your app with "java -javaagent:jot.jar=.jot/jot.yaml", or with no argument if it starts in the project folder. Events go to `.jot/events.jsonl` beside it.
 
 Then you just use your application normally and let JOT gather data for you. The agent writes nothing
-to your application's output, the events go to `jot-events.jsonl`. Start the dashboard on that file and its
-Reports page has a table of exactly where encryption is used and what algorithm is specified.
+to your application's output, the events go to `.jot/events.jsonl`, which the dashboard follows. Its
+Reports page has tables of exactly where encryption is used and what algorithm is specified, and much else.
+
+### The catalog
+
+`catalog/` holds the generic sensors, rules and reports that come with JOT, in files by area. `web` has the request, user, parameter, redirect and
+header sensors, `sensitive` finds sensitive data in requests by name and by value, `crypto` has ciphers, hashes and keys, `data` has SQL, files,
+sockets and serialized objects, `runtime` has threads, native libraries and expression evaluation, `ai` has the model call and tool sensors for Spring AI agents, `rules` has the rules that can stop a call, and `reports` has the reports
+that read them. Nothing in it belongs to one application. A project's configuration is one file, so the catalog is not loaded. The Assistant copies
+what fits into the project's own `jot.yaml`, where you can change it, and a rule is copied with `protect: false` so it only reports until you turn it on.
+You can also copy from it by hand, the files are ordinary `.jot` files.
 
     Encryption Usage         crypto-cipher-request.algorithm
     -----------------------  --------------------------------
@@ -69,8 +80,8 @@ Reports page has a table of exactly where encryption is used and what algorithm 
 ## Events and Output
 JOT reports what its sensors observe, and what they block, as events. Each event has a sensor name,
 an action (`observed`, `monitored` or `blocked`), the captured values, the calling method and, for blocks,
-the stack. Events are delivered on a background thread, so your application never waits on output. Nothing is written
-unless you choose an output below. This is what `-Djot.output=console` prints.
+the stack. Events are delivered on a background thread, so your application never waits on output. They are written to a file
+in the `.jot` folder, and never to your application's own output unless you ask for `console`. This is what `-Djot.output=console` prints.
 
     [JOT] 2026-10-15T19:27:07.301Z BLOCKED cve-log4shell-no-exec [[touch, pwned.txt]]
           CVE-2021-44228 microsandbox blocked process execution
@@ -80,8 +91,8 @@ Choose where events go with system properties.
 
 | Property | Default | Description |
 |----------|---------|-------------|
-| `jot.output` | none | Comma separated list of `json` (one JSON object per line, in a file) and `console` (stderr). With none, the agent writes nothing anywhere |
-| `jot.output.file` | `jot-events.jsonl` | File for the `json` output |
+| `jot.output` | `json` | Comma separated list of `json` (one JSON object per line, in a file) and `console` (stderr). `-Djot.output=` with nothing after it turns output off |
+| `jot.output.file` | `events.jsonl` in the `.jot` folder of the jots file | File for the `json` output. The agent puts it beside the file it read, whatever directory the application started in |
 | `jot.events` | `all` | `all`, or `violations` to only report monitored and blocked events |
 | `jot.queue.size` | `10000` | Events to buffer. If the queue fills up, new events are dropped and counted. |
 | `jot.protect` | `true` | `false` makes every rule only report, see below |
@@ -145,7 +156,7 @@ have stopped and check it for false positives before turning it on.
       protect: false
 
     # every rule only reports
-    java -Djot.protect=false -javaagent:jot.jar=jots.yaml -jar app.jar
+    java -Djot.protect=false -javaagent:jot.jar=jot.yaml -jar app.jar
 
 `jot.protect=false` is a master switch. A rule can turn its own protection off with `protect: false`, but it can't
 turn it back on when the master switch is off.
@@ -215,14 +226,14 @@ a problem in a JOT can never break your application, which also means a rule tha
 fails silently. Turn verbose on while writing or debugging JOTs.
 
 You might find using the JAVA_TOOL_OPTIONS environment variable useful.
-Like "export JAVA_TOOL_OPTIONS="-javaagent:jot.jar=jots.yaml". Then
+Like "export JAVA_TOOL_OPTIONS="-javaagent:jot.jar=jot.yaml". Then
 no matter how Java eventually gets launched, it will use JOT.
 
 The agent argument is a jots file, a small YAML file that lists the .jot files and directories to load.
 Directories are searched recursively, so organize your JOTs however you like.
 
     jots:
-    - ciphers.jot
+    - ../shared-rules.jot
     - rules                    # directories are searched recursively
     control: jot-control.yaml
     app:
@@ -254,8 +265,20 @@ class loader, the page compiler and the Eclipse compiler are used, and `ignore: 
 affected, they see everything. The dashboard reads the same list.
 
 Relative paths are relative to the jots file. The dashboard reads the same file with "--jots", so the agent
-and the dashboard always use the same definitions. See demo/ticketbook/jots.yaml. If two JOTs define a sensor
+and the dashboard always use the same definitions. See demo/ticketbook/.jot/jot.yaml. If two JOTs define a sensor
 with the same name, the first one loaded wins, so list your own first to override a standard one.
+
+The jots file can hold everything, so all the configuration of a project is one file. Besides `app`, `ignore` and `control` it can have
+`sensors:` and `reports:` lists, written just as they are in a `.jot` file, and `jots:` is then only for files that stay separate, like a
+library of rules shared by several projects. What the jots file defines is read first, so it overrides a file it lists. The one thing that
+isn't in it is the control file, which holds the Monitor and Protect state that the dashboard writes while the application runs. To move a
+project that has many `.jot` files into one file, run
+
+    python3 dashboard/consolidate.py jot.yaml --keep ../shared-rules
+
+which adds the sensors, rules and reports of every listed file to the jots file with their comments, leaves out any name that an earlier file
+already defined, as the agent would, and checks that what it wrote defines exactly what the files did before it writes anything. It copies the
+jots file to `jot.yaml.bak` first, and `--dry-run` says what it would do. The old files are not touched, so delete them when you are satisfied.
 
 Lastly, every JOT can have "captures." Each capture is a named field and an expression that says
 what data to collect from the methods you specified in the JOT. The simple
@@ -285,7 +308,7 @@ To see what the agent itself is doing, ask for its log file.
 | `jot.log.level` | `info` | `severe`, `warning`, `info`, `fine` or `finest`. `fine` lists every method it instruments |
 | `jot.verbose` | `false` | Also writes the errors the instrumentation hit, which are otherwise suppressed, to that log |
 
-	java -javaagent:jot.jar=jots.yaml -Djot.log=/tmp/jot-agent.log -Djot.log.level=fine
+	java -javaagent:jot.jar=jot.yaml -Djot.log=/tmp/jot-agent.log -Djot.log.level=fine
 
 ## Creating Your Own JOT Sensors
 
@@ -515,4 +538,18 @@ Contributions are welcome.  See the bugtracker to find issues to work on if you 
               THROWS "Weak encryption algorithm detected"
 
 
+
+
+## The .jot folder
+
+Everything JOT keeps for a project is in a `.jot` folder in its root. The configuration is `.jot/jot.yaml`, which is the one file to commit, and a `jot.yaml` in the root works too, the `.jot` one winning. The agent finds it with `-javaagent:jot.jar` and no argument, or you can give the file or the folder. What JOT writes while it runs is beside it and stays out of git, because `.jot/.gitignore` leaves only `jot.yaml`.
+
+| File | What |
+|------|------|
+| `.jot/jot.yaml` | All the configuration |
+| `.jot/events.jsonl` | The events, the default of `jot.output.file` and of the dashboard's `--log` |
+| `.jot/dashboard.db` | The dashboard's database, the default of `--db` |
+| `.jot/control.yaml` | The Monitor and Protect state, when `control: control.yaml` is set in `jot.yaml` |
+
+Start the dashboard in the project folder and it uses all of these. With no `jot.yaml` yet it makes an empty one for the Assistant to fill.
 

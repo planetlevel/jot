@@ -26,13 +26,13 @@ class StartupReportTest {
 		String control = System.getProperty( "jot.control" );
 		System.setProperty( "jot.control", "/tmp/control.yaml" );
 		try {
-			StartupReport.publish( "/x/jots.yaml" );
+			StartupReport.publish( "/x/jot.yaml" );
 			EventBus.shutdown();
 		} finally {
 			if ( control == null ) System.clearProperty( "jot.control" ); else System.setProperty( "jot.control", control );
 		}
 		Assertions.assertTrue( said.contains( "lock=none" ), said.toString() );
-		Assertions.assertTrue( said.contains( "jots=/x/jots.yaml" ), said.toString() );
+		Assertions.assertTrue( said.contains( "jots=/x/jot.yaml" ), said.toString() );
 		Assertions.assertTrue( said.contains( "control=/tmp/control.yaml" ), said.toString() );
 	}
 }

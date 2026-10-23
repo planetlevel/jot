@@ -9,7 +9,7 @@ where each CVE lives and what its code must not do there.
     tools/vulnpoint2jot.py CVE-2021-44228 CVE-2019-12384 -o cves     # needs ../vulnpoint, on its main branch
     tools/vulnpoint2jot.py --all -o /tmp/all-cves                    # every CVE vulnpoint has an active policy for, 109 of them
 
-Run an application with a rule by listing the file, or this folder for all of them, in the app's jots.yaml.
+Run an application with a rule by listing the file, or this folder for all of them, in the app's jot.yaml.
 
-    java -javaagent:jot.jar=jots.yaml -jar app.jar      # jots.yaml lists cves/CVE-2021-44228.jot
-    java -Djot.protect=false -javaagent:jot.jar=jots.yaml -jar app.jar     # jots.yaml lists cves/, reports what would be blocked, stops nothing
+    java -javaagent:jot.jar=jot.yaml -jar app.jar      # jot.yaml lists cves/CVE-2021-44228.jot
+    java -Djot.protect=false -javaagent:jot.jar=jot.yaml -jar app.jar     # jot.yaml lists cves/, reports what would be blocked, stops nothing

@@ -1,0 +1,43 @@
+# JOT catalog, ai
+# AI agents built with Spring AI. The calls to a model, the tools it asks for and the tools that run. The model call and tool request sensors apply anywhere, and ai-tool-invoked needs the Spring AI @Tool annotation set as an entry point in the app section of the project's .jot/jot.yaml, with app entry '@org.springframework.ai.tool.annotation.Tool'.
+# Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
+
+sensors:
+
+- name: ai-model-call
+  description: Identifies a call to an AI model, with the provider, the model and the parameters it was given, how many tools it was offered and how many tokens it used
+  methods:
+  - org.springframework.ai.anthropic.AnthropicChatModel.internalCall
+  - org.springframework.ai.openai.OpenAiChatModel.internalCall
+  - org.springframework.ai.ollama.OllamaChatModel.internalCall
+  scopes: []
+  captures:
+    provider: "#OBJ.getClass().getSimpleName().replace('ChatModel', '').toLowerCase()"
+    model: "#P0.options?.model"
+    temperature: "#P0.options?.temperature"
+    max_tokens: "#P0.options?.maxTokens"
+    top_p: "#P0.options?.topP"
+    top_k: "#P0.options?.topK"
+    tools: "#P0.options?.toolCallbacks?.size()"
+    messages: "#P0.instructions.size()"
+    input_tokens: "#RET?.metadata?.usage?.promptTokens"
+    output_tokens: "#RET?.metadata?.usage?.completionTokens"
+    finish_reason: "#RET?.result?.metadata?.finishReason"
+
+- name: ai-tool-request
+  description: Identifies the model asking for a tool to be run, with the name of the tool and the arguments the model chose
+  methods:
+  - org.springframework.ai.tool.method.MethodToolCallback.call
+  scopes: []
+  captures:
+    tool: "#OBJ.toolDefinition.name()"
+    arguments: "#P0"
+
+- name: ai-tool-invoked
+  description: Identifies a tool of the agent being run, with the tool's name, the class it is in and the arguments it was given
+  methods:
+  - "@org.springframework.ai.tool.annotation.Tool"
+  captures:
+    tool: "#ANNOTATION.name"
+    class: "#OBJ.getClass().getSimpleName()"
+    arguments: "#ARGS"

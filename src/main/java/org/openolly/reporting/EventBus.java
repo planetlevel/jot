@@ -19,8 +19,11 @@ import org.openolly.JotScope;
  * With no sinks configured, publishing does nothing.
  *
  * Options, as system properties
- *   jot.output        comma separated sinks, "console" and/or "json". Default "console".
- *   jot.output.file   file for the json sink. Default "jot-events.jsonl".
+ *   jot.output        comma separated sinks, "console" and/or "json". Default "json", which writes to a file and so doesn't
+ *                     show in the application's output. -Djot.output= with nothing after it turns output off.
+ *   jot.output.file   file for the json sink. Default events.jsonl in the .jot folder of the jots file, see jot.dir.
+ *   jot.dir           the .jot folder. The agent sets it from the jots file it found, and it is ".jot" in the working directory
+ *                     until then.
  *   jot.events        "all" (default) or "violations" to only send monitored and blocked events
  *                     to the console and json sinks. Reports always see every event.
  *   jot.queue.size    events to buffer. Default 10000.
@@ -45,12 +48,13 @@ public final class EventBus {
 	/** Configure from -Djot.* system properties and start delivering. */
 	public static synchronized void configureFromSystemProperties() {
 		List<EventSink> list = new ArrayList<EventSink>();
-		// nothing is written unless it is asked for, the agent is not to show in the application's output
-		String outputs = System.getProperty( "jot.output", "" );
+		// events go to a file in the .jot folder unless something else is asked for. A file is not the application's output, which the agent
+		// never writes to unless console is asked for
+		String outputs = System.getProperty( "jot.output", "json" );
 		for ( String name : outputs.split( "," ) ) {
 			switch ( name.trim().toLowerCase() ) {
 			case "console": list.add( new ConsoleSink( System.err ) ); break;
-			case "json": list.add( new JsonSink( System.getProperty( "jot.output.file", "jot-events.jsonl" ) ) ); break;
+			case "json": list.add( new JsonSink( System.getProperty( "jot.output.file", System.getProperty( "jot.dir", ".jot" ) + "/events.jsonl" ) ) ); break;
 			case "": break;
 			default: logger.atWarning().log( "Unknown jot.output '" + name.trim() + "', ignoring. Use console or json." );
 			}

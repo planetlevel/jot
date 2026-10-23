@@ -15,7 +15,7 @@ javac -d $OUT Demo.java
 count() { grep -c "\"sensor\":\"$1\"" $OUT/events.jsonl || true; }
 run() {
   : > $OUT/events.jsonl
-  java "$@" -Djot.output=json -Djot.output.file=$OUT/events.jsonl -javaagent:$JAR=jots.yaml -cp $OUT Demo 2>/dev/null
+  java "$@" -Djot.output=json -Djot.output.file=$OUT/events.jsonl -javaagent:$JAR=jot.yaml -cp $OUT Demo 2>/dev/null
   printf "  %-18s %s\n" file-created "$(count file-created)" file-path "$(count file-path)" digest-requested "$(count digest-requested)" \
     process-created "$(count process-created)" cipher-requested "$(count cipher-requested)"
 }

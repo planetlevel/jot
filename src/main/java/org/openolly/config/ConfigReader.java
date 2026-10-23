@@ -31,11 +31,28 @@ public class ConfigReader {
 		return lastModified != yaml.lastModified();
 	}
 	
+	/**
+	 * The jots file for the agent argument. A file is used as it is. With no argument, or a directory, the file is looked for as
+	 * .jot/jot.yaml and then jot.yaml, in the working directory or the directory given, and a directory that is itself a .jot
+	 * holds jot.yaml. Returns null when there is none, so the caller can say so.
+	 */
+	public static String locate(String arg) {
+		String name = arg == null ? "" : arg.trim();
+		File base = name.isEmpty() ? new File( System.getProperty( "user.dir", "." ) ) : new File( name );
+		if ( !name.isEmpty() && !base.isDirectory() ) return name;
+		File[] candidates = base.getName().equals( ".jot" ) ? new File[] { new File( base, "jot.yaml" ) }
+			: new File[] { new File( base, ".jot/jot.yaml" ), new File( base, "jot.yaml" ) };
+		for ( File f : candidates ) {
+			if ( f.isFile() ) return f.getPath();
+		}
+		return name.isEmpty() ? null : name;
+	}
+
 	public static void init(String filename) throws IOException {
+		filename = locate( filename );
 		if ( filename == null ) {
-			logger.atSevere().log( "[JOT] Error: no jots file provided");
-			//System.err.println( "[JOT] Try using -javaagent:jot-x.x.jar=jots.yaml" );
-			logger.atSevere().log( "[JOT] Try using -javaagent:jot-x.x.jar=jots.yaml" );
+			logger.atSevere().log( "[JOT] Error: no jots file provided and no .jot/jot.yaml or jot.yaml here");
+			logger.atSevere().log( "[JOT] Try using -javaagent:jot-x.x.jar=.jot/jot.yaml" );
 			return;
 		}
 		//System.err.println( "[JOT] Loading JOTs from " + filename );
@@ -44,11 +61,14 @@ public class ConfigReader {
 		// the same file, so the two always agree. The first definition of a name wins.
 		File jots = new File( filename.trim() );
 		if ( !jots.isFile() || jots.getName().endsWith( ".jot" ) ) {
-			logger.atSevere().log( "[JOT] " + jots + " is not a jots file. The agent argument is a jots.yaml that lists "
-				+ "the .jot files and directories, like -javaagent:jot.jar=jots.yaml" );
+			logger.atSevere().log( "[JOT] " + jots + " is not a jots file. The agent argument is a jot.yaml that lists "
+				+ "the .jot files and directories, like -javaagent:jot.jar=jot.yaml" );
 			return;
 		}
 		List<String> entries = readJotsFile( jots );
+		// the jots file can hold sensors and reports itself, which is all the configuration in one file. It is read first, so what it
+		// defines is used over what a file it lists defines, the first definition of a name winning
+		load( jots, true );
 		for ( String entry : entries ) {
 			if ( entry.isBlank() ) continue;
 			File path = new File( entry.trim() );
@@ -79,10 +99,10 @@ public class ConfigReader {
 		JsonNode root = mapper.readTree( jotsFile );
 		File base = jotsFile.getAbsoluteFile().getParentFile();
 		List<String> paths = new ArrayList<>();
-		if ( root == null || !root.has( "jots" ) ) {
-			logger.atWarning().log( "[JOT] " + jotsFile + " has no jots list" );
+		if ( root == null || !( root.has( "jots" ) || root.has( "sensors" ) ) ) {
+			logger.atWarning().log( "[JOT] " + jotsFile + " has no jots list and no sensors" );
 		}
-		else {
+		if ( root != null && root.has( "jots" ) ) {
 			for ( JsonNode item : root.get( "jots" ) ) {
 				String path = item.isTextual() ? item.asText() : item.path( "path" ).asText( null );
 				if ( path == null ) continue;
@@ -93,7 +113,7 @@ public class ConfigReader {
 			java.util.Iterator<String> keys = root.fieldNames();
 			while ( keys.hasNext() ) {
 				String key = keys.next();
-				if ( !JOTS_FILE_KEYS.contains( key ) ) problem( jotsFile, null, key + " is not a setting of a jots file, the settings are jots, control, app and ignore" );
+				if ( !JOTS_FILE_KEYS.contains( key ) ) problem( jotsFile, null, key + " is not a setting of a jots file, the settings are jots, control, app, ignore, sensors and reports" );
 			}
 		}
 		// the application as a scope, and which of its code is its own
@@ -165,7 +185,7 @@ public class ConfigReader {
 	}
 
 	
-	private static final java.util.Set<String> JOTS_FILE_KEYS = java.util.Set.of( "jots", "control", "app", "ignore" );
+	private static final java.util.Set<String> JOTS_FILE_KEYS = java.util.Set.of( "jots", "control", "app", "ignore", "sensors", "reports" );
 
 	private static final List<String> problems = new ArrayList<String>();
 
@@ -183,6 +203,11 @@ public class ConfigReader {
 	// alone. A sensor or rule that says
 	// something wrong is left out and said so, see JotValidator, and the rest of the file is still read.
 	public static void load( File yaml ) throws IOException {
+		load( yaml, false );
+	}
+
+	/** main is true for the jots file itself, which may also have the settings of a jots file, jots, control, app and ignore. */
+	public static void load( File yaml, boolean main ) throws IOException {
 		ConfigReader.yaml = yaml;
 		lastModified = yaml.lastModified();
 
@@ -198,7 +223,7 @@ public class ConfigReader {
 			problem( yaml, null, "is not valid YAML, nothing in it was loaded, " + why );
 			return;
 		}
-		for ( String text : JotValidator.fileProblems( root ) ) problem( yaml, null, text );
+		for ( String text : JotValidator.fileProblems( root, main ? JOTS_FILE_KEYS : java.util.Set.of() ) ) problem( yaml, null, text );
 		if ( root == null || !root.isObject() ) return;
 
 		JsonNode sensors = root.get( "sensors" );

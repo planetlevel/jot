@@ -1,11 +1,23 @@
----
-# TicketBook demo, the observe set. Every sensor here only records what it sees and never stops anything.
-# It works on javax and jakarta servlet applications. A sensor watches only the names it lists, so each one lists both.
-# The blocking rules are in ../rules/protect.jot, run.sh adds them in monitor and protect modes.
+jots:
+  - ../../../cves
+control: control.yaml
+app:
+  entry:
+    - javax.servlet.Servlet.service
+    - jakarta.servlet.Servlet.service
+  packages:
+    - com.acme
+    - org.apache.jsp
+ignore:
+  - java.lang.ClassLoader
+  - java.net.URLClassLoader
+  - jdk.internal.loader
+  - org.apache.catalina.loader
+  - org.apache.jasper.compiler
+  - org.apache.jasper.JspCompilationContext.compile
+  - org.eclipse.jdt
 
 sensors:
-
-##### the application #####
 
 - name: http-route
   description: Identifies the route a request came in at
@@ -14,6 +26,7 @@ sensors:
   - jakarta.servlet.Servlet.service
   captures:
     path: "#P0.getRequestURI()"
+    method: "#P0.getMethod()"
 
 - name: auth-user
   description: Identifies the user making a request, or Guest when no one is signed in
@@ -119,9 +132,6 @@ sensors:
     cache_control:
       - "!null"
 
-##### security relevant behavior #####
-
-
 - name: http-cookie-set
   description: Identifies a cookie being set and whether it is Secure and HttpOnly
   methods:
@@ -147,12 +157,14 @@ sensors:
       - (?i)^(Content-Security-Policy|Strict-Transport-Security|X-Frame-Options|X-Content-Type-Options|Referrer-Policy|Permissions-Policy|X-XSS-Protection|Cross-Origin-[\w-]+)$
 
 - name: crypto-cipher
-  description: Identifies a cipher being used, its algorithm and whether it encrypts or decrypts
+  description: Identifies a cipher being initialized, its algorithm, whether it encrypts or decrypts, and the algorithm and size in bits of its key
   methods:
   - javax.crypto.Cipher.init
   captures:
     algorithm: "#OBJ.getAlgorithm()"
     operation: '#P0 == 1 ? "encrypt" : #P0 == 2 ? "decrypt" : "other"'
+    key_algorithm: "#P1.getAlgorithm()"
+    bits: '#P1.getAlgorithm() == "RSA" ? #P1.getModulus().bitLength() : #P1.getEncoded().length * 8'
 
 - name: crypto-cipher-request
   description: Identifies a cipher algorithm being requested, before it is used
@@ -167,7 +179,6 @@ sensors:
   - java.security.MessageDigest.getInstance
   captures:
     algorithm: "#P0"
-
 
 - name: crypto-key-size
   description: Identifies the size of a key or key pair being generated
@@ -217,13 +228,15 @@ sensors:
     sql: "#ARGS"
 
 - name: sql-connection
-  description: Identifies obtaining a database connection, and where it connects
+  description: Identifies a database connection being opened, the JDBC URL it connects to and the database and driver behind it
   methods:
-  - com.acme.ticketbook.Database.getConnection
+  - java.sql.DriverManager.getConnection
   captures:
-    url: "#RET?.getMetaData()?.getURL()"
+    url: "#P0"
+    product: "#RET?.getMetaData()?.getDatabaseProductName()"
+    version: "#RET?.getMetaData()?.getDatabaseProductVersion()"
+    driver: "#RET?.getMetaData()?.getDriverName()"
     user: "#RET?.getMetaData()?.getUserName()"
-    closed: "#RET?.isClosed()"
 
 - name: file-path
   description: Identifies file and directory use
@@ -265,14 +278,6 @@ sensors:
     protocol:
       - (?i)^(https?|ftp)$
 
-- name: crypto-cipher-key-size
-  description: Identifies the algorithm and size in bits of the key used to initialize a cipher
-  methods:
-  - javax.crypto.Cipher.init
-  captures:
-    algorithm: "#P1.getAlgorithm()"
-    bits: '#P1.getAlgorithm() == "RSA" ? #P1.getModulus().bitLength() : #P1.getEncoded().length * 8'
-
 - name: thread-runnable
   description: Identifies a thread being created with a Runnable and the code that created it
   methods:
@@ -283,3 +288,165 @@ sensors:
   matchers:
     runnable_classes:
     - '!^java\.lang\.(String|ThreadGroup|Long|Boolean)$'
+
+- name: http-parameter-sensitive-name
+  description: Identifies a request parameter whose name says it holds something sensitive, such as a password, a secret, a token or an SSN. Only the names are recorded, never a value
+  methods:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
+  captures:
+    names: '#P0.parameterMap.keySet().?[#matches(#this, "(?i)password|passwd|token|secret|api[_-]?key|(^|[^a-z])ssn([^a-z]|$)|credit[_-]?card|(^|[^a-z])card([^a-z]|$)|card[_-]?(num|no)")]'
+
+- name: http-parameter-sensitive-value
+  description: Identifies a request parameter whose value looks sensitive, such as an SSN, a credit card number, a web token or a long token, and says which. A token counts here, since a token in a form field is worth knowing about. Only the names and kinds are recorded, never a value
+  methods:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
+  captures:
+    names: '#P0.parameterMap.entrySet().?[#kind(value) != null].![key]'
+    kinds: '#P0.parameterMap.entrySet().?[#kind(value) != null].![#kind(value)]'
+
+- name: http-cookie-sensitive-name
+  description: Identifies a request cookie whose name says it holds something it should not, such as a password, a secret, an SSN or a credit card number. Only the names are recorded, never a value
+  methods:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
+  captures:
+    names: '#list(#P0.cookies).?[#matches(name, "(?i)password|passwd|secret|(^|[^a-z])ssn([^a-z]|$)|credit[_-]?card|(^|[^a-z])card([^a-z]|$)|card[_-]?(num|no)")].![name]'
+
+- name: http-cookie-sensitive-value
+  description: Identifies a request cookie whose value is an SSN or a credit card number, and says which. Session ids and other tokens are left out on purpose, since a cookie is where they belong and the browser sends them with every request. Only the names and kinds are recorded, never a value
+  methods:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
+  captures:
+    names: '#list(#P0.cookies).?[#kind(value) == "ssn" or #kind(value) == "card"].![name]'
+    kinds: '#list(#P0.cookies).?[#kind(value) == "ssn" or #kind(value) == "card"].![#kind(value)]'
+
+- name: native-process
+  description: Identifies starting a native process, which a web request must never do
+  methods:
+  - java.lang.ProcessBuilder.<init>
+  captures:
+    command: "#ARGS"
+  block-when: true
+
+- name: object-deserialization
+  description: Identifies deserializing an object, which a web request must never do
+  methods:
+  - java.io.ObjectInputStream.readObject
+  - java.io.ObjectInputStream.readUnshared
+  captures:
+    args: "#ARGS"
+
+- name: expression
+  description: Identifies an expression being evaluated starting a process or opening a socket. Evaluating an expression is allowed, but while one is being evaluated it can't do either, which makes this the microsandbox for expression injection
+  methods:
+  - java.lang.ProcessBuilder.<init>
+  - java.net.Socket.<init>
+  scopes:
+  - javax.el.ValueExpression.getValue
+  - jakarta.el.ValueExpression.getValue
+  captures:
+    expression: "#ARGS"
+  block-when: true
+
+- name: expression-suspicious
+  description: Identifies an expression that contains reflection or process APIs, which is the pattern based alternative to the expression microsandbox, easier to get around since it only looks for attack text in the expression
+  methods:
+  - javax.el.ExpressionFactory.createValueExpression
+  - jakarta.el.ExpressionFactory.createValueExpression
+  captures:
+    expression: "#P1"
+  matchers:
+    expression:
+      - \.class
+      - getRuntime
+      - ProcessBuilder
+      - forName
+  block-when: true
+
+- name: jvm-exit
+  description: Identifies ending the JVM, which a web request must never do
+  methods:
+  - java.lang.Runtime.exit
+  - java.lang.Runtime.halt
+  captures:
+    args: "#ARGS"
+  block-when: true
+
+- name: native-library
+  description: Identifies loading a native library, which gives the code that loaded it the power of the JVM itself. Libraries load once, often inside the first request, as a JDBC driver does with its native part, so watch this in monitor for a while before blocking
+  methods:
+  - java.lang.System.load
+  - java.lang.System.loadLibrary
+  - java.lang.Runtime.load
+  - java.lang.Runtime.loadLibrary
+  captures:
+    name: "#P0"
+  matchers:
+    name:
+      - "!null"
+
+reports:
+
+- name: Test Coverage Matrix
+  type: compare
+  rows: http-route.path
+  cols: auth-user.user
+  
+- name: Access Control Matrix
+  type: compare
+  rows: http-route.path
+  cols: auth-role-check.role
+  value: auth-role-check.allowed
+  by: auth-role-check.user
+  
+- name: Role Membership
+  type: compare
+  rows: auth-role-check.user
+  cols: auth-role-check.role
+  value: auth-role-check.allowed
+  
+- name: Cache Headers
+  type: table
+  rows: http-route.path
+  cols: http-cache-header.cache_control
+  
+- name: Encryption Algorithms
+  type: compare
+  rows: http-route.path
+  cols: crypto-cipher-request.algorithm
+  
+- name: Unauthorized Files
+  type: table
+  rows: http-route.path
+  cols: file-path.path
+  
+- name: Database Queries
+  type: table
+  rows: http-route.path
+  cols: sql-statement.sql
+  
+- name: Encryption Users
+  type: compare
+  rows: auth-user.user
+  cols: crypto-cipher-request.algorithm
+     
+- name: HTTP Parameters
+  type: table
+  rows: http-route.path
+  cols: http-parameter-read.name, http-parameter-received.name
+  
+- name: Request Forwards
+  type: table
+  rows: http-route.path
+  cols: http-forward.path
+
+- name: Encryption Usage
+  type: list
+  cols: crypto-cipher-request.algorithm
+
+- name: Hash Usage
+  type: list
+  cols: crypto-hash.algorithm

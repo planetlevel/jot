@@ -15,7 +15,14 @@ public final class Trace {
 	private static final ThreadLocal<long[]> current =
 		ThreadLocal.withInitial( () -> new long[] { counter.getAndIncrement() } );
 
+	private static final ThreadLocal<String[]> entry = ThreadLocal.withInitial( () -> new String[1] );
+
 	private Trace() {
+	}
+
+	/** The entry point the current trace began at, like com.acme.Calc.add, or null when it didn't begin at one. */
+	public static String currentEntry() {
+		return entry.get()[0];
 	}
 
 	/** The id events created on this thread are tagged with. */
@@ -25,7 +32,13 @@ public final class Trace {
 
 	/** Begin a new trace on this thread. */
 	public static void start() {
+		start( null );
+	}
+
+	/** Begin a new trace on this thread at an entry point, which every event of it says. */
+	public static void start(String atEntry) {
 		current.get()[0] = counter.getAndIncrement();
+		entry.get()[0] = atEntry;
 	}
 
 	/** End the current trace. A new one begins at the next start. */

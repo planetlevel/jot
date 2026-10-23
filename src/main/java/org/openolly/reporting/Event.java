@@ -33,6 +33,7 @@ public class Event implements Comparable<Event> {
 	private final String thread;
 	private final long threadId;
 	private final long trace;
+	private final String entry;
 
 	public Event(String rule, String capture, StackTraceElement[] stack) {
 		this(rule, capture, stack, Action.OBSERVED, null, null);
@@ -63,6 +64,7 @@ public class Event implements Comparable<Event> {
 		this.thread = Thread.currentThread().getName();
 		this.threadId = Thread.currentThread().getId();
 		this.trace = Trace.currentId();
+		this.entry = Trace.currentEntry();
 	}
 
 	public String getRule() {
@@ -103,6 +105,11 @@ public class Event implements Comparable<Event> {
 	/** Identifies the request, or thread, this event was observed in. See Trace. */
 	public long getTrace() {
 		return trace;
+	}
+
+	/** The entry point the event ran under, like com.acme.Calc.add, or null when it happened outside every entry point. */
+	public String getEntry() {
+		return entry;
 	}
 
 	public String getCaller( int depth ) {
