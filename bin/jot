@@ -33,5 +33,4 @@ esac
 [ -n "$jar" ] && export JOT_AGENT_JAR="$jar"
 export JOT_CATALOG="${JOT_CATALOG:-$root/catalog}"
 python="${JOT_PYTHON:-python3}"
-env_file="${JOT_ENV:-$HOME/.jot/.env}"
-exec "$python" "$root/dashboard/server.py" --env "$env_file" "$@"
+exec "$python" "$root/dashboard/server.py" "$@"

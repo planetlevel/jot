@@ -662,6 +662,81 @@ class EnvFileTests(unittest.TestCase):
         self.assertNotIn("abc", err.getvalue())
 
 
+class AskForKeyTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = os.path.join(self.dir, ".jot", ".env")
+        self.saved = os.environ.pop("ANTHROPIC_API_KEY", None)
+        self.out = []
+
+        def restore():
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+            if self.saved is not None:
+                os.environ["ANTHROPIC_API_KEY"] = self.saved
+        self.addCleanup(restore)
+
+    def run_it(self, answer, interactive=True):
+        asked = []
+
+        def ask(prompt):
+            asked.append(prompt)
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
+        saved = server.ask_for_key(self.path, ask=ask, interactive=interactive, out=self.out.append)
+        return saved, asked
+
+    def test_a_key_is_kept_in_a_file_only_the_owner_can_read_and_is_used_at_once(self):
+        saved, asked = self.run_it("  sk-ant-abc123 \n".strip())
+        self.assertTrue(saved)
+        self.assertEqual(1, len(asked))
+        self.assertEqual("ANTHROPIC_API_KEY=sk-ant-abc123\n", open(self.path).read())
+        self.assertEqual(0o600, os.stat(self.path).st_mode & 0o777)
+        self.assertEqual("sk-ant-abc123", os.environ["ANTHROPIC_API_KEY"])
+        self.assertNotIn("sk-ant-abc123", "\n".join(self.out))
+
+    def test_a_key_is_added_to_the_other_settings_in_the_file(self):
+        os.makedirs(os.path.dirname(self.path))
+        with open(self.path, "w") as f:
+            f.write("JOT_DASHBOARD_MODEL=x\n")
+        self.run_it("sk-ant-abc123")
+        self.assertEqual("JOT_DASHBOARD_MODEL=x\nANTHROPIC_API_KEY=sk-ant-abc123\n", open(self.path).read())
+
+    def test_skipping_is_remembered_so_it_is_not_asked_again(self):
+        saved, asked = self.run_it("")
+        self.assertFalse(saved)
+        self.assertNotIn("ANTHROPIC_API_KEY", os.environ)
+        self.assertEqual(1, len(asked))
+        self.assertEqual([], server.load_env(self.path))
+        saved, asked = self.run_it("sk-ant-abc123")
+        self.assertEqual([], asked)
+        self.assertFalse(saved)
+
+    def test_a_key_added_later_replaces_the_skip_note(self):
+        self.run_it("")
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        with open(self.path, "w") as f:
+            f.write("")
+        saved, asked = self.run_it("sk-ant-abc123")
+        self.assertTrue(saved)
+        self.assertEqual("ANTHROPIC_API_KEY=sk-ant-abc123\n", open(self.path).read())
+
+    def test_nothing_is_asked_when_a_key_is_set_or_nobody_is_at_a_terminal(self):
+        os.environ["ANTHROPIC_API_KEY"] = "already"
+        self.assertEqual((False, []), self.run_it("sk-ant-abc123"))
+        os.environ.pop("ANTHROPIC_API_KEY")
+        self.assertEqual((False, []), self.run_it("sk-ant-abc123", interactive=False))
+        self.assertFalse(os.path.exists(self.path))
+
+    def test_a_pasted_sentence_is_not_saved_and_ctrl_c_leaves_no_file(self):
+        saved, asked = self.run_it("my key is abc")
+        self.assertFalse(saved)
+        self.assertFalse(os.path.exists(self.path))
+        saved, asked = self.run_it(KeyboardInterrupt())
+        self.assertFalse(saved)
+        self.assertFalse(os.path.exists(self.path))
+
+
 RULES_JOT = """
 sensors:
 - name: 'rule-a'

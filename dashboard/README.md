@@ -16,8 +16,10 @@ Then start the dashboard and open http://localhost:8765.
     export ANTHROPIC_API_KEY=...        # only needed for natural language questions
     python3 server.py --log /var/log/jot/app.jsonl --jots ../demo/ticketbook/.jot/jot.yaml
 
-Instead of exporting the key you can keep it in `dashboard/.env`, which git ignores and the server reads at
-startup. Copy `.env.example`, fill it in, and run `chmod 600 .env`. A variable set in your shell wins over the file.
+The first time you start the console in a terminal and no key is set, it offers to keep one for you. The prompt hides what you type,
+and the key goes in `.jot/.env` of the project, readable only by you. `.jot/.gitignore` keeps it out of git. Press Enter to skip and
+it does not ask again. To change your mind, add `ANTHROPIC_API_KEY=...` to that file. A variable set in your shell wins over the file.
+This is the only place JOT looks for it. Started in the background, with no terminal, it never asks.
 
 Without a key the dashboard still works. The preset views and the SQL box don't use a model.
 

@@ -7,6 +7,7 @@ in plain English or SQL, as tables and charts that can update live.
 """
 
 import argparse
+import getpass
 import json
 import os
 import sqlite3
@@ -62,6 +63,52 @@ def load_env(path):
             os.environ[key] = value
             names.append(key)
     return names
+
+
+KEY_SKIPPED = "# JOT asked for ANTHROPIC_API_KEY and it was skipped. Delete this line to be asked again."
+
+
+def ask_for_key(path, ask=getpass.getpass, interactive=None, out=print):
+    """On a first run in a terminal, offers to keep an ANTHROPIC_API_KEY in the .env file at path, with only the owner able to read it.
+    Does nothing when a key is set already, when the answer was skip last time, or when nobody is at a terminal to answer. Returns True
+    when a key was saved."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return False
+    if interactive is None:
+        interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if not interactive:
+        return False
+    try:
+        with open(path) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    if KEY_SKIPPED in lines:
+        return False
+    out("JOT can answer questions in plain English and set itself up for you, with a model from Anthropic. That needs an "
+        "ANTHROPIC_API_KEY.")
+    out("It is kept in %s, readable only by you, and git ignores it. Press Enter to skip, the rest of JOT works without it." % path)
+    try:
+        key = ask("ANTHROPIC_API_KEY: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        out("")
+        return False
+    if key and any(c.isspace() for c in key):
+        out("That doesn't look like a key, so nothing was saved.")
+        return False
+    lines = [l for l in lines if l != KEY_SKIPPED]
+    lines.append("ANTHROPIC_API_KEY=" + key if key else KEY_SKIPPED)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    os.chmod(path, 0o600)
+    if not key:
+        out("Skipped. Add ANTHROPIC_API_KEY=... to %s whenever you want it." % path)
+        return False
+    os.environ["ANTHROPIC_API_KEY"] = key
+    out("Saved to %s." % path)
+    return True
 
 
 class App:
@@ -1263,20 +1310,22 @@ def main(argv=None):
                    "Without it, anything that is not the JDK or the server counts as the application.")
     p.add_argument("--since", help="show only events from this time on, now, or a date and time like 2026-10-16T09:30. "
                    "Nothing is deleted, the Clear and Show all buttons on the Events page change it later")
-    p.add_argument("--env", default=os.path.join(HERE, ".env"),
-                   help="file of KEY=VALUE settings, such as ANTHROPIC_API_KEY. Default dashboard/.env")
+    p.add_argument("--env", help="file of KEY=VALUE settings, such as ANTHROPIC_API_KEY. Default .jot/.env in the project. "
+                   "The first time JOT runs in a terminal it offers to keep the key in this file")
     args = p.parse_args(argv)
     if args.host not in LOCAL_HOSTS and not args.allow_remote:
         p.error("--host %s would let other machines in, and the dashboard has no login. Add --allow-remote if you "
                 "really want that" % args.host)
-    loaded_env = load_env(args.env)
+    env_file = args.env or os.path.join(store.jot_dir(args.jots or store.find_config()), ".env")
+    loaded_env = load_env(env_file)
     if loaded_env:
-        print("  read %s from %s" % (", ".join(loaded_env), args.env))
+        print("  read %s from %s" % (", ".join(loaded_env), env_file))
 
     try:
         app = build_project(os.getcwd(), jots=args.jots, db=args.db, logs=args.log, apps=args.app, remote=args.allow_remote, create=True)
     except (OSError, store.QueryError) as e:
         p.error(str(e))
+    ask_for_key(env_file)
     ingestor = app.ingestor
     if args.since:
         app.set_since(parse_since(args.since))
