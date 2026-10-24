@@ -27,7 +27,8 @@ case "$1" in
     [ -n "$jar" ] || { echo "jot, no agent jar found. Build it with mvn package." >&2; exit 1; }
     echo "$jar"; exit 0 ;;
   version)
-    basename "${jar:-jot-unknown.jar}" .jar | sed 's/^jot-//'; exit 0 ;;
+    if [ -f "$root/VERSION" ]; then cat "$root/VERSION"; else basename "${jar:-jot-unknown.jar}" .jar | sed 's/^jot-//'; fi
+    exit 0 ;;
 esac
 
 [ -n "$jar" ] && export JOT_AGENT_JAR="$jar"
