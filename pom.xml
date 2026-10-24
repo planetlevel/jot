@@ -151,6 +151,8 @@
 									implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
 									<manifestEntries>
 										<Premain-Class>org.openolly.JOTAgent</Premain-Class>
+										<Implementation-Title>JOT</Implementation-Title>
+										<Implementation-Version>${project.version}</Implementation-Version>
 										<Agent-Class>org.openolly.JOTAgent</Agent-Class>
 										<Can-Redefine-Classes>true</Can-Redefine-Classes>
 										<Can-Retransform-Classes>true</Can-Retransform-Classes>

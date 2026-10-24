@@ -27,8 +27,10 @@ case "$1" in
     [ -n "$jar" ] || { echo "jot, no agent jar found. Build it with mvn package." >&2; exit 1; }
     echo "$jar"; exit 0 ;;
   version)
-    if [ -f "$root/VERSION" ]; then cat "$root/VERSION"; else basename "${jar:-jot-unknown.jar}" .jar | sed 's/^jot-//'; fi
-    exit 0 ;;
+    # the version is in the jar's manifest, which the build fills in from the pom
+    v=$([ -n "$jar" ] && unzip -p "$jar" META-INF/MANIFEST.MF 2>/dev/null | tr -d '\r' | sed -n 's/^Implementation-Version: //p')
+    [ -n "$v" ] || { echo "jot, the version is not in the agent jar. Build it again with mvn package." >&2; exit 1; }
+    echo "$v"; exit 0 ;;
 esac
 
 [ -n "$jar" ] && export JOT_AGENT_JAR="$jar"
