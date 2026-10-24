@@ -1,0 +1,107 @@
+# Makes a release when the version in pom.xml is one that has not been released.
+#
+# To release, change <version> in pom.xml and push it to master. This builds and tests the agent, tags the commit as v<version>,
+# publishes a GitHub release with the jar, and points the Homebrew formula in planetlevel/homebrew-tools at the new tag.
+# A push that leaves the version alone does nothing, and so does a version that already has a tag.
+#
+# The Homebrew step needs a repository secret named TAP_TOKEN, a token that can push to planetlevel/homebrew-tools.
+# Without it the release is still made and the step is skipped with a notice.
+
+name: Release
+
+on:
+  push:
+    branches: [master]
+    paths: [pom.xml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAP: planetlevel/homebrew-tools
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version from pom.xml
+        id: pom
+        run: |
+          version=$(python3 -c "import xml.etree.ElementTree as ET; print(ET.parse('pom.xml').getroot().find('{http://maven.apache.org/POM/4.0.0}version').text.strip())")
+          case "$version" in
+            ""|*SNAPSHOT*) echo "pom.xml version is '$version', not a release"; echo "release=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          if gh release view "v$version" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
+            echo "v$version is already released"; echo "release=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "releasing v$version"
+
+      - uses: actions/setup-java@v4
+        if: steps.pom.outputs.release == 'true'
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: maven
+
+      - name: Build and test
+        if: steps.pom.outputs.release == 'true'
+        run: mvn -B package
+
+      - name: Check the jar says the same version
+        if: steps.pom.outputs.release == 'true'
+        run: |
+          jar="target/jot-${{ steps.pom.outputs.version }}.jar"
+          built=$(unzip -p "$jar" META-INF/MANIFEST.MF | tr -d '\r' | sed -n 's/^Implementation-Version: //p')
+          test "$built" = "${{ steps.pom.outputs.version }}" || { echo "the jar says '$built'"; exit 1; }
+
+      - name: Tag and publish the release
+        if: steps.pom.outputs.release == 'true'
+        run: |
+          version="${{ steps.pom.outputs.version }}"
+          gh release create "v$version" "target/jot-$version.jar" \
+            --target "$GITHUB_SHA" --title "JOT $version" --generate-notes
+
+      - name: Point the Homebrew formula at the release
+        if: steps.pom.outputs.release == 'true'
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          version="${{ steps.pom.outputs.version }}"
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::notice::No TAP_TOKEN secret, so the formula in $TAP was not updated. Release v$version is published."
+            exit 0
+          fi
+          url="https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/v$version.tar.gz"
+          sha=""
+          for attempt in 1 2 3 4 5; do
+            sha=$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1) && [ ${#sha} = 64 ] && break
+            sleep 10
+          done
+          [ ${#sha} = 64 ] || { echo "could not download $url"; exit 1; }
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/$TAP.git" tap
+          python3 - "$url" "$sha" <<'PY'
+          import re, sys
+          url, sha = sys.argv[1:3]
+          path = "tap/Formula/jot.rb"
+          text = open(path).read()
+          text, n = re.subn(r'(\n  url ")[^"]*(")(\n  sha256 ")[0-9a-f]{64}(")',
+                            lambda m: m.group(1) + url + m.group(2) + m.group(3) + sha + m.group(4), text, count=1)
+          if n != 1:
+              sys.exit("could not find the url and sha256 of jot in " + path)
+          open(path, "w").write(text)
+          PY
+          cd tap
+          git diff --stat
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git commit -am "jot $version"
+          git push
