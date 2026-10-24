@@ -54,12 +54,13 @@ application, and events with the same `run` and `trace` came from the same reque
 ## The path graph
 
 The **Graph** tab draws every path the application took, built from the events of each request. A path starts at
-the entry of the request on the left, goes through the application methods that were running, and ends at what a
-sensor saw, like a cipher, a query, a file or a blocked call. A forward or a redirect goes on to the entry it names,
-shown as an exit right after it. Lines get wider with the number of events, and a node shows its count.
+the entry of the request on the left and goes down through the application methods that were running. A box is a method, and the sensors that
+fired directly in it are a stack of smaller boxes inside it, like a cipher, a query, a file or a blocked call, in the order they were first seen.
+What a method calls is drawn to the right of it, and what happens in the callee is the callee's own. A forward or a redirect goes on to the
+entry it names, shown as an exit right after it. Lines get wider with the number of events, and a box shows its count.
 
-The picture is a main line with branches. The main line, drawn along one row with its lines a little stronger, is what most requests of that
-entry did, box after box. A branch leaves it at the box it follows and sits one column on from there, on a row above or below, and carries on
+The picture is a main line with branches. The main line, drawn along one row with its lines a little stronger, is the way most requests of that
+entry went, from each method to the busiest one it called. A branch leaves it at the box it follows and sits one column on from there, on a row above or below, and carries on
 along that row, so a box is never pushed further right than the path that led to it. Where a branch joins the main line again, its line reaches
 across. Paths that few requests took are left out so the common ones can be read. Up to ten requests everything is drawn, then a path needs two
 requests, and from twenty a tenth of them. A rare path is not left out when it is the only way to something. Every kind of thing a sensor saw is
@@ -71,8 +72,8 @@ use up what the others need. An entry over its share is drawn from its newest re
 the summary says how many entries are drawn that way. Whatever an entry's sensors saw is still in its graph, since the newest request that
 each sensor was seen in is always used in full. **Lay out top to bottom** turns the same picture so the main line is a column, which suits a narrow window.
 
-Click a node to follow its paths, everything that does not lead to or from it fades. The panel beside the graph shows
-what the node captured, where it comes from and where it leads, and **Show these events** opens them in a search.
+Click a box to follow its paths, everything that does not lead to or from it fades. Click a sensor inside a box and it lights every method it fired in. The panel beside the graph shows
+what the box captured, where it comes from and where it leads, or for a sensor the methods it fired in, and **Show these events** opens them in a search.
 A picked node has its own address, like `#graph/effect%3Acrypto-cipher`. The Entry box shows the paths of one entry.
 
 **Entry points.** Whatever the application declares as an entry point in `app: entry:` is where a line starts, a request or not. The agent stamps every event with the
@@ -273,7 +274,7 @@ The project menu at the left of the header shows the project that is open. Type 
 
 ## The assistant
 
-The Assistant page is one conversation for the whole of configuration. It starts by asking where your project is. Paste a folder path in the chat or the Project folder field (a repository URL has to be cloned first, the dashboard doesn't fetch code). With nothing configured yet it offers Set up this project, which looks through the code for how the application starts running, then proposes the entry points, the application's packages and sensors that fit what the project uses. Afterwards the same conversation changes the configuration, like adding a sensor or a report or combining files into one.
+The Assistant page is one conversation for the whole of configuration. It starts by asking where your project is. Paste a folder path in the chat or the Project folder field (a repository URL has to be cloned first, the dashboard doesn't fetch code). A new conversation opens by asking what you would like to find out about the application, with buttons for a general understanding, security vulnerabilities or not being sure, and one for each area of the catalog, like Web requests, SQL or Cryptography. The Assistant narrows that down with a few questions that show their choices as buttons (you can always type something else), looks at the code and at what the application has been seen doing when you aren't sure, and says its plan before it proposes across several areas. Only then does it propose entry points, packages and the catalog areas that fit, as cards. Just set it up for me skips the questions on a new project. Afterwards the same conversation changes the configuration, like adding a sensor or a report or combining files into one. It reads the catalog by area, so it can offer what a project is likely to need without going through every sensor.
 
 It can only propose. Each proposal is a card with Apply and Discard, and nothing changes until you press Apply. Every file it reads shows as a step in the conversation. It stays inside the folder, follows no link out of it, skips built and fetched folders like `target` and `node_modules`, and never reads files that can hold credentials, such as `.env` files, keys, keystores and `credentials` files. The folder tools are off when the dashboard is started with `--allow-remote`.
 

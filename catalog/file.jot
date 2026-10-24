@@ -1,0 +1,27 @@
+# JOT catalog, file
+# Files. The paths the application opens. The report reads http-route from the web area.
+# Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
+
+sensors:
+
+- name: file-path
+  description: Identifies file and directory use
+  methods:
+  - java.io.File.<init>
+  captures:
+    path: "#OBJ.getCanonicalPath()"
+  # leaves out the JDK and servlet container files that are read all the time
+  matchers:
+    path:
+      - "!/apache-tomcat"
+      - "!/tomcat-base"
+      - "!/openjdk"
+      - "!/Cellar/"
+      - "!/candidates/java/"
+
+reports:
+
+- name: Unauthorized Files
+  type: table
+  rows: http-route.path
+  cols: file-path.path

@@ -1,19 +1,17 @@
 # JOT catalog, runtime
-# The runtime. Threads, native libraries and expression evaluation.
+# The runtime. Operating system processes, native libraries, threads and ending the JVM. Native process and JVM exit are rules that can stop a call.
 # Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
 
 sensors:
 
-- name: thread-runnable
-  description: Identifies a thread being created with a Runnable and the code that created it
+# A web request must never start an operating system process.
+- name: native-process
+  description: Identifies starting a native process
   methods:
-  - java.lang.Thread.<init>
+  - java.lang.ProcessBuilder.<init>
   captures:
-    runnable_classes: "#ARGS.![#this?.getClass()?.getName()]"
-    caller: "#CALLER"
-  matchers:
-    runnable_classes:
-    - '!^java\.lang\.(String|ThreadGroup|Long|Boolean)$'
+    command: "#ARGS"
+  block-when: true
 
 # Native code loaded by a web request can do anything the JVM can. Libraries are loaded once, often on first use inside the
 # first request (a JDBC driver extracting its native part, for example), so run in monitor for a while, see what loads, then
@@ -31,9 +29,23 @@ sensors:
     name:
       - "!null"
 
-- name: expression-spel
-  description: Identifies a Spring expression being evaluated, which can run any code in the JVM when the text comes from outside
+# The JVM must never be shut down by a web request.
+- name: jvm-exit
+  description: Identifies ending the JVM
   methods:
-  - org.springframework.expression.spel.standard.SpelExpression.getValue
+  - java.lang.Runtime.exit
+  - java.lang.Runtime.halt
   captures:
-    expression: "#OBJ.expressionString"
+    args: "#ARGS"
+  block-when: true
+
+- name: thread-runnable
+  description: Identifies a thread being created with a Runnable and the code that created it
+  methods:
+  - java.lang.Thread.<init>
+  captures:
+    runnable_classes: "#ARGS.![#this?.getClass()?.getName()]"
+    caller: "#CALLER"
+  matchers:
+    runnable_classes:
+    - '!^java\.lang\.(String|ThreadGroup|Long|Boolean)$'

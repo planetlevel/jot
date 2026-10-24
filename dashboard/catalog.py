@@ -29,11 +29,17 @@ def _mapping(item):
     return "\n".join(out) + "\n"
 
 
+# the order areas are offered in, the common ones first, and any other area after them by name
+ORDER = ["web", "sensitive", "sql", "file", "network", "deserialization", "expression", "crypto", "runtime", "ai"]
+
+
 class Catalog:
     def __init__(self, path):
         self.path = path
         self._seen = None
         self._items = []
+        self._areas_seen = None
+        self._areas = []
 
     def available(self):
         return bool(self.path) and os.path.isdir(self.path)
@@ -78,10 +84,44 @@ class Catalog:
     def get(self, name):
         return next((r for r in self.items() if r["name"] == name), None)
 
-    def listing(self):
-        """What the model is shown first, short, so it can choose."""
+    def areas(self):
+        """The areas of concern, one for each file, as dicts with name, topic (the first sentence of what the file says it is, which is how a
+        person is asked about it), about (all of that), the number of sensors, rules and reports in it, and needs_areas, the other areas whose
+        sensors its reports read. Read again when a file changes."""
+        items = self.items()
+        if self._areas_seen == self._seen and self._seen is not None:
+            return self._areas
+        where = {r["name"]: r["area"] for r in items if r["kind"] != "report"}
+        out = []
+        for area in sorted({r["area"] for r in items}, key=lambda a: (ORDER.index(a) if a in ORDER else len(ORDER), a)):
+            about = self._about(area)
+            mine = [r for r in items if r["area"] == area]
+            needs = sorted({where[n] for r in mine if r["kind"] == "report" for n in r["needs"] if n in where and where[n] != area})
+            out.append({"name": area, "topic": re.split(r"(?<=[.!?])\s", about, maxsplit=1)[0].rstrip(".") if about else area, "about": about,
+                        "sensors": sum(r["kind"] == "sensor" for r in mine), "rules": sum(r["kind"] == "rule" for r in mine),
+                        "reports": sum(r["kind"] == "report" for r in mine), "needs_areas": needs})
+        self._areas_seen, self._areas = self._seen, out
+        return out
+
+    def _about(self, area):
+        """What the comments at the top of an area's file say it is, without the first line, which names it, and the last, which says how to copy."""
+        try:
+            with open(os.path.join(self.path, area + ".jot"), encoding="utf-8") as fh:
+                lines = []
+                for line in fh:
+                    if not line.startswith("#"):
+                        break
+                    lines.append(line.lstrip("#").strip())
+        except OSError:
+            return ""
+        return " ".join(l for l in lines[1:] if l and not l.startswith("Copy what fits"))
+
+    def listing(self, area=None):
+        """What the model is shown first, short, so it can choose. One area's when it is named."""
         out = []
         for r in self.items():
+            if area and r["area"] != area:
+                continue
             row = {"name": r["name"], "kind": r["kind"], "area": r["area"], "description": r["description"]}
             if r["kind"] == "report":
                 row["needs_sensors"] = r["needs"]

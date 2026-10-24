@@ -240,6 +240,14 @@
   .alog .proposal .state.bad { color: var(--blocked); }
   .alog .typing { color: var(--muted); font-size: 13px; padding-left: 4px; }
   .alog .tips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .alog .tips + .tipshead { margin-top: 6px; }
+  .alog .tipshead { color: var(--muted); font-size: 13px; padding-left: 4px; }
+  .alog .question { align-self: flex-start; max-width: 92%; display: flex; flex-direction: column; gap: 8px; }
+  .alog .question .ask { font-weight: 600; padding-left: 4px; }
+  .alog .question .choices { display: flex; flex-wrap: wrap; gap: 8px; }
+  .alog .question label.pick { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; background: var(--panel); cursor: pointer; }
+  .alog .question.answered button, .alog .question.answered label.pick { opacity: .55; pointer-events: none; }
+  .alog .question .chosen { opacity: 1; border-color: var(--observed); }
   .acompose textarea { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); }
   .assistantbar { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
   #jotDetail .addrow { align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
@@ -342,10 +350,6 @@
   svg.graph .node.route rect { fill: var(--accent); stroke: var(--accent); }
   svg.graph .node.route text { fill: var(--accent-text); font-weight: 600; }
   svg.graph .node.exit rect { fill: var(--panel); stroke: var(--accent); stroke-dasharray: 4 3; }
-  svg.graph .node.effect rect { fill: var(--panel); stroke: var(--muted); }
-  svg.graph .node.effect text:not(.count) { font-weight: 600; }
-  svg.graph .node.effect.monitored rect { fill: var(--monitored-bg); stroke: var(--monitored); }
-  svg.graph .node.effect.blocked rect { fill: var(--blocked-bg); stroke: var(--blocked); }
   svg.graph .node .count { fill: var(--muted); text-anchor: end; font-size: 11px; }
   svg.graph .node.route .count { fill: var(--accent-text); opacity: .8; }
   svg.graph .node.off { opacity: .15; }
@@ -363,6 +367,15 @@
   svg.graph .node .split.m3 { fill: var(--m3); }
   svg.graph .node .split.m4 { fill: var(--m4); }
   svg.graph .node .split.none { fill: var(--line); }
+  /* what a method's sensors saw, a box inside the box of the method, one for each sensor */
+  svg.graph .node .inner { cursor: pointer; }
+  svg.graph .node .inner rect { fill: var(--panel); stroke: var(--muted); }
+  svg.graph .node .inner text { fill: var(--text); font-weight: 600; }
+  svg.graph .node .inner .count { fill: var(--muted); font-weight: 400; }
+  svg.graph .node .inner.monitored rect { fill: var(--monitored-bg); stroke: var(--monitored); }
+  svg.graph .node .inner.blocked rect { fill: var(--blocked-bg); stroke: var(--blocked); }
+  svg.graph .node .inner.picked rect { stroke-width: 2.5; stroke: var(--text); }
+  svg.graph .node .inner rect.mark { stroke: none; }
 </style>
 </head>
 <body>
@@ -1225,20 +1238,61 @@ function drawAssistant() {
     if (i.kind === "applied") return el("div", { class: "applied", text: "✓ " + i.text });
     if (i.kind === "error") return el("div", { class: "oops", text: i.text });
     if (i.kind === "proposal" && byId.has(i.text)) return proposalCard(byId.get(i.text), v.editable);
+    if (i.kind === "question") return questionCard(i, assistantItems.find((x) => x.n > i.n && x.kind === "user"), v);
     return null;
   }).filter(Boolean);
   if (v.can_scan && document.activeElement !== $("assistantFolder")) $("assistantFolder").value = v.folder || "";
   if (!rows.length && v.can_scan && !v.folder) {
     rows.push(el("div", { class: "bot" }, el("p", { text: "To get started, tell me where your project is. Paste its folder path below or in the Project folder field. If it is a repository URL, clone it first and give me the folder." })));
-  } else if (!rows.length && v.can_scan && v.empty) {
-    rows.push(el("div", { class: "bot" }, el("p", { text: "Nothing is configured yet. I can look through your project, find how it starts running, and set up the entry points, packages and sensors for you to approve." })),
-      el("div", { class: "tips" }, el("button", { type: "button", class: "small", text: "Set up this project", onclick: () => { $("assistantInput").value = "Set up this project. Find the entry points and packages, then suggest sensors."; sendAssistant(); } })));
   } else if (!rows.length) {
-    rows.push(el("div", { class: "tips" }, ...ASSISTANT_TIPS.map((t) => el("button", { type: "button", class: "small", text: t, onclick: () => { $("assistantInput").value = t; $("assistantInput").focus(); } }))));
+    rows.push(...welcome(v));
   }
   if (v.running) rows.push(el("div", { class: "typing", text: "Working…" }));
   log.replaceChildren(...rows);
   if (atBottom || v.running) log.scrollTop = log.scrollHeight;
+}
+
+// the opening screen of a conversation, which asks what the person wants to find out and shows the catalog's areas as topics. It is the page's
+// own words, the assistant is told only what the person chooses
+function welcome(v) {
+  const say = (text) => { sendAssistantText(text); };
+  const goals = [["Get a general understanding", "I'd like a general understanding of what this application does and what it touches."],
+    ["Look for security vulnerabilities", "I want to look for security vulnerabilities in this application."],
+    ["I'm not sure where to start", "I'm not sure where to start."]];
+  const out = [el("div", { class: "bot" }, el("p", { text: "What would you like to find out about this application?" })),
+    el("div", { class: "tips" }, ...goals.map(([label, text]) => el("button", { type: "button", class: "small primary", text: label, onclick: () => say(text) })))];
+  if (v.topics && v.topics.length) {
+    out.push(el("div", { class: "tipshead", text: "Or pick something to look at" }),
+      el("div", { class: "tips" }, ...v.topics.map((t) => el("button", { type: "button", class: "small", text: t.topic, onclick: () => say("I'd like to look at " + t.topic.charAt(0).toLowerCase() + t.topic.slice(1) + ".") }))));
+  }
+  const more = [];
+  if (v.can_scan && v.empty) more.push(el("button", { type: "button", class: "small", text: "Just set it up for me", onclick: () => say("Set up this project. Find the entry points and packages, then suggest sensors.") }));
+  if (!v.empty) more.push(...ASSISTANT_TIPS.map((t) => el("button", { type: "button", class: "small", text: t, onclick: () => { $("assistantInput").value = t; $("assistantInput").focus(); } })));
+  if (more.length) out.push(el("div", { class: "tipshead", text: v.empty ? "Or" : "Or ask about what is there" }), el("div", { class: "tips" }, ...more));
+  return out;
+}
+
+// a question the assistant asked, as buttons. Choosing sends the words as the person's reply, and once something was said after it, it is shown as answered
+function questionCard(item, reply, v) {
+  let q;
+  try { q = JSON.parse(item.text); } catch (e) { return null; }
+  const answered = !!reply;
+  const said = answered ? reply.text : "";
+  const box = el("div", { class: "question" + (answered ? " answered" : "") }, el("div", { class: "ask", text: q.question }));
+  const row = el("div", { class: "choices" });
+  if (q.several) {
+    const picks = q.options.map((o) => ({ o, input: el("input", { type: "checkbox" }) }));
+    for (const p of picks) row.append(el("label", { class: "pick" + (answered && said.includes(p.o) ? " chosen" : "") }, p.input, el("span", { text: p.o })));
+    const go = el("button", { type: "button", class: "small primary", text: "Send", onclick: () => {
+      const chosen = picks.filter((p) => p.input.checked).map((p) => p.o);
+      if (chosen.length) sendAssistantText(chosen.join(", "));
+    } });
+    row.append(go);
+  } else {
+    for (const o of q.options) row.append(el("button", { type: "button", class: "small" + (answered && said === o ? " chosen" : ""), text: o, disabled: v.running ? "" : null, onclick: () => sendAssistantText(o) }));
+  }
+  box.append(row);
+  return box;
 }
 
 function listLine(label, values) {
@@ -1302,17 +1356,23 @@ function proposalCard(p, editable) {
 }
 
 async function sendAssistant() {
-  const box = $("assistantInput"), text = box.value.trim();
-  if (!text || $("assistantSend").disabled) return;
+  const box = $("assistantInput");
+  if (await sendAssistantText(box.value.trim())) box.value = "";
+}
+
+// says something for the person, from the box or from a button, and tells whether it was sent
+async function sendAssistantText(text) {
+  if (!text || $("assistantSend").disabled) return false;
   $("assistantSend").disabled = true;
   try {
     await api("/api/assistant/send", { chat: assistantChat, text });
-    box.value = "";
     assistantDrawn = "";
     await refreshChat();
+    return true;
   } catch (e) {
     $("assistantStatus").textContent = e.message;
     $("assistantSend").disabled = false;
+    return false;
   }
 }
 
@@ -2692,9 +2752,40 @@ async function loadGraph() {
   }
 }
 
+// whether a graph's nodes include the picked one, which is a box, or a sensor that is in one of the boxes
+function holdsPicked(nodes) {
+  return nodes.some((n) => n.id === graphPicked || (n.inner || []).some((i) => "effect:" + i.sensor === graphPicked));
+}
+
+// A sensor on its own, as it is in one method, which is what its box in that method hovers as
+function sensorNode(graph, holder, item) {
+  return { id: "effect:" + item.sensor, kind: "effect", label: item.sensor, full: item.sensor, events: item.events, blocked: item.blocked, monitored: item.monitored,
+    captures: item.captures, lines: item.lines, methods: methodsOf(graph, item), methodCounts: {}, holder };
+}
+
+// What was picked in a graph. A box is itself. A sensor is every place it fired, put together, with the boxes it fired in
+function pickedItem(graph, id) {
+  const box = graph.nodes.find((x) => x.id === id);
+  if (box || !id.startsWith("effect:")) return box;
+  const holders = graph.nodes.filter((x) => (x.inner || []).some((i) => "effect:" + i.sensor === id));
+  if (!holders.length) return null;
+  const found = { id, kind: "effect", label: id.slice(7), full: id.slice(7), events: 0, blocked: 0, monitored: 0, captures: [], lines: [], holders: [] };
+  const caught = new Map(), lines = new Set();
+  for (const h of holders) {
+    const item = h.inner.find((i) => "effect:" + i.sensor === id);
+    found.events += item.events; found.blocked += item.blocked; found.monitored += item.monitored;
+    for (const [c, k] of item.captures) caught.set(c, (caught.get(c) || 0) + k);
+    for (const l of item.lines) lines.add(l);
+    found.holders.push({ node: h, events: item.events });
+  }
+  found.captures = [...caught.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25);
+  found.lines = [...lines].sort((a, b) => a - b);
+  return found;
+}
+
 // the graph the picked node was picked in, or the first one that has it, for a node picked from the address
 function pickedGraph() {
-  const has = (g) => g.nodes.some((n) => n.id === graphPicked);
+  const has = (g) => holdsPicked(g.nodes);
   const g = graphData.graphs.find((x) => x.route === graphPanel && has(x)) || graphData.graphs.find(has);
   if (g) graphPanel = g.route;
   return g || null;
@@ -2716,39 +2807,18 @@ function showTip(n, ev, anchor) {
   const tip = $("graphTip");
   hoverNode = n;
   const caught = n.captures.slice(0, 8);
-  tip.replaceChildren(...[
-    el("div", { class: "tt" }, el("b", { text: n.label }), el("span", { class: "n", text: n.events.toLocaleString() + (n.kind === "route" ? (n.events === 1 ? " request" : " requests") : " events") })),
-    el("div", { class: "hint", text: nodeMeaning(n) }),
-    n.full !== n.label ? el("div", { class: "hint", text: n.full }) : null,
-    n.kind !== "route" && methodNote(n.methods || []) ? el("div", { class: "hint" }, methodSwatch(n.methods), document.createTextNode(methodNote(n.methods))) : null,
-    n.kind === "route" && splitNote(n.methodCounts || {}) ? el("div", { class: "hint", text: splitNote(n.methodCounts) }) : null,
-    n.firstUse ? el("div", { class: "hint", text: n.firstUse.toLocaleString() + " were the first use of the class" }) : null,
-    caught.length ? el("h4", { text: "What it captured" }) : null,
-    ...caught.map(([c, count]) => el("div", { class: "cap" }, el("span", { text: graphLabel(c === "" ? "(nothing)" : c, 90) }),
-      el("span", { class: "n", text: count.toLocaleString() }))),
+  const count = n.events.toLocaleString() + (n.kind === "route" ? (n.events === 1 ? " request" : " requests") : " events");
+  // a sensor says what it captured and how often, and any other box its full name and how many events went through it
+  tip.replaceChildren(...(n.kind === "effect" ? [
+    ...caught.map(([c, k]) => el("div", { class: "cap" }, el("span", { text: graphLabel(c === "" ? "(nothing)" : c, 90) }), el("span", { class: "n", text: k.toLocaleString() }))),
     n.captures.length > caught.length ? el("div", { class: "hint", text: "and " + (n.captures.length - caught.length) + " more" }) : null,
-    el("div", { class: "hint keys", text: "Click to follow its paths. The lines are as wide as the number of events." + (hideable(n) ? " Press H to hide " + jotOf(n.label) + "." : "") }),
-  ].filter(Boolean));
+    caught.length ? null : el("div", { class: "tt" }, el("span", { text: "(nothing)" }), el("span", { class: "n", text: count })),
+  ] : [
+    el("div", { class: "tt" }, el("b", { text: n.full }), el("span", { class: "n", text: count })),
+  ]).filter(Boolean));
   tip.hidden = false;
   if (ev) moveTip(ev);
   else if (anchor) { const r = anchor.getBoundingClientRect(); placeTip(r.right + 8, r.top); }
-}
-
-// what a box is, in words, so no key is needed
-function nodeMeaning(n) {
-  if (n.kind === "route") return "An entry point, where a request or a call comes in";
-  if (n.kind === "exit") return "An entry point that a forward or redirect leads to";
-  if (n.kind === "code") return "Application code on the way to what the sensors saw";
-  if (n.blocked) return "Blocked by a rule, the call was stopped";
-  if (n.monitored) return "Reported only, a rule saw this and would have stopped it";
-  return "What a sensor saw, it was recorded and nothing was stopped";
-}
-
-// the color that marks which methods reach something, the same as on the box, so the words and the color explain each other
-function methodSwatch(methods) {
-  const i = graphData ? graphData.methods.indexOf((methods || [])[0]) : -1;
-  const color = methods && methods.length === 1 && i >= 0 ? "var(--m" + (i % 5) + ")" : "var(--mboth)";
-  return el("i", { class: "swatch", style: "background:" + color });
 }
 
 function placeTip(x, y) {
@@ -2778,12 +2848,14 @@ function moveGraphPick(dir) {
   if (!routes.length) return false;
   const entry = (route) => { const nodes = graphLayouts.get(route).nodes; return (nodes.find((n) => n.kind === "route") || nodes[0]).id; };
   const here = graphPicked ? graphLayouts.get(graphPanel) : null;
+  // a sensor that is picked is in a box, and the keys move from the first one that has it
+  const from = here && (here.pos.has(graphPicked) ? graphPicked : (here.nodes.find((n) => (n.inner || []).some((i) => "effect:" + i.sensor === graphPicked)) || {}).id);
   let route = graphPanel, target = null;
-  if (!here || !here.pos.has(graphPicked)) {
+  if (!here || !from || !here.pos.has(from)) {
     route = routes[0];
     target = entry(route);
   } else {
-    target = JotGraph.neighbor(here.pos, graphPicked, dir);
+    target = JotGraph.neighbor(here.pos, from, dir);
     if (!target && (dir === "up" || dir === "down")) {
       const next = routes[routes.indexOf(graphPanel) + (dir === "down" ? 1 : -1)];
       if (next !== undefined) { route = next; target = entry(next); }
@@ -2868,16 +2940,17 @@ function drawRoute(graph) {
   const L = JotGraph.layout(nodes, edges, { down: $("graphDown").checked, lineCounts: graph.line_counts });
   graphLayouts.set(graph.route, { pos: L.pos, nodes });
   const mine = graph.route === graphPanel;
-  const lit = graphPicked && mine && nodes.some((n) => n.id === graphPicked) ? JotGraph.through(graphPicked, nodes, edges) : null;
+  const lit = graphPicked && mine && holdsPicked(nodes) ? JotGraph.through(graphPicked, nodes, edges) : null;
   const litEdges = lit && lit.edges;
   // fitted to the width of the page when it can be, but never shrunk below a size that can be read, it scrolls instead
   const svg = svgEl("svg", { class: "graph", width: L.width, height: L.height, viewBox: "0 0 " + L.width + " " + L.height, role: "img",
     style: "display:block;max-width:none",
     "aria-label": "Paths from the entry " + graph.route + " through the application to what the sensors saw" });
   const label = new Map(nodes.map((n) => [n.id, n.label]));
+  // a line leaves the middle of the header of a box, the method, and arrives at the middle of the header of the next
   const mid = (id) => { const p = L.pos.get(id); return { x: p.x, y: p.y + L.nodeH / 2 }; };
   // going down, a line leaves the bottom middle of a box and arrives at the top middle of the next
-  const bottom = (id) => { const p = L.pos.get(id); return { x: p.x + L.nodeW / 2, y: p.y + L.nodeH }; };
+  const bottom = (id) => { const p = L.pos.get(id); return { x: p.x + L.nodeW / 2, y: p.y + p.h }; };
   const top = (id) => { const p = L.pos.get(id); return { x: p.x + L.nodeW / 2, y: p.y }; };
   for (const e of edges) {
     if (!L.pos.has(e.from) || !L.pos.has(e.to) || L.closing.has(e)) continue;
@@ -2891,17 +2964,16 @@ function drawRoute(graph) {
   }
   for (const n of nodes) {
     const p = L.pos.get(n.id);
-    const cls = "node " + n.kind + (n.kind === "effect" && n.blocked ? " blocked" : n.kind === "effect" && n.monitored ? " monitored" : "")
-      + (lit && !lit.nodes.has(n.id) ? " off" : "") + (n.id === graphPicked && mine ? " picked" : "");
+    const cls = "node " + n.kind + (lit && !lit.nodes.has(n.id) ? " off" : "") + (n.id === graphPicked && mine ? " picked" : "");
     const g = svgEl("g", { class: cls, transform: "translate(" + p.x + "," + p.y + ")", tabindex: "0", role: "button", "data-id": n.id });
     g.addEventListener("mouseenter", (ev) => showTip(n, ev));
     g.addEventListener("mousemove", moveTip);
     g.addEventListener("mouseleave", hideTip);
     g.addEventListener("focus", () => showTip(n, null, g));
     g.addEventListener("blur", hideTip);
-    g.append(svgEl("rect", { width: L.nodeW, height: L.nodeH, rx: 6 }));
-    if (n.kind !== "route" && colorOf(n)) g.append(svgEl("rect", { class: "mark " + colorOf(n), x: -8, y: 0, width: 6, height: L.nodeH, rx: 2 }));
-    g.append(svgEl("text", { x: 8, y: 17 }, graphLabel(n.label, 28)));
+    g.append(svgEl("rect", { width: L.nodeW, height: p.h, rx: 6 }));
+    if (n.kind !== "route" && colorOf(n)) g.append(svgEl("rect", { class: "mark " + colorOf(n), x: -8, y: 0, width: 6, height: p.h, rx: 2 }));
+    g.append(svgEl("text", { x: 8, y: 17 }, graphLabel(n.label, 23)));
     // a route too busy to draw every request is drawn from its newest, and its count says how many of how many
     const of = n.kind === "route" && graph.all_requests > graph.requests ? graph.all_requests : 0;
     g.append(svgEl("text", { class: "count", x: L.nodeW - 8, y: 17 }, of ? n.events + "/" + of : String(n.events)));
@@ -2919,9 +2991,27 @@ function drawRoute(graph) {
         at += w;
       }
     }
+    // the sensors that fired in this method, a box for each, which can be picked on their own to light every method they fired in
+    (n.inner || []).forEach((item, i) => {
+      const at = JotGraph.innerAt(i), id = "effect:" + item.sensor, sensor = sensorNode(graph, n, item);
+      const box = svgEl("g", { class: "inner" + (item.blocked ? " blocked" : item.monitored ? " monitored" : "") + (id === graphPicked && mine ? " picked" : ""),
+        transform: "translate(" + at.x + "," + at.y + ")", tabindex: "0", role: "button", "data-sensor": item.sensor });
+      box.append(svgEl("rect", { width: L.nodeW - 2 * at.x, height: at.h, rx: 4 }));
+      if (colorOf(item)) box.append(svgEl("rect", { class: "mark " + colorOf(item), x: 0, y: 0, width: 4, height: at.h, rx: 2 }));
+      box.append(svgEl("text", { x: 8, y: 15 }, graphLabel(item.sensor, 24)));
+      box.append(svgEl("text", { class: "count", x: L.nodeW - 2 * at.x - 8, y: 15 }, String(item.events)));
+      box.addEventListener("mouseenter", (ev) => { ev.stopPropagation(); showTip(sensor, ev); });
+      box.addEventListener("mouseleave", (ev) => { ev.stopPropagation(); showTip(n, ev); });
+      box.addEventListener("focus", (ev) => { ev.stopPropagation(); showTip(sensor, null, box); });
+      box.addEventListener("blur", (ev) => { ev.stopPropagation(); hideTip(); });
+      const pickIt = (ev) => { ev.stopPropagation(); if (graphPicked === id && mine) pickNode(null); else pickNode(id, graph.route); };
+      box.addEventListener("click", pickIt);
+      box.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.stopPropagation(); pickIt(ev); } });
+      g.append(box);
+    });
     const pick = (ev) => { ev.stopPropagation(); if (graphPicked === n.id && mine) pickNode(null); else pickNode(n.id, graph.route); };
     g.addEventListener("click", pick);
-    g.addEventListener("keydown", (ev) => { if (ev.key === "Enter") pick(ev); });
+    g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target === g) pick(ev); });
     svg.append(g);
   }
   svg.addEventListener("click", () => { if (graphPicked) pickNode(null); });
@@ -2931,7 +3021,7 @@ function drawRoute(graph) {
 function drawGraphDetail() {
   const box = $("graphDetail");
   const graph = graphPicked ? pickedGraph() : null;
-  const n = graph && graph.nodes.find((x) => x.id === graphPicked);
+  const n = graph && pickedItem(graph, graphPicked);
   $("graphLayout").classList.toggle("has-detail", !!n);
   box.hidden = !n;
   if (!n) return;
@@ -2940,7 +3030,10 @@ function drawGraphDetail() {
     .map((e) => ({ node: byId.get(e[other]), events: e.events })).filter((x) => x.node).slice(0, 12);
   const list = (items) => el("ul", {}, ...items.map((x) => el("li", { class: "go", title: "Follow this one", onclick: () => pickNode(x.node.id, graph.route) },
     el("span", { text: x.node.label }), el("span", { class: "n", text: "  " + x.events }))));
-  const from = neighbours("to", "from"), to = neighbours("from", "to");
+  const from = n.kind === "effect" ? [] : neighbours("to", "from"), to = n.kind === "effect" ? [] : neighbours("from", "to");
+  // a method lists its sensors, and a sensor the methods it fired in, each of which can be followed
+  const sensors = (n.inner || []).map((i) => ({ node: { id: "effect:" + i.sensor, label: i.sensor }, events: i.events }));
+  const firedIn = (n.holders || []).map((h) => ({ node: h.node, events: h.events }));
   // only the events of this node, in the route it was picked in
   const inRoute = ' entry:"' + graph.route.replace(/"/g, "") + '"';
   const query = n.kind === "route" ? inRoute.trim() : (n.kind === "effect" ? "sensor:" + n.label : '"' + n.full.replace(/"/g, "") + '"') + inRoute;
@@ -2956,6 +3049,10 @@ function drawGraphDetail() {
     el("div", { class: "hint", text: n.events.toLocaleString() + (n.kind === "route" ? " requests" : " events") + (n.blocked ? ", " + n.blocked + " blocked" : "") + (n.monitored ? ", " + n.monitored + " reported only" : "") }),
     n.captures.length ? el("h4", { text: "What it captured" }) : null,
     n.captures.length ? el("ul", {}, ...n.captures.map(([c, count]) => el("li", {}, el("span", { text: c === "" ? "(nothing)" : c }), el("span", { class: "n", text: "  " + count })))) : null,
+    sensors.length ? el("h4", { text: "Sensors in it" }) : null,
+    sensors.length ? list(sensors) : null,
+    firedIn.length ? el("h4", { text: "Fired in" }) : null,
+    firedIn.length ? list(firedIn) : null,
     from.length ? el("h4", { text: "Comes from" }) : null,
     from.length ? list(from) : null,
     to.length ? el("h4", { text: "Leads to" }) : null,

@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { layout, through, curve, collapse, sensorFor, frameMethod, curveDown, prune, neighbor } = require("../static/graph.js");
+const { layout, through, curve, collapse, sensorFor, frameMethod, curveDown, prune, neighbor, heightOf, innerAt } = require("../static/graph.js");
 
 const n = (id, kind, events = 1) => ({ id, kind, label: id, events });
 const e = (from, to, events = 1) => ({ from, to, events });
@@ -363,12 +363,16 @@ test("the route is always kept, even when every path from it is rare", () => {
   assert.deepStrictEqual(out.nodes.map((x) => x.id), ["r"]);
 });
 
-const fx = (id, extra = {}) => Object.assign({ id, kind: "effect", label: id, events: 1, lines: [], blocked: 0, monitored: 0 }, extra);
+// a box that holds the sensors that fired directly in it, as inner boxes. What it says of itself is made of them
+const hold = (id, ...inner) => {
+  const held = inner.map((i) => Object.assign({ sensor: id, events: 1, blocked: 0, monitored: 0, lines: [] }, i));
+  return Object.assign(pn(id), { inner: held, lines: [...new Set(held.flatMap((i) => i.lines))], blocked: held.reduce((t, i) => t + i.blocked, 0), monitored: held.reduce((t, i) => t + i.monitored, 0) });
+};
+const fx = (id, extra = {}) => hold(id, extra);
 
 test("what a sensor saw is never left out, even when only one request in a hundred did it", () => {
   // the xxe page, 99 ordinary requests and one that read a file
-  const ns = [pn("r", "route"), pn("cache", "effect"), fx("file", { lines: [1] })];
-  ns[1].lines = [0];
+  const ns = [pn("r", "route"), fx("cache", { lines: [0] }), fx("file", { lines: [1] })];
   const es = [pe("r", "cache", [0]), pe("r", "file", [1])];
   const out = prune(ns, es, { 0: 99, 1: 1 });
   assert.deepStrictEqual(out.nodes.map((x) => x.id), ["r", "cache", "file"], "the file read is drawn");
@@ -444,4 +448,66 @@ test("there is nothing to go to past the edge, and a box that is not drawn goes 
 test("boxes in the same column are not to the left or the right of each other", () => {
   assert.strictEqual(neighbor(new Map([["p", { x: 0, y: 0 }], ["q", { x: 0, y: 80 }]]), "p", "right"), null);
   assert.strictEqual(neighbor(new Map([["p", { x: 0, y: 0 }], ["q", { x: 0, y: 80 }]]), "p", "down"), "q");
+});
+
+// ---- a box is a method with a stack of the sensors that fired in it
+const holding = (id, sensors, extra = {}) => Object.assign({ id, kind: "code", label: id, full: id, events: 5, lines: [1],
+  inner: sensors.map((x) => ({ sensor: x, events: 1, blocked: 0, monitored: 0, lines: [1] })) }, extra);
+
+test("a box is as tall as its header and a row for each sensor inside it", () => {
+  assert.strictEqual(heightOf({ inner: [] }), heightOf({}), "no sensors, a plain box");
+  const one = heightOf({ inner: [{}] }), two = heightOf({ inner: [{}, {}] }), three = heightOf({ inner: [{}, {}, {}] });
+  assert.ok(one > heightOf({}));
+  assert.strictEqual(three - two, two - one, "each sensor adds the same");
+  assert.ok(innerAt(1).y > innerAt(0).y + innerAt(0).h - 1, "the inner boxes are stacked, not overlapping");
+  assert.ok(innerAt(2).y + innerAt(2).h <= three, "and they all fit in the box");
+});
+
+test("boxes in a column are stacked by their height so a tall one doesn't cover the one below it", () => {
+  const ns = [n("r", "route", 9), holding("a", ["s1", "s2", "s3"], { lines: [1, 2] }), holding("b", ["t"], { lines: [2] }), holding("c", ["u", "v"], { lines: [3] })];
+  ns[0].lines = [1, 2, 3];
+  const es = [E("r", "a", [1, 2]), E("r", "b", [2]), E("r", "c", [3])];
+  const placed = layout(ns, es, { lineCounts: { 1: 5, 2: 2, 3: 1 } });
+  const boxes = ["a", "b", "c"].map((id) => ({ id, p: placed.pos.get(id) })).sort((x, y) => x.p.y - y.p.y);
+  for (let i = 1; i < boxes.length; i++) assert.ok(boxes[i].p.y >= boxes[i - 1].p.y + boxes[i - 1].p.h, boxes[i].id + " is below " + boxes[i - 1].id);
+  assert.strictEqual(placed.pos.get("a").h, heightOf(ns[1]), "a position says how tall its box is");
+  assert.ok(placed.height >= Math.max(...boxes.map((x) => x.p.y + x.p.h)), "the picture is as tall as its lowest box");
+});
+
+test("the main line is a path, so methods called from the same place are beside each other and not one after another", () => {
+  // a calls b and c. Every request went to both, and the line must not run through b and then c as if b called c
+  const ns = [L("r", "route", [1]), L("a", "code", [1]), L("b", "code", [1]), L("c", "code", [1])];
+  ns[1].events = 9; ns[2].events = 6; ns[3].events = 3;
+  const es = [E("r", "a", [1]), E("a", "b", [1]), E("a", "c", [1])];
+  const placed = layout(ns, es, { lineCounts: { 1: 4 } });
+  assert.deepStrictEqual(placed.spine, ["r", "a", "b"], "the busier of the two carries on");
+  assert.strictEqual(placed.pos.get("c").column, placed.pos.get("b").column, "c is next to b");
+  assert.notStrictEqual(placed.pos.get("c").y, placed.pos.get("b").y, "and not behind it");
+});
+
+test("picking a sensor lights every method it fired in and the paths of the requests that did", () => {
+  const ns = [L("r1", "route", [1]), L("r2", "route", [2]), L("r3", "route", [3]),
+    holding("a", ["cipher"], { lines: [1] }), holding("b", ["cipher", "hash"], { lines: [2] }), holding("c", ["hash"], { lines: [3] })];
+  ns[3].inner[0].lines = [1]; ns[4].inner[0].lines = [2]; ns[4].inner[1].lines = [2]; ns[5].inner[0].lines = [3];
+  const es = [E("r1", "a", [1]), E("r2", "b", [2]), E("r3", "c", [3])];
+  const lit = through("effect:cipher", ns, es);
+  assert.deepStrictEqual(ids(lit.nodes), ["a", "b", "effect:cipher", "r1", "r2"], "the two methods that have it, and the routes into them");
+  assert.deepStrictEqual(pairs(lit.edges), ["r1>a", "r2>b"]);
+  assert.deepStrictEqual(ids(through("effect:nothing", ns, es).nodes), ["effect:nothing"]);
+});
+
+test("folding doesn't drop an initializer that fired a sensor, and a merged run holds what its members did", () => {
+  const k = (id, full, inner) => ({ id, kind: "code", label: full, full, events: 5, lines: [1], inner });
+  const sensors = (...names) => names.map((x) => ({ sensor: x, events: 1, blocked: 0, monitored: 0, lines: [1] }));
+  const kept = collapse([L("r", "route", [1]), k("i", "app.Db.<clinit>", sensors("sql-connection")), k("g", "app.Db.get", [])],
+    [E("r", "i", [1]), E("i", "g", [1])]);
+  assert.ok(kept.nodes.some((x) => x.id === "i"), "its sensor would be lost with it");
+  const merged = collapse([L("r", "route", [1]), k("p", "app.Db.load", []), k("q", "app.Db.init", sensors("sql-statement"))], [E("r", "p", [1]), E("p", "q", [1])]);
+  assert.deepStrictEqual(merged.nodes.find((x) => x.id === "p").inner.map((x) => x.sensor), ["sql-statement"]);
+});
+
+test("a key goes by where the middle of a tall box is, not its top", () => {
+  const tall = new Map([["a", { x: 0, y: 0, h: 120 }], ["b", { x: 200, y: 0, h: 26 }], ["c", { x: 200, y: 50, h: 26 }]]);
+  assert.strictEqual(neighbor(tall, "a", "right"), "c", "the middle of a is nearer the middle of c than of b");
+  assert.strictEqual(neighbor(tall, "b", "down"), "c");
 });

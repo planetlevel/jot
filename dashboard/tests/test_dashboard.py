@@ -16,6 +16,7 @@ import time
 import threading
 import unittest
 import unittest.mock
+import zipfile
 import urllib.error
 import urllib.request
 
@@ -27,6 +28,7 @@ import scanner
 import control
 import llm
 import launcher
+import libraries
 import server
 import store
 
@@ -2253,6 +2255,7 @@ class GraphMethodTests(unittest.TestCase):
         self.assertEqual(2, sorted(graph["line_counts"].values())[1], "the two POST requests did the same and are drawn once")
         by_line = {line: m for line, m in graph["line_methods"].items()}
         nodes = {n["label"]: {by_line[l] for l in n["lines"]} for n in graph["nodes"]}
+        nodes.update({i["sensor"]: {by_line[l] for l in i["lines"]} for n in graph["nodes"] for i in n["inner"]})
         self.assertEqual({"GET", "POST"}, nodes["/buy"], "every request came in at the route")
         self.assertEqual({"GET", "POST"}, nodes["crypto-cipher"], "both did it")
         self.assertEqual({"POST"}, nodes["sql-statement"], "only POST did it")
@@ -2332,8 +2335,9 @@ class GraphMethodPageTests(unittest.TestCase):
         self.assertNotIn('class="legend"', page, "there is no key, what a box or a line means is in what shows on hover")
         self.assertRegex(page, r"<title>[^<]*Only (GET|POST) requests reach this", "a line says which methods it is for")
         source = open(os.path.join(server.HERE, "static", "index.html"), encoding="utf-8").read()
-        for words in ("Blocked by a rule", "Reported only", "What a sensor saw", "An entry point, where a request or a call comes in", "Click to follow its paths"):
-            self.assertIn(words, source, "the tooltip says " + words)
+        for words in ("Blocked by a rule", "Reported only", "What a sensor saw", "An entry point, where a request or a call comes in", "Click to follow its paths",
+                      "Application code on the way", "reach this"):
+            self.assertNotIn(words, source.split("function placeTip")[0].split("function showTip")[1], "the hover box says only what it is and how many, not " + words)
         self.assertIn('<option value="POST">POST</option>', page, "the methods can be picked")
         self.assertNotIn('id="graphMethodLabel" hidden', page, "the filter shows when a method was seen")
         marks = re.findall(r'<rect class="mark (m\d|both)"', page)
@@ -2397,11 +2401,14 @@ class GraphEntryTests(unittest.TestCase):
     def test_the_line_starts_at_the_entry_point_and_leaves_out_the_code_above_it(self):
         nodes = {n["id"]: n for n in self.graphs()["com.acme.Calc.add"]["nodes"]}
         self.assertEqual("Calc.add", nodes["route:com.acme.Calc.add"]["label"])
-        self.assertEqual({"route:com.acme.Calc.add", "code:com.acme.Calc.helper", "effect:tool-called", "effect:sql-statement"}, set(nodes))
+        self.assertEqual({"route:com.acme.Calc.add", "code:com.acme.Calc.helper"}, set(nodes))
+        self.assertEqual({"tool-called", "sql-statement"}, {i["sensor"] for n in nodes.values() for i in n["inner"]})
 
     def test_what_happens_outside_every_entry_point_is_drawn_from_its_caller_only(self):
         nodes = {n["id"] for n in self.graphs()[store.NO_REQUEST]["nodes"]}
-        self.assertEqual({"route:" + store.NO_REQUEST, "code:com.acme.Agent.ask", "effect:model-call"}, nodes)
+        self.assertEqual({"route:" + store.NO_REQUEST, "code:com.acme.Agent.ask"}, nodes)
+        ask = next(n for n in self.graphs()[store.NO_REQUEST]["nodes"] if n["id"] == "code:com.acme.Agent.ask")
+        self.assertEqual(["model-call"], [i["sensor"] for i in ask["inner"]], "the sensor is inside the method that triggered it")
 
     def test_a_request_keeps_its_path_and_the_whole_stack_as_before(self):
         self.env.write(event(6, sensor="http-route", trace=4, capture="/buy", entry="org.apache.Servlet.service", stack=["a"]),
@@ -2673,7 +2680,7 @@ class GraphBoxFillTests(unittest.TestCase):
     def test_every_kind_of_box_hides_the_line_that_passes_behind_it(self):
         with open(os.path.join(server.HERE, "static", "index.html"), encoding="utf-8") as fh:
             page = fh.read()
-        for kind in ("", ".route", ".exit", ".effect"):
+        for kind in ("", ".route", ".exit", " .inner"):
             rule = re.search(r"svg\.graph \.node%s rect \{([^}]*)\}" % re.escape(kind), page)
             self.assertIsNotNone(rule, kind)
             fill = re.search(r"fill:\s*([^;]+);", rule.group(1)).group(1).strip()
@@ -2811,7 +2818,7 @@ class GraphRowsTests(unittest.TestCase):
         with self.small():
             graph = self.app.graph(split=True)
         busy = next(g for g in graph["graphs"] if g["route"] == "/busy")
-        self.assertEqual({"crypto-cipher", "file-path"}, {n["label"] for n in busy["nodes"] if n["kind"] == "effect"})
+        self.assertEqual({"crypto-cipher", "file-path"}, {i["sensor"] for n in busy["nodes"] for i in n["inner"]})
 
     def test_the_graph_says_how_many_requests_a_cut_route_really_had(self):
         with self.small():
@@ -3215,7 +3222,7 @@ class CatalogTests(unittest.TestCase):
         self.assertGreaterEqual(kinds["report"], 10)
         names = [i["name"] for i in self.catalog.items()]
         self.assertEqual(len(names), len(set(names)))
-        self.assertEqual({"web", "sensitive", "crypto", "data", "runtime", "rules", "reports", "ai"}, {i["area"] for i in self.catalog.items()})
+        self.assertEqual({"web", "sensitive", "crypto", "sql", "file", "network", "deserialization", "expression", "runtime", "ai"}, {i["area"] for i in self.catalog.items()})
 
     def test_every_sensor_and_rule_passes_the_checks_as_written(self):
         taken = set()
@@ -3234,6 +3241,17 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual([], store.check_report_draft(item["text"].strip("\n"), fields, taken), item["name"])
             taken.add(item["name"])
             self.assertTrue(item["needs"], "%s says which sensors it needs" % item["name"])
+
+    def test_the_areas_say_what_they_are_and_what_their_reports_need(self):
+        areas = {a["name"]: a for a in self.catalog.areas()}
+        self.assertEqual("Web requests", areas["web"]["topic"])
+        self.assertEqual("SQL", areas["sql"]["topic"])
+        self.assertTrue(all(a["topic"] and not a["topic"].endswith(".") and len(a["topic"]) < 60 for a in areas.values()), "a topic is a short name")
+        self.assertEqual(["web"], areas["crypto"]["needs_areas"])
+        self.assertEqual([], areas["web"]["needs_areas"])
+        self.assertEqual((7, 0, 1), (areas["sql"]["sensors"], areas["sql"]["rules"], areas["sql"]["reports"]))
+        self.assertEqual({"sql-statement", "sql-prepared"}, {i["name"] for i in self.catalog.listing("sql")} & {"sql-statement", "sql-prepared"})
+        self.assertEqual({"sql"}, {i["area"] for i in self.catalog.listing("sql")})
 
     def test_the_assistant_copies_catalog_items_into_a_new_configuration(self):
         env = Env()
@@ -3503,6 +3521,116 @@ class JotDirTests(unittest.TestCase):
         self.assertEqual("mine\n", open(os.path.join(folder, ".gitignore")).read(), "a .gitignore that is there is kept")
 
 
+class LibraryTests(unittest.TestCase):
+    """The assistant looks at the libraries, which can do things the application's own code never mentions."""
+
+    def jar(self, path, entries):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with zipfile.ZipFile(path, "w") as z:
+            for name, data in entries.items():
+                z.writestr(name, data)
+
+    def props(self, group, artifact, version):
+        return "groupId=%s\nartifactId=%s\nversion=%s\n" % (group, artifact, version)
+
+    def setUp(self):
+        self.env = Env()
+        self.root = os.path.realpath(os.path.join(self.env.dir, "proj"))
+        self.home = os.path.realpath(os.path.join(self.env.dir, "home"))
+        os.makedirs(self.root)
+        old = os.environ.get("HOME")
+        os.environ["HOME"] = self.home          # the local Maven repository is looked for there
+        self.addCleanup(lambda: os.environ.__setitem__("HOME", old) if old is not None else os.environ.pop("HOME", None))
+        repo = os.path.join(self.home, ".m2", "repository")
+        # a declared library that needs another, in the local repository
+        self.jar(os.path.join(repo, "org", "yaml", "snakeyaml", "1.33", "snakeyaml-1.33.jar"), {"org/yaml/snakeyaml/Yaml.class": b"x", "org/yaml/snakeyaml/Loader$1.class": b"x"})
+        with open(os.path.join(repo, "org", "yaml", "snakeyaml", "1.33", "snakeyaml-1.33.pom"), "w") as f:
+            f.write("<project><dependencies><dependency><groupId>org.apache.commons</groupId><artifactId>commons-text</artifactId><version>1.9</version></dependency>"
+                    "<dependency><groupId>junit</groupId><artifactId>junit</artifactId><version>4</version><scope>test</scope></dependency></dependencies></project>")
+        self.jar(os.path.join(repo, "org", "apache", "commons", "commons-text", "1.9", "commons-text-1.9.jar"), {"org/apache/commons/text/StringSubstitutor.class": b"x"})
+        with open(os.path.join(self.root, "pom.xml"), "w") as f:
+            f.write("<project><properties><yaml.version>1.33</yaml.version></properties><dependencies>"
+                    "<dependency><groupId>org.yaml</groupId><artifactId>snakeyaml</artifactId><version>${yaml.version}</version></dependency>"
+                    "<dependency><groupId>junit</groupId><artifactId>junit</artifactId><version>4.13</version><scope>test</scope></dependency>"
+                    "</dependencies></project>")
+        # a jar the project ships, with and without Maven's own record of what it is, and one built into a Spring Boot jar
+        self.jar(os.path.join(self.root, "lib", "xalan-2.7.jar"), {"META-INF/maven/xalan/xalan/pom.properties": self.props("xalan", "xalan", "2.7"),
+                                                                   "org/apache/xalan/Transformer.class": b"x"})
+        self.jar(os.path.join(self.root, "lib", "mystery-1.0.jar"), {"com/mystery/Thing.class": b"x"})
+        inner = io.BytesIO()
+        with zipfile.ZipFile(inner, "w") as z:
+            z.writestr("org/h2/Driver.class", b"x")
+        self.jar(os.path.join(self.root, "target", "app.jar"), {"BOOT-INF/lib/h2-2.2.jar": inner.getvalue(), "BOOT-INF/classes/com/acme/Main.class": b"x"})
+        self.libs = libraries.Libraries(self.root)
+
+    def test_it_finds_what_is_declared_what_those_need_and_what_is_shipped(self):
+        out = self.libs.listing()
+        self.assertEqual(["org.yaml:snakeyaml:1.33"], out["declared"], "the property is filled in and a test library is left out")
+        self.assertEqual(["org.apache.commons:commons-text:1.9"], out["needed_by_those"], "from the pom of the library in the local repository, without its test library")
+        self.assertIn("xalan:xalan:2.7", out["shipped"], "the group comes from the pom.properties in the jar")
+        self.assertIn("?:mystery:1.0", out["shipped"], "a jar that doesn't say its group is still a library")
+        self.assertIn("?:h2:2.2", out["shipped"], "and so is one built into a Spring Boot jar")
+        self.assertTrue(any("Spring Boot" in n for n in out["notes"]), "which brings its own server")
+
+    def test_it_says_what_each_kind_of_library_can_do_and_where_to_start(self):
+        out = self.libs.listing()
+        hints = {h["library"]: h for h in out["libraries_worth_a_look"]}
+        self.assertIn("org.yaml.snakeyaml.Yaml.load", hints["org.yaml:snakeyaml"]["methods"])
+        self.assertIn("org.apache.commons.text.StringSubstitutor.replace", hints["org.apache.commons:commons-text"]["methods"])
+        self.assertIn("xalan:xalan", hints)
+        self.assertIn("java.io.ObjectInputStream.readObject", [m for p in out["the_platform_itself"] for m in p["methods"]], "the platform too")
+        self.assertNotIn("?:mystery", hints, "a library that can't do anything of interest isn't listed")
+
+    def test_the_model_is_never_given_where_a_jar_is(self):
+        text = json.dumps([self.libs.listing(), self.libs.search("."), self.libs.search("Yaml")])
+        self.assertNotIn(self.env.dir, text)
+        self.assertNotIn(".m2", text)
+        self.assertNotIn(".jar", text.replace("Spring Boot jar", "").replace("app.jar", ""), "only names, as group:artifact:version")
+
+    def test_classes_are_found_by_name_in_every_kind_of_jar_and_can_be_narrowed_to_one_library(self):
+        found = {(m["library"], m["class"]) for m in self.libs.search("Yaml|Driver|Thing|Transformer|StringSubstitutor")["matches"]}
+        self.assertEqual({("org.yaml:snakeyaml", "org.yaml.snakeyaml.Yaml"), ("?:h2", "org.h2.Driver"), ("?:mystery", "com.mystery.Thing"),
+                          ("xalan:xalan", "org.apache.xalan.Transformer"), ("org.apache.commons:commons-text", "org.apache.commons.text.StringSubstitutor")}, found)
+        self.assertEqual(["org.h2.Driver"], [m["class"] for m in self.libs.search("Driver", "h2")["matches"]])
+        self.assertEqual([], self.libs.search("Loader")["matches"], "an anonymous inner class isn't a thing to watch")
+        self.assertEqual([], self.libs.search("Yaml", "no-such-library")["matches"])
+        with self.assertRaises(ValueError):
+            self.libs.search("(")
+
+    @unittest.skipUnless(shutil.which("javap"), "javap isn't installed")
+    def test_it_lists_the_public_methods_of_a_class_in_the_jdk_and_refuses_what_isnt_a_class_name(self):
+        text = self.libs.describe("java.lang.ProcessBuilder")["declaration"]
+        self.assertIn("start()", text)
+        for bad in ("java.lang.ProcessBuilder; echo x", "../etc/passwd", "-help", "", "a b"):
+            with self.assertRaises(ValueError, msg=bad):
+                self.libs.describe(bad)
+        with self.assertRaises(ValueError):
+            self.libs.describe("com.nowhere.Missing")
+
+    def test_a_dependency_is_found_through_gradle_and_a_project_with_nothing_says_so(self):
+        os.makedirs(os.path.join(self.env.dir, "g"))
+        with open(os.path.join(self.env.dir, "g", "build.gradle"), "w") as f:
+            f.write("dependencies {\n  implementation 'com.google.code.gson:gson:2.10'\n  testImplementation \"junit:junit:4\"\n  api(\"org.jsoup:jsoup:1.15.3\")\n}\n")
+        out = libraries.Libraries(os.path.join(self.env.dir, "g")).listing()
+        self.assertEqual(["com.google.code.gson:gson:2.10", "org.jsoup:jsoup:1.15.3"], out["declared"])
+        os.makedirs(os.path.join(self.env.dir, "empty"))
+        self.assertTrue(libraries.Libraries(os.path.join(self.env.dir, "empty")).listing()["notes"])
+
+    def test_the_assistant_has_the_tools_only_with_a_local_folder_and_is_told_to_look_past_its_own_code(self):
+        app = server.App(self.env.db, self.env.ingestor)
+        scan = scanner.Scanner(app)
+        scan.set_root(self.root)
+        names = {t["name"] for t in scan.tools()}
+        self.assertTrue({"list_libraries", "search_libraries", "describe_class"} <= names)
+        self.assertEqual(3, len({"list_libraries", "search_libraries", "describe_class"} & set(scan.functions())))
+        self.assertEqual([], scanner.Scanner(app, local=False).tools())
+        out = scan.search_libraries("Yaml")
+        self.assertIn("Searched the libraries for Yaml, 1 classes", scan.describe("search_libraries", {"pattern": "Yaml"}, out))
+        prompt = assistant.system_prompt()
+        for words in ("list_libraries", "search_libraries", "describe_class", "Look past the application's own code", "that no events means it"):
+            self.assertIn(words, prompt)
+
+
 class ScannerTests(unittest.TestCase):
     """The assistant reads a project folder, which sends files to the model, so what it may not read matters more than what it can."""
 
@@ -3537,7 +3665,7 @@ class ScannerTests(unittest.TestCase):
         self.s.set_root("")
         self.assertEqual(self.s.tools(), [])
         self.s.set_root(self.root)
-        self.assertEqual(len(self.s.tools()), 5)
+        self.assertEqual(len(self.s.tools()), 8)
         remote = scanner.Scanner(self.app, local=False)
         self.assertEqual((remote.tools(), remote.functions()), ([], {}))
         with self.assertRaises(scanner.ScanError):
@@ -3700,6 +3828,60 @@ class AssistantTests(unittest.TestCase):
         with open(self.jots) as f:
             return yaml.safe_load(f.read())
 
+    # ------------------------------------------------------------------ the conversation about what to look at
+
+    def test_the_catalog_is_offered_by_area_with_what_is_already_configured(self):
+        view = self.say("what can I look at", self.reply(self.use("list_catalog_areas"), stop="tool_use"), self.reply(self.text("These.")))
+        result = json.loads(self.sent[1]["messages"][-1]["content"][0]["content"])
+        areas = {a["name"]: a for a in result["areas"]}
+        self.assertEqual({"web", "sensitive", "crypto", "sql", "file", "network", "deserialization", "expression", "runtime", "ai"}, set(areas))
+        self.assertEqual("Web requests", areas["web"]["topic"])
+        self.assertEqual(1, areas["web"]["already_in_configuration"], "http-route is already there")
+        self.assertIn("web", areas["sql"]["needs_areas"], "its report reads the route")
+        self.assertEqual(["user", "step", "assistant"], self.kinds(view))
+        self.assertEqual("Looked at what the catalog covers", view["items"][1]["text"])
+        self.assertIn("Web requests", [t["topic"] for t in view["topics"]], "the opening screen offers the areas")
+
+    def test_one_area_of_the_catalog_can_be_looked_at_alone(self):
+        self.say("sql", self.reply(self.use("list_catalog", area="sql"), self.use("list_catalog", area="nope"), stop="tool_use"), self.reply(self.text("ok")))
+        first, second = [json.loads(r["content"]) for r in self.sent[1]["messages"][-1]["content"]]
+        self.assertEqual({"sql"}, {i["area"] for i in first["items"]})
+        self.assertIn("sql-statement", [i["name"] for i in first["items"]])
+        self.assertIn("there is no area called nope", second["error"])
+
+    def test_a_question_with_choices_ends_the_turn_and_the_answer_goes_on_from_it(self):
+        ask = self.use("ask_person", question="What matters most?", options=["Injection", "Sensitive data", "Not sure"])
+        view = self.say("I want to look for security vulnerabilities",
+                        self.reply(self.text("Security is wide, so let me narrow it."), ask, stop="tool_use"))
+        self.assertEqual(["user", "assistant", "question"], self.kinds(view), "the turn ended at the question and the model was not called again")
+        self.assertEqual(1, len(self.sent))
+        question = json.loads(view["items"][2]["text"])
+        self.assertEqual(("What matters most?", ["Injection", "Sensitive data", "Not sure"], False), (question["question"], question["options"], question["several"]))
+        self.assertFalse(view["running"])
+        view = self.say("Injection", self.reply(self.text("Then these areas.")))
+        roles = [m["role"] for m in self.sent[1]["messages"]]
+        self.assertEqual(["user", "assistant", "user", "user"], roles, "the question was answered with a result, then the person's words")
+        answered = self.sent[1]["messages"][2]["content"][0]
+        self.assertEqual(("tool_result", ask["id"]), (answered["type"], answered["tool_use_id"]))
+        self.assertIn("Injection", self.sent[1]["messages"][3]["content"][0]["text"])
+        self.assertEqual(["user", "assistant", "question", "user", "assistant"], self.kinds(view))
+
+    def test_a_question_has_to_have_choices_and_only_one_is_asked_in_a_turn(self):
+        bad = self.use("ask_person", question="Which?", options=["only one"])
+        good = self.use("ask_person", question="Which?", options=["a", "b"])
+        again = self.use("ask_person", question="And?", options=["c", "d"])
+        view = self.say("hi", self.reply(bad, stop="tool_use"), self.reply(good, again, stop="tool_use"))
+        results = [json.loads(r["content"]) for r in self.a._messages(self.chat)[-1]["content"]]
+        self.assertIn("two to six", json.loads(self.sent[1]["messages"][-1]["content"][0]["content"])["error"])
+        self.assertTrue(results[0]["asked"])
+        self.assertIn("wait for the answer", results[1]["error"])
+        self.assertEqual(1, self.kinds(view).count("question"))
+
+    def test_the_instructions_start_with_what_the_person_wants_and_use_the_catalog_by_area(self):
+        prompt = assistant.system_prompt()
+        for phrase in ("ask_person", "list_catalog_areas", "general understanding", "security vulnerabilities", "needs_areas", "a few sentences"):
+            self.assertIn(phrase, prompt)
+
     # ------------------------------------------------------------------ a plain conversation
 
     def test_a_question_is_answered_and_both_are_kept_in_the_conversation(self):
@@ -3719,7 +3901,7 @@ class AssistantTests(unittest.TestCase):
         self.assertIn("Reaching data the watched method doesn't hand you", body["system"][0]["text"], "it is taught to walk from #OBJ, #P0 and #RET")
         self.assertIn("never propose a sensor that can't fire", body["system"][0]["text"])
         self.assertNotIn("Always answer by calling the draft tool", body["system"][0]["text"], "this is not drafting")
-        self.assertEqual({"get_configuration", "get_sensor", "get_observed", "propose_setting", "propose_sensor", "propose_report", "propose_delete", "propose_restart", "propose_consolidation", "list_catalog", "get_catalog_item", "propose_from_catalog"},
+        self.assertEqual({"get_configuration", "get_sensor", "get_observed", "propose_setting", "propose_sensor", "propose_report", "propose_delete", "propose_restart", "propose_consolidation", "list_catalog_areas", "list_catalog", "ask_person", "get_catalog_item", "propose_from_catalog"},
                          {t["name"] for t in body["tools"]})
         first = body["messages"][0]
         self.assertEqual("user", first["role"])
@@ -4228,7 +4410,7 @@ class AssistantPageTests(unittest.TestCase):
         import html as htmllib
         return json.loads(htmllib.unescape(found.group(1)))
 
-    def make(self, key):
+    def make(self, key, script=None):
         saved = os.environ.get("ANTHROPIC_API_KEY")
         if key:
             os.environ["ANTHROPIC_API_KEY"] = "test-key"
@@ -4243,9 +4425,60 @@ class AssistantPageTests(unittest.TestCase):
         answers = [{"content": [{"type": "text", "text": "Let me propose that."}, {"type": "tool_use", "id": "tu_1", "name": "propose_setting",
                                  "input": {"setting": "entry", "values": ["javax.servlet.Servlet.service", "@com.acme.Handler"], "reason": "Handlers are entry points too."}}], "stop_reason": "tool_use"},
                    {"content": [{"type": "text", "text": "I have proposed `@com.acme.Handler` as well.\n\n- servlets\n- <b>handlers</b><script>window.hacked = 1</script>"}], "stop_reason": "end_turn"}]
+        answers = script if script is not None else answers
         app = server.App(env.db, env.ingestor, jot_paths=[path], jots_file=path, editable=True, assistant_post=lambda body, timeout: answers.pop(0))
         app.scanner.set_root(env.dir)
         return app, path
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_the_opening_screen_asks_what_to_find_out_and_a_question_is_answered_with_a_button(self):
+        asked = [{"content": [{"type": "text", "text": "Security is wide."}, {"type": "tool_use", "id": "q1", "name": "ask_person",
+                                 "input": {"question": "What worries you most?", "options": ["Injection", "Sensitive data", "Not sure"]}}], "stop_reason": "tool_use"},
+                 {"content": [{"type": "text", "text": "Then I will look at SQL and expressions."}], "stop_reason": "end_turn"}]
+        app, path = self.make(key=True, script=asked)
+        script = """
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const until = async (f, ms = 8000) => { const t = Date.now(); while (Date.now() - t < ms) { const v = f(); if (v) return v; await wait(40); } return null; };
+      const q = (s) => document.querySelector(s);
+      const all = (s) => [...document.querySelectorAll(s)];
+      const out = {};
+      try {
+        location.hash = "#assistant";
+        await until(() => q("#assistantLog .tips button"));
+        out.welcome = q("#assistantLog .bot").textContent;
+        out.goals = all("#assistantLog .tips button").slice(0, 3).map((b) => b.textContent);
+        out.topics = all("#assistantLog .tips button").slice(3).map((b) => b.textContent);
+        all("#assistantLog .tips button").find((b) => /security/.test(b.textContent)).click();
+        await until(() => q("#assistantLog .question .choices button"));
+        out.you = q("#assistantLog .you").textContent;
+        out.ask = q("#assistantLog .question .ask").textContent;
+        out.choices = all("#assistantLog .question .choices button").map((b) => b.textContent);
+        out.answeredBefore = !!q("#assistantLog .question.answered");
+        out.welcomeGone = all("#assistantLog .tips").length === 0;
+        all("#assistantLog .question .choices button")[0].click();
+        await until(() => q("#assistantLog .question.answered") && all("#assistantLog .bot").length === 2 && !q("#assistantLog .typing"));
+        out.answeredAfter = !!q("#assistantLog .question.answered");
+        out.chosen = all("#assistantLog .question .chosen").map((b) => b.textContent);
+        out.said = all("#assistantLog .you").map((e) => e.textContent);
+        out.last = all("#assistantLog .bot")[1].textContent;
+      } catch (e) { out.error = String(e); }
+      const pre = document.createElement("pre"); pre.id = "testResult"; pre.textContent = JSON.stringify(out); document.body.append(pre);
+    })();
+    """
+        out = self.serve(app, script)
+        self.assertNotIn("error", out, out)
+        self.assertEqual("What would you like to find out about this application?", out["welcome"])
+        self.assertEqual(["Get a general understanding", "Look for security vulnerabilities", "I'm not sure where to start"], out["goals"])
+        self.assertIn("SQL", out["topics"])
+        self.assertEqual("I want to look for security vulnerabilities in this application.", out["you"])
+        self.assertEqual(("What worries you most?", ["Injection", "Sensitive data", "Not sure"]), (out["ask"], out["choices"]))
+        self.assertFalse(out["answeredBefore"])
+        self.assertTrue(out["welcomeGone"])
+        self.assertTrue(out["answeredAfter"])
+        self.assertEqual(["Injection"], out["chosen"])
+        self.assertEqual("Injection", out["said"][1])
+        self.assertEqual("Then I will look at SQL and expressions.", out["last"])
 
     @unittest.skipUnless(CHROME, "Chrome is not installed")
     def test_the_project_menu_fits_and_its_picker_opens_a_folder(self):
@@ -4285,7 +4518,10 @@ class AssistantPageTests(unittest.TestCase):
         app, path = self.make(key=True)
         out = self.serve(app, self.SCRIPT)
         self.assertNotIn("error", out, out)
-        self.assertEqual(4, len(out["tips"]), "an empty conversation offers a few places to start")
+        self.assertEqual(["Get a general understanding", "Look for security vulnerabilities", "I'm not sure where to start"], out["tips"][:3],
+                         "an empty conversation asks what the person wants to find out")
+        self.assertIn("Web requests", out["tips"], "and offers the catalog's areas to look at")
+        self.assertIn("Cryptography", out["tips"])
         self.assertEqual("active", out["nav"])
         self.assertTrue(out["sendEnabled"])
         self.assertEqual("set the entry points to servlets and handlers", out["user"])
@@ -5948,13 +6184,37 @@ class GraphTests(unittest.TestCase):
         g = self.app.graph(**kw)
         return g, {n["id"]: n for n in g["nodes"]}, {(e["from"], e["to"]): e["events"] for e in g["edges"]}
 
+    @staticmethod
+    def inner(nodes, node_id):
+        """The sensors inside one box, by name, in the order they were first seen."""
+        return {i["sensor"]: i for i in nodes[node_id]["inner"]}
+
     def test_a_path_runs_from_the_route_through_the_application_code_to_what_the_sensor_saw(self):
         g, nodes, edges = self.graph()
         self.assertEqual(2, edges[("route:/app/list.jsp", "code:com.acme.Database.getTickets")])
         self.assertEqual(2, edges[("code:com.acme.Database.getTickets", "code:com.acme.Ticket.encrypt")])
-        self.assertEqual(2, edges[("code:com.acme.Ticket.encrypt", "effect:crypto-cipher")])
-        self.assertEqual(2, nodes["effect:crypto-cipher"]["events"])
-        self.assertEqual([("AES", 1), ("DES", 1)], sorted(nodes["effect:crypto-cipher"]["captures"]))
+        cipher = self.inner(nodes, "code:com.acme.Ticket.encrypt")["crypto-cipher"]
+        self.assertEqual(2, cipher["events"], "what a sensor saw is inside the method that triggered it")
+        self.assertEqual([("AES", 1), ("DES", 1)], sorted(cipher["captures"]))
+
+    def test_a_route_whose_events_all_fired_in_the_page_itself_is_still_drawn_and_so_is_one_with_no_events(self):
+        self.env.write(
+            event(50, sensor="http-route", capture="/app/el.jsp", trace=50, stack=[self.SERVLET, self.FILTER]),
+            event(51, sensor="expression-el-evaluate", action="monitored", capture="${x}", trace=50,
+                  stack=["jakarta.el.ValueExpression.getValue(V.java:1)", "org.apache.jsp.el_jsp._jspService(el_jsp.java:10)", self.FILTER]))
+        self.env.write(event(52, sensor="http-route", capture="/app/style.css", trace=51, stack=[self.SERVLET, self.FILTER]))
+        self.env.ingestor.poll()
+        graphs = {g["route"]: g for g in self.app.graph(split=True)["graphs"]}
+        self.assertIn("/app/el.jsp", graphs, "the sensor fired in the page, which is the route, so it is the route's own")
+        route = next(n for n in graphs["/app/el.jsp"]["nodes"] if n["kind"] == "route")
+        self.assertEqual(["expression-el-evaluate"], [i["sensor"] for i in route["inner"]])
+        self.assertEqual(1, route["inner"][0]["monitored"])
+        self.assertIn("/app/style.css", graphs, "every entry is drawn, even one that no sensor fired in")
+        self.assertEqual([], graphs["/app/style.css"]["nodes"][0]["inner"])
+        self.assertEqual(1, graphs["/app/style.css"]["nodes"][0]["events"], "with the requests that came in at it")
+        only = {g["route"] for g in self.app.graph(route="/app/style.css", split=True)["graphs"]}
+        self.assertEqual({"/app/style.css"}, only, "an entry that is picked is the only one")
+        self.assertNotIn("/app/style.css", {g["route"] for g in self.app.graph(method="GET", split=True)["graphs"]}, "and a method leaves out what it can't count")
 
     def test_the_jsp_page_is_the_route_and_is_not_drawn_twice(self):
         g, nodes, edges = self.graph()
@@ -5966,11 +6226,11 @@ class GraphTests(unittest.TestCase):
 
     def test_a_blocked_event_marks_its_effect(self):
         g, nodes, edges = self.graph()
-        self.assertEqual(1, nodes["effect:block-exec"]["blocked"])
-        self.assertEqual(0, nodes["effect:crypto-cipher"]["blocked"])
-        self.assertIn(("effect:crypto-cipher", "effect:block-exec"), edges, "it came after the ciphers in that request")
+        self.assertEqual(1, self.inner(nodes, "route:/app/list.jsp")["block-exec"]["blocked"])
+        self.assertEqual(0, self.inner(nodes, "code:com.acme.Ticket.encrypt")["crypto-cipher"]["blocked"])
+        self.assertEqual(1, nodes["route:/app/list.jsp"]["blocked"], "and the box that holds it says so")
 
-    def test_a_request_is_one_line_with_a_stop_for_each_event_in_the_order_they_happened(self):
+    def test_a_method_holds_what_happened_directly_in_it_and_calls_lead_on_to_what_it_called(self):
         self.env.write(
             event(30, sensor="http-route", capture="/app/order.jsp", trace=30, stack=[self.SERVLET, self.FILTER]),
             event(31, sensor="crypto-hash", capture="MD5", trace=30, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]),
@@ -5980,10 +6240,11 @@ class GraphTests(unittest.TestCase):
         self.env.ingestor.poll()
         g, nodes, edges = self.graph(route="/app/order.jsp")
         get, enc = "code:com.acme.Database.getTickets", "code:com.acme.Ticket.encrypt"
-        self.assertEqual({("route:/app/order.jsp", get): 1, (get, "effect:crypto-hash"): 1,
-                          ("effect:crypto-hash", enc): 2, (enc, "effect:crypto-cipher"): 2,
-                          ("effect:crypto-cipher", "effect:crypto-hash"): 1}, edges)
-        self.assertEqual(2, nodes["effect:crypto-cipher"]["events"], "the repeat is one stop, both events are counted")
+        self.assertEqual({("route:/app/order.jsp", get): 4, (get, enc): 2}, edges, "the lines are who called whom, counted by the events through them")
+        self.assertEqual(2, self.inner(nodes, get)["crypto-hash"]["events"])
+        self.assertEqual(2, self.inner(nodes, enc)["crypto-cipher"]["events"], "the repeat is one inner box, both events are counted")
+        self.assertEqual(["crypto-hash"], list(self.inner(nodes, get)))
+        self.assertEqual(["crypto-cipher"], list(self.inner(nodes, enc)))
 
     def test_a_method_the_line_is_already_inside_is_not_entered_again(self):
         self.env.write(
@@ -5992,8 +6253,9 @@ class GraphTests(unittest.TestCase):
             event(42, sensor="crypto-cipher", capture="AES", trace=40, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
         self.env.ingestor.poll()
         g, nodes, edges = self.graph(route="/app/inside.jsp")
-        self.assertIn(("effect:crypto-hash", "effect:crypto-cipher"), edges)
-        self.assertNotIn(("effect:crypto-hash", "code:com.acme.Database.getTickets"), edges)
+        get = "code:com.acme.Database.getTickets"
+        self.assertEqual(["crypto-hash", "crypto-cipher"], list(self.inner(nodes, get)), "both in the one method, in the order they happened")
+        self.assertEqual({("route:/app/inside.jsp", get): 2}, edges)
 
     def test_requests_that_did_the_same_things_in_the_same_order_share_a_line(self):
         for trace, base in ((60, 60), (61, 70)):
@@ -6003,7 +6265,10 @@ class GraphTests(unittest.TestCase):
                 event(base + 2, sensor="crypto-hash", capture="MD5", trace=trace, stack=["java.base/a.B.c(B.java:1)", self.GET, self.FILTER]))
         self.env.ingestor.poll()
         g, nodes, edges = self.graph(route="/app/twice.jsp")
-        self.assertEqual(2, edges[("effect:crypto-cipher", "effect:crypto-hash")])
+        get = self.inner(nodes, "code:com.acme.Database.getTickets")
+        self.assertEqual(["crypto-cipher", "crypto-hash"], list(get))
+        self.assertEqual([2, 2], [i["events"] for i in get.values()])
+        self.assertEqual(1, len({tuple(i["lines"]) for i in get.values()}), "two requests, one line")
 
     def test_a_forward_and_a_redirect_lead_to_their_route(self):
         base = 60
@@ -6035,22 +6300,25 @@ class GraphTests(unittest.TestCase):
         edge_lines = {(e["from"], e["to"]): set(e["lines"]) for e in g["edges"]}
         one, two = lines["route:/app/one.jsp"], lines["route:/app/two.jsp"]
         self.assertTrue(one and two and not one & two, "each route is its own kind of request")
-        self.assertTrue((one | two) <= lines["effect:crypto-hash"], "both used the hash")
-        cipher_edge = edge_lines[("code:com.acme.Ticket.encrypt", "effect:crypto-cipher")]
-        self.assertTrue(one & cipher_edge and not two & cipher_edge, "only the first request reached the cipher")
-        self.assertTrue(lines["effect:crypto-cipher"] >= one and not (lines["effect:crypto-cipher"] & two))
+        get = self.inner({n["id"]: n for n in g["nodes"]}, "code:com.acme.Database.getTickets")
+        self.assertTrue((one | two) <= set(get["crypto-hash"]["lines"]), "both used the hash")
+        enc = "code:com.acme.Ticket.encrypt"
+        cipher_edge = edge_lines[("code:com.acme.Database.getTickets", enc)]
+        self.assertTrue(one & cipher_edge and not two & cipher_edge, "only the first request reached the method with the cipher")
+        cipher = set(self.inner({n["id"]: n for n in g["nodes"]}, enc)["crypto-cipher"]["lines"])
+        self.assertTrue(cipher >= one and not (cipher & two))
 
     def test_request_details_are_left_out_unless_asked_for(self):
         g, nodes, edges = self.graph()
-        self.assertNotIn("effect:auth-user", nodes)
+        self.assertNotIn("auth-user", self.inner(nodes, "route:/app/list.jsp"))
         g, nodes, edges = self.graph(details=True)
-        self.assertEqual(1, edges[("route:/app/list.jsp", "effect:auth-user")])
+        self.assertEqual(1, self.inner(nodes, "route:/app/list.jsp")["auth-user"]["events"])
 
     def test_a_forward_leads_on_to_the_route_it_names(self):
         g, nodes, edges = self.graph()
-        self.assertEqual(1, edges[("effect:http-forward", "exit:/app/list.jsp")])
+        self.assertEqual(1, edges[("code:com.acme.ProfileController.doPost", "exit:/app/list.jsp")])
         self.assertEqual("exit", nodes["exit:/app/list.jsp"]["kind"])
-        self.assertIn(("code:com.acme.ProfileController.doPost", "effect:http-forward"), edges)
+        self.assertIn("http-forward", self.inner(nodes, "code:com.acme.ProfileController.doPost"))
 
     def test_events_outside_a_request_start_from_their_own_route(self):
         g, nodes, edges = self.graph()
@@ -6063,10 +6331,10 @@ class GraphTests(unittest.TestCase):
 
     def test_the_blocked_and_monitored_filters_apply_to_the_graph_and_keep_each_event_on_its_route(self):
         g, nodes, edges = self.graph()
-        everything = {n["id"] for n in g["nodes"] if n["kind"] == "effect"}
+        everything = {i["sensor"] for n in g["nodes"] for i in n["inner"]}
         self.app.set_filters(actions=["blocked"])
         g, nodes, edges = self.graph()
-        effects = [n for n in g["nodes"] if n["kind"] == "effect"]
+        effects = [i for n in g["nodes"] for i in n["inner"]]
         self.assertTrue(effects)
         self.assertLess(len(effects), len(everything))
         self.assertTrue(all(n["blocked"] for n in effects), "only blocked effects are left")
@@ -6080,7 +6348,7 @@ class GraphTests(unittest.TestCase):
         self.env.write(event(20, sensor="crypto-hash", capture="MD5", trace=50, stack=["java.base/a.B.c(B.java:1)", "java.base/d.E.f(E.java:1)"]))
         self.env.ingestor.poll()
         g, nodes, edges = self.graph()
-        self.assertNotIn("effect:crypto-hash", [e[1] for e in edges if e[1] == "effect:crypto-hash" and "MD5" in str(nodes[e[1]]["captures"])])
+        self.assertNotIn("MD5", [c for n in nodes.values() for i in n["inner"] for c, _ in i["captures"]])
         self.app.set_since(int(time.time() * 1000) + 100000)
         g, nodes, edges = self.graph()
         self.assertEqual([], g["nodes"])
@@ -6109,19 +6377,36 @@ class GraphTests(unittest.TestCase):
         self.assertNotIn("_jspService", page, "the page is the route")
         self.assertNotIn("route out", page, "there is no key to read, a box says what it is when it is hovered")
         self.assertNotIn(">null<", page)
-        self.assertRegex(page, r'class="node effect blocked"')
+        self.assertRegex(page, r'<g class="inner blocked"', "what a rule blocked is a box inside the method that did it")
         self.assertRegex(page, r'<div id="graphTip"[^>]* hidden', "the hover box is there and hidden until a node is hovered")
         self.assertNotRegex(page, r'<g class="node[^>]*><title>', "the hover box replaces the browser's own tooltip")
         self.assertNotRegex(page, r'<svg class="graph"[^>]*><title>', "and a route's graph has no tooltip of its own")
 
     @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_a_sensor_is_drawn_as_a_box_inside_the_method_that_triggered_it(self):
+        page = self.render("#graph")
+        self.assertNotRegex(page, r'<g class="node effect', "a sensor is not a box of its own")
+        encrypt = re.search(r'<g class="node code[^"]*"[^>]*data-id="code:com\.acme\.Ticket\.encrypt"[^>]*>(.*?)</g></g>', page, re.S)
+        self.assertIsNotNone(encrypt, "the method is drawn")
+        self.assertRegex(encrypt.group(1), r'<g class="inner[^"]*"[^>]*data-sensor="crypto-cipher"', "and its sensor is in it")
+        route = re.search(r'<g class="node route[^"]*"[^>]*data-id="route:/app/list\.jsp"[^>]*>(.*?)</g>', page, re.S)
+        self.assertIsNotNone(route)
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
+    def test_clicking_a_sensor_lights_it_wherever_it_fired(self):
+        page = self.render("#graph/effect%3Acrypto-hash")
+        picked = re.findall(r'<g class="inner[^"]*picked[^"]*"[^>]*data-sensor="([^"]+)"', page)
+        self.assertTrue(picked and set(picked) == {"crypto-hash"}, "only the sensor that was picked is marked")
+        self.assertNotIn('data-id="effect:', page)
+
+    @unittest.skipUnless(CHROME, "Chrome is not installed")
     def test_a_picked_node_follows_its_paths_and_dims_the_rest(self):
         page = self.render("#graph/effect%3Acrypto-cipher")
-        self.assertRegex(page, r'<g class="node effect picked"')
+        self.assertRegex(page, r'<g class="inner picked"')
         panel = re.search(r'<aside class="card" id="graphDetail"([^>]*)>(.*?)</aside>', page, re.S)
         self.assertNotIn("hidden", panel.group(1))
         text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", panel.group(2)))
-        for expected in ("crypto-cipher", "AES", "DES", "Comes from", "Ticket.encrypt", "Show these events"):
+        for expected in ("crypto-cipher", "AES", "DES", "Fired in", "Ticket.encrypt", "Show these events"):
             self.assertIn(expected, text)
         self.assertNotIn("null", text.lower())
         self.assertNotIn("routegraph off", page, "only the route the node is in is lit, others are left alone")
@@ -6879,7 +7164,7 @@ class GraphKeysTests(unittest.TestCase):
         out.hash = location.hash;
         out.right = [await key("ArrowRight"), picked()];
         out.back = [await key("ArrowLeft"), picked()];
-        out.nothingAbove = [await key("ArrowUp"), picked()];
+        out.nothingLeft = [await key("ArrowLeft"), picked()];
         out.inSelect = [await key("ArrowRight", document.getElementById("graphRoute")), picked()];
         out.withShift = [await (async () => { const ev = new KeyboardEvent("keydown", { key: "ArrowRight", shiftKey: true, bubbles: true, cancelable: true }); document.body.dispatchEvent(ev); await wait(100); return ev.defaultPrevented; })(), picked()];
       } catch (e) { out.error = String(e); }
@@ -6899,7 +7184,7 @@ class GraphKeysTests(unittest.TestCase):
         self.assertRegex(out["hash"], r"^#graph/.+", "and the address follows, so it can be linked to")
         self.assertNotEqual(out["first"][1], out["right"][1], "right moves on to a box the entry leads to")
         self.assertEqual(out["first"][1], out["back"][1], "and left comes back")
-        self.assertEqual((True, out["first"][1]), tuple(out["nothingAbove"]), "nothing is above the entry, so the pick stays and the key is still taken")
+        self.assertEqual((True, out["first"][1]), tuple(out["nothingLeft"]), "nothing is left of the entry, so the pick stays and the key is still taken")
         self.assertEqual((False, out["first"][1]), tuple(out["inSelect"]), "a key typed in a field or a menu belongs to it")
         self.assertFalse(out["withShift"][0], "a key with a modifier is left to the browser")
 

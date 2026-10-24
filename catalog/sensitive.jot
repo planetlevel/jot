@@ -1,5 +1,5 @@
 # JOT catalog, sensitive
-# Sensitive data in requests, found by name and by value, kept apart so a report can say how it was found. Only names and kinds are recorded, never the value.
+# Sensitive data in requests. It is found by name and by value, kept apart so a report can say how it was found. Only names and kinds are recorded, never the value.
 # Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
 
 sensors:

@@ -1,0 +1,84 @@
+# JOT catalog, expression
+# Expression languages. EL, Spring expressions and the ${...} lookups of commons-text and log4j, which can run code when the text comes from outside. The expression sandbox and expression-suspicious are rules that can stop a call.
+# Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
+
+sensors:
+
+- name: expression-el-create
+  description: Identifies an expression language expression being created, and its text
+  methods:
+  - jakarta.el.ExpressionFactory.createValueExpression
+  - javax.el.ExpressionFactory.createValueExpression
+  - jakarta.el.ExpressionFactory.createMethodExpression
+  - javax.el.ExpressionFactory.createMethodExpression
+  captures:
+    expression: "#P1.toString()"
+
+- name: expression-el-evaluate
+  description: Identifies an expression language expression being evaluated, and its text
+  methods:
+  - jakarta.el.ValueExpression.getValue
+  - javax.el.ValueExpression.getValue
+  - jakarta.el.ValueExpression.setValue
+  - javax.el.ValueExpression.setValue
+  - jakarta.el.MethodExpression.invoke
+  - javax.el.MethodExpression.invoke
+  captures:
+    expression: "#OBJ.getExpressionString()"
+    literal: "#OBJ.isLiteralText()"
+
+- name: expression-spel
+  description: Identifies a Spring expression being evaluated, which can run any code in the JVM when the text comes from outside
+  methods:
+  - org.springframework.expression.spel.standard.SpelExpression.getValue
+  captures:
+    expression: "#OBJ.expressionString"
+
+- name: expression-lookup
+  description: Identifies a ${...} lookup being resolved by commons-text or commons-configuration, and which lookup resolved it
+  methods:
+  - org.apache.commons.text.lookup.StringLookup.lookup
+  - org.apache.commons.configuration.interpol.ConfigurationInterpolator.lookup
+  captures:
+    key: "#P0"
+    lookup: "#OBJ.getClass().getName()"
+
+- name: expression-lookup-log4j
+  description: Identifies a ${...} lookup being resolved by log4j, such as jndi, env or sys, and which lookup resolved it
+  methods:
+  - org.apache.logging.log4j.core.lookup.StrLookup.lookup
+  captures:
+    key: "#list(#ARGS).?[#this.getClass().getName() == 'java.lang.String']"
+    lookup: "#OBJ.getClass().getName()"
+
+# The microsandbox for expression injection. Evaluating an expression is allowed, but while one is being
+# evaluated it can't start a process or open a socket.
+- name: expression
+  description: Identifies an expression being evaluated starting a process or opening a socket
+  methods:
+  - java.lang.ProcessBuilder.<init>
+  - java.net.Socket.<init>
+  scopes:
+  - javax.el.ValueExpression.getValue
+  - jakarta.el.ValueExpression.getValue
+  captures:
+    expression: "#ARGS"
+  block-when: true
+
+# The pattern based alternative, which looks for attack text in the expression itself. It is easier to get
+# around than the sandbox above. Add "protect: false" to stage it as report only, and the dashboard can then
+# promote it to block.
+- name: expression-suspicious
+  description: Identifies an expression that contains reflection or process APIs
+  methods:
+  - javax.el.ExpressionFactory.createValueExpression
+  - jakarta.el.ExpressionFactory.createValueExpression
+  captures:
+    expression: "#P1"
+  matchers:
+    expression:
+      - \.class
+      - getRuntime
+      - ProcessBuilder
+      - forName
+  block-when: true

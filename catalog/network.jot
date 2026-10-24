@@ -1,0 +1,30 @@
+# JOT catalog, network
+# The network. Sockets opened and URLs connected to.
+# Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
+
+sensors:
+
+- name: net-socket
+  description: Identifies a socket being opened
+  methods:
+  - java.net.Socket.<init>
+  captures:
+    host: "#P0"
+    port: "#P1"
+  matchers:
+    host:
+      - "!null"
+    port:
+      - "!^8080$"
+
+- name: net-url
+  description: Identifies the host and protocol of a URL being connected to
+  methods:
+  - java.net.URL.openConnection
+  captures:
+    host: "#OBJ.getHost()"
+    protocol: "#OBJ.getProtocol()"
+    port: "#OBJ.getPort() == -1 ? #OBJ.getDefaultPort() : #OBJ.getPort()"
+  matchers:
+    protocol:
+      - (?i)^(https?|ftp)$

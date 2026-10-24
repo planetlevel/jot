@@ -140,3 +140,38 @@ sensors:
   matchers:
     name:
       - (?i)^(Content-Security-Policy|Strict-Transport-Security|X-Frame-Options|X-Content-Type-Options|Referrer-Policy|Permissions-Policy|X-XSS-Protection|Cross-Origin-[\w-]+)$
+
+reports:
+
+- name: Test Coverage Matrix
+  type: compare
+  rows: http-route.path
+  cols: auth-user.user
+
+- name: Access Control Matrix
+  type: compare
+  rows: http-route.path
+  cols: auth-role-check.role
+  value: auth-role-check.allowed
+  by: auth-role-check.user
+
+- name: Role Membership
+  type: compare
+  rows: auth-role-check.user
+  cols: auth-role-check.role
+  value: auth-role-check.allowed
+
+- name: Cache Headers
+  type: table
+  rows: http-route.path
+  cols: http-cache-header.cache_control
+
+- name: HTTP Parameters
+  type: table
+  rows: http-route.path
+  cols: http-parameter-read.name, http-parameter-received.name
+
+- name: Request Forwards
+  type: table
+  rows: http-route.path
+  cols: http-forward.path

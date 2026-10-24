@@ -1,0 +1,37 @@
+#!/bin/sh
+# Starts the JOT console. Run it in the folder of the application you want to watch.
+#   jot                 start the console on http://127.0.0.1:8765
+#   jot jar             print the path of the agent jar, for -javaagent:
+#   jot version         print the version
+# Anything else is passed on to the console, see "jot --help".
+
+src="$0"
+while [ -L "$src" ]; do
+  dir=$(cd "$(dirname "$src")" && pwd)
+  src=$(readlink "$src")
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+root=$(cd "$(dirname "$src")/.." && pwd)
+
+jar="${JOT_AGENT_JAR:-}"
+if [ -z "$jar" ]; then
+  if [ -f "$root/jot.jar" ]; then
+    jar="$root/jot.jar"
+  else
+    jar=$(ls -t "$root"/target/jot-*.jar 2>/dev/null | grep -v '/original-' | head -n 1)
+  fi
+fi
+
+case "$1" in
+  jar)
+    [ -n "$jar" ] || { echo "jot, no agent jar found. Build it with mvn package." >&2; exit 1; }
+    echo "$jar"; exit 0 ;;
+  version)
+    basename "${jar:-jot-unknown.jar}" .jar | sed 's/^jot-//'; exit 0 ;;
+esac
+
+[ -n "$jar" ] && export JOT_AGENT_JAR="$jar"
+export JOT_CATALOG="${JOT_CATALOG:-$root/catalog}"
+python="${JOT_PYTHON:-python3}"
+env_file="${JOT_ENV:-$HOME/.jot/.env}"
+exec "$python" "$root/dashboard/server.py" --env "$env_file" "$@"

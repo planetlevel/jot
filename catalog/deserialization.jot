@@ -1,0 +1,21 @@
+# JOT catalog, deserialization
+# Serialized objects. Which classes are read back from bytes, and with what.
+# Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
+
+sensors:
+
+- name: object-class
+  description: Identifies the classes an ObjectInputStream turns bytes into
+  methods:
+  - java.io.ObjectInputStream.resolveClass
+  captures:
+    class: "#P0.getName()"
+
+# A web request must never deserialize objects.
+- name: object-deserialization
+  description: Identifies deserializing an object
+  methods:
+  - java.io.ObjectInputStream.readObject
+  - java.io.ObjectInputStream.readUnshared
+  captures:
+    args: "#ARGS"

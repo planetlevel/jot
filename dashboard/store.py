@@ -2200,17 +2200,15 @@ def _requests(rows):
 
 
 def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=False, methods_seen=(), entries=False):
-    """Nodes and edges for the paths through the application, drawn like subway lines. A request is one line. It starts
-    at the route, and each event is a stop along it in the order the events happened. Between stops it passes through
-    the application methods that were newly entered, since the stack of the last stop is still in force for the methods
-    the two have in common. Lines that reach the same stop share its node, so drawn together they show where requests
-    agree and where they part. Events in a row that are the same stop, like three get-role calls from one method,
-    are one stop. A forward or a redirect also leads on to the route it names, which is an exit. Plumbing that only
-    describes the request, like who the user is, is left out unless details is set. Every node and edge says which
-    lines use it, so what goes through a node can be told from what can merely be reached from it. One request that did
-    A and then B and another that did B and then A make a loop between them, and following edges would join them. Requests that
-    used different HTTP methods are different lines even when they did the same things, and line_methods says which method each
-    line used, so a node or an edge can be told to belong to one method or to be common to several.
+    """Nodes and edges for the paths through the application. A request is one line. It starts at the route and goes down through the
+    application methods that were running when each event happened, so the edges are who called whom. A box is a method, and the events
+    that happened directly in it, the sensors it triggered, are its inner boxes in the order they were first seen. What a method calls
+    is drawn after it, and what happens in a callee is that callee's own. Events that happened outside any application method are the
+    route's own. A forward or a redirect also leads on to the route it names, which is an exit. Plumbing that only describes the
+    request, like who the user is, is left out unless details is set. Every node, inner box and edge says which lines use it, so what
+    goes through one can be told from what can merely be reached from it. Requests that used different HTTP methods are different lines
+    even when they did the same things, and line_methods says which method each line used, so something can be told to belong to one
+    method or to be common to several.
 
     A line starts at its entry point. For a request that is the route the http-route sensor saw. Otherwise it is the entry point method
     itself, like the tool of an agent, and the frames above that method are left out, since in a large application they are the same
@@ -2221,7 +2219,7 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
 
     def node(kind, key, label, full=None):
         n = nodes.setdefault((kind, key), {"id": "%s:%s" % (kind, key), "kind": kind, "label": label, "full": full or key,
-                                           "events": 0, "blocked": 0, "monitored": 0, "captures": {}, "lines": set()})
+                                           "events": 0, "blocked": 0, "monitored": 0, "captures": [], "inner": {}, "lines": set()})
         n["lines"].add(line[0])
         return n
 
@@ -2242,7 +2240,6 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
         # generates, is that page. The route already stands for it, so it isn't drawn again
         page = _page_of(route)
         start["events"] += count     # a route counts the requests that came in at it, the others count events
-        here, held, last_edges = start, [], []   # where the line is, the methods it is inside, the edges into that stop
         for sensor, action, capture, stack in events:
             frames = json.loads(stack) if stack else []
             if not frames:
@@ -2266,33 +2263,26 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
                     names = names[names.index(route) + 1:]
                 elif entries and route == NO_REQUEST:
                     names = names[-1:]
-            effect = node("effect", sensor, sensor)
-            shared = 0
-            while shared < min(len(held), len(names)) and held[shared] == names[shared]:
-                shared += 1
-            entering = [node("code", name, _short(name), name) for name in names[shared:]]
-            if here is effect and not entering:
-                # the same stop again, so the events add to the edges that led into it
-                if names == held:
-                    for e in last_edges:
-                        e["events"] += count
-            else:
-                path = [here] + entering + [effect]
-                last_edges = [link(a, b, count) for a, b in zip(path, path[1:])]
+            # down the call chain from the route, each method one level in, and the sensor is in the last of them
+            site = start
             for name in names:
-                nodes[("code", name)]["events"] += count
-                nodes[("code", name)]["lines"].add(line[0])
-            effect["events"] += count
+                callee = node("code", name, _short(name), name)
+                callee["events"] += count
+                link(site, callee, count)
+                site = callee
+            seen = site["inner"].setdefault(sensor, {"sensor": sensor, "events": 0, "blocked": 0, "monitored": 0, "captures": {}, "lines": set()})
+            seen["lines"].add(line[0])
+            seen["events"] += count
             if action in ("blocked", "monitored"):
-                effect[action] += count
-            effect["captures"][capture or ""] = effect["captures"].get(capture or "", 0) + count
+                seen[action] += count
+                site[action] += count
+            seen["captures"][capture or ""] = seen["captures"].get(capture or "", 0) + count
             if sensor in JUMPS and capture:
                 target = capture.strip()
                 match = next((r for r in route_names if r == target or r.endswith("/" + target.lstrip("/"))), None)
                 exit_node = node("exit", match or target.lstrip("/"), match or target.lstrip("/"))
                 exit_node["events"] += count
-                link(effect, exit_node, count)
-            here, held = effect, names
+                link(site, exit_node, count)
 
     # requests that did the same things in the same order are drawn once, and counted
     same = {}
@@ -2309,13 +2299,21 @@ def build_graph(rows, routes_seen, app_prefixes=(), details=False, truncated=Fal
 
     out_nodes = sorted(nodes.values(), key=lambda n: (-n["events"], n["label"]))
     for n in out_nodes:
-        n["captures"] = sorted(n["captures"].items(), key=lambda kv: -kv[1])[:25]
+        n["inner"] = [dict(i, captures=sorted(i["captures"].items(), key=lambda kv: -kv[1])[:25], lines=sorted(i["lines"])) for i in n["inner"].values()]
         n["lines"] = sorted(n["lines"])
     for e in edges.values():
         e["lines"] = sorted(e["lines"])
     return {"nodes": out_nodes, "edges": sorted(edges.values(), key=lambda e: -e["events"]),
             "routes": route_names, "methods": list(methods_seen), "truncated": truncated,
             "line_counts": line_counts, "line_methods": line_methods}
+
+
+def empty_graph(route, requests):
+    """The graph of an entry that no sensor fired in, which is its box and how many requests came in at it."""
+    by_entry = route != NO_REQUEST and "/" not in route
+    node = {"id": "route:" + route, "kind": "route", "label": _short(route) if by_entry else route, "full": route, "events": requests, "blocked": 0,
+            "monitored": 0, "captures": [], "inner": [], "lines": [0]}
+    return {"route": route, "requests": requests, "events": 0, "nodes": [node], "edges": [], "line_counts": {0: requests}, "line_methods": {}, "all_requests": requests}
 
 
 def build_graphs(rows, routes_seen, app_prefixes=(), details=False, truncated=False, methods_seen=(), all_requests=None, entries=False):
@@ -2328,8 +2326,8 @@ def build_graphs(rows, routes_seen, app_prefixes=(), details=False, truncated=Fa
     graphs = []
     for route, route_rows in by_route.items():
         g = build_graph(route_rows, routes_seen, app_prefixes, details, truncated, methods_seen, entries)
-        if not g["edges"]:
-            continue   # nothing happened in it that the graph shows, like a stylesheet
+        if not g["edges"] and not any(n["inner"] for n in g["nodes"]):
+            continue   # nothing happened in it that the graph shows, like a stylesheet. A sensor that fired in the route itself is something
         graphs.append({"route": route, "requests": sum(1 for _ in _requests(route_rows)),
                        "events": len(route_rows), "nodes": g["nodes"], "edges": g["edges"], "line_counts": g["line_counts"],
                        "line_methods": g["line_methods"]})

@@ -1,5 +1,5 @@
 # JOT catalog, ai
-# AI agents built with Spring AI. The calls to a model, the tools it asks for and the tools that run. The model call and tool request sensors apply anywhere, and ai-tool-invoked needs the Spring AI @Tool annotation set as an entry point in the app section of the project's .jot/jot.yaml, with app entry '@org.springframework.ai.tool.annotation.Tool'.
+# AI agents built with Spring AI. The calls to a model, the tools it asks for and the tools that run. The model call and tool request sensors apply anywhere, and ai-tool-invoked needs the Spring AI @Tool annotation set as an entry point in the app section of the project's .jot/jot.yaml, with app entry '@org.springframework.ai.tool.annotation.Tool'. The tool reports read the sensors of the sql, file, network, deserialization, expression, runtime and crypto areas, and show what each tool reaches for in the ones that are in the configuration.
 # Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
 
 sensors:
@@ -41,3 +41,55 @@ sensors:
     tool: "#ANNOTATION.name"
     class: "#OBJ.getClass().getSimpleName()"
     arguments: "#ARGS"
+
+reports:
+
+- name: Models and Parameters
+  type: table
+  rows: ai-model-call.model
+  cols: ai-model-call.provider, ai-model-call.temperature, ai-model-call.max_tokens, ai-model-call.top_p, ai-model-call.tools, ai-model-call.messages
+
+- name: Token Use by Model
+  type: table
+  rows: ai-model-call.model
+  cols: "#count(ai-model-call), #total(ai-model-call.input_tokens), #total(ai-model-call.output_tokens), ai-model-call.finish_reason"
+
+- name: What the Model Asked For
+  type: table
+  rows: ai-tool-request.tool
+  cols: ai-tool-request.arguments
+
+- name: Tools Used
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: ai-tool-invoked.class
+
+- name: Tool Arguments
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: ai-tool-invoked.arguments
+
+- name: Tool Behavior
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: sql-statement.sql, file-path.path, native-process.command, net-url.host, expression-spel.expression, object-deserialization.args, crypto-cipher.algorithm, crypto-hash.algorithm
+
+- name: Data Access by Tool
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: sql-statement.sql, file-path.path
+
+- name: Reaching Out by Tool
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: net-url.host, net-url.protocol, native-process.command
+
+- name: Code Execution by Tool
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: native-process.command, expression-spel.expression, object-deserialization.args
+
+- name: Encryption by Tool
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: crypto-cipher.algorithm, crypto-cipher.key_algorithm, crypto-cipher.bits, crypto-cipher-request.algorithm

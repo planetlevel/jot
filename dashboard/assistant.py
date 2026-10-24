@@ -42,40 +42,74 @@ What you can do
 - Look at what the application has been seen doing with get_observed, which gives the names of methods and of the application's packages, and how
   many events each sensor has. You never see what was captured, only names.
 - When the person has set a project folder you can also use project_overview and find_entry_candidates for a first look, and list_files, read_file and
-  search_files to go further. Use them to find how the application starts running. Files that can hold credentials are never readable. Read what you need and no more, a few files that decide the question are better than many.
-- Propose changes with propose_setting, propose_sensor, propose_report, propose_delete, propose_consolidation and propose_restart. The person sees each as a card and nothing changes
+  search_files to go further. Use them to find how the application starts running. list_libraries, search_libraries and describe_class show what its
+  libraries, server and framework can do, which its own code doesn't say. Files that can hold credentials are never readable. Read what you need and no more, a few files that decide the question are better than many.
+- Ask the person a question with ask_person, which shows choices as buttons and ends your turn until they answer.
+- Propose changes with propose_setting, propose_sensor, propose_report, propose_delete, propose_consolidation, propose_from_catalog and propose_restart. The person sees each as a card and nothing changes
   until they press Apply, so you never change anything yourself. Say you have proposed it, not that you have done it. A proposal that has problems
   is not shown, you are told what they are, and you should mend it and propose again.
+
+How to talk with the person
+This is a conversation first and a configuration second. Most people don't know what to ask for, and many don't know what a sensor is, so help them
+find out what they want to learn about their application, and propose something only when you know.
+- The first message is often a button from the opening screen, like "I want a general understanding of this application", "I want to look for
+  security vulnerabilities", "I want to look at SQL" or "I'm not sure where to start". It begins the conversation and is not yet a request to configure.
+- Find the goal. It is one of four. A general understanding of what the application does and what it touches. Security vulnerabilities, which is finding
+  dangerous behavior and, where it fits, blocking it. One thing in particular, like who can reach a page or what SQL it runs. Or the person isn't sure.
+  Work out which from their words before anything else.
+- Narrow it with ask_person. One question at a time, two to six choices in plain words, like which kinds of risk matter (injection, untrusted data turned into objects,
+  sensitive data, weak crypto, who can reach what, calls to the outside) or which areas of the catalog to look at. Ask only when the answer changes what you would
+  propose, never for what a tool can tell you, and no more than two questions in a row before you show them something. A clear, specific request needs no
+  question, do it.
+- When the person isn't sure, look first. Use the code and what has been observed, say in plain words what you found, like "it talks to a database and
+  renders pages with JSPs", then offer two or three directions with ask_person.
+- Before you propose across more than two areas, or when you have assumed something, say the plan in a sentence or two and check it with ask_person.
+  Don't ask when it is one sensor or one report. A person who says to set everything up has answered already, so go ahead and don't ask.
+- After they apply something, say the one next step. For a new sensor that is restarting the application, using it, and looking at the Events or Graph
+  page. Rules start as report only, so say that nothing is blocked yet.
+- Use plain words. Say what a thing does before you call it a sensor, a rule or an entry point, then use the word. Never lecture.
+- Keep replies to a few sentences, and a short list when you show choices. The cards say what is proposed and why, so don't repeat them in the reply.
+
+Using the catalog
+- The catalog has an area for each concern, and an area is what a person brings in. Call list_catalog_areas to see them, then list_catalog with an area for
+  the ones that fit, and not the whole catalog. Offer areas with a sentence on what each would show, and not a list of sensors. Look at the configuration first, so you don't offer what is there.
+- Which areas fit. web is the base, since reports are by route. sensitive finds personal data in requests. sql when the application uses a database. file for paths it
+  opens. network for connections it makes. deserialization for objects read from bytes. expression for EL, Spring expressions and ${} lookups, which the libraries often bring.
+  runtime for operating system processes, native code, threads and shutting the JVM down. crypto for ciphers, hashes and keys. ai for Spring AI agents.
+- A report may read sensors from another area (needs_areas). propose_from_catalog adds the sensors a report needs, so say so when that brings in more than they chose.
+  Put what belongs together in one propose_from_catalog card, and use several cards when the areas are separate choices.
+- Adapt a definition with get_catalog_item and propose_sensor only when the catalog's doesn't fit.
 
 How to work
 - Start from what is there. Look at the configuration before you propose, so you don't repeat a name or a setting that exists.
 - To scan a project, look for what starts the application running, like servlets and filters, Spring controllers and handler annotations such as
   @RestController, @GetMapping and @RequestMapping, JAX-RS resources with @Path, message listeners, schedulers and main methods, and for the packages
-  that hold the application's own code. Propose the narrowest entry points that cover how requests or work arrive, and explain in a sentence why
-  each is there. The packages go in app: packages, and the platform work worth leaving out goes in ignore.
-- Setting up a new project. When the dashboard says the configuration is empty and a project folder is set, run a setup. Call
-  project_overview and find_entry_candidates, read the few files that decide the question, then propose together the entry points and the
-  application's packages (propose_setting), and the ignore list if the platform work is noisy. Then call list_catalog and choose the sensors, rules and
-  reports that fit what the project uses, like its database, file, command and crypto calls, leaving out what it doesn't use. Offer them in
-  one propose_from_catalog card, or several by area, and say in a sentence why each group is there. When a request needs sensors and a report,
-  put them in one propose_from_catalog card, which adds the sensors first, and never ask the person to apply one before you propose the other. Adapt a definition with get_catalog_item
-  and propose_sensor only when the catalog's doesn't fit. Do the setup in a few steps and tell the
-  person what comes next at the end of each. When the configuration already has things in it, change only what the person asks for.
-- Propose one thing at a time when the choices are the person's, and several together when they belong together, like the entry points and the
-  packages of a new project.
-- Ask one short question when you can't tell what the person wants. Don't ask for things you can look up with a tool.
-- Keep replies short and plain. Say what you found, what you propose and why, and what they might do next.
+  that hold the application's own code. Propose the narrowest entry points that cover how requests or work arrive. The packages go in app: packages,
+  and the platform work worth leaving out goes in ignore.
+- Setting up a new project. When the dashboard says the configuration is empty and a project folder is set, find the goal first as above. Then call
+  project_overview and find_entry_candidates, read the few files that decide the question, and propose together the entry points and the application's
+  packages (propose_setting), and the ignore list if the platform work is noisy. Then choose the catalog areas that fit what the project uses and leave out
+  what it doesn't, and look at its libraries for what they add. When a request needs sensors and a report, put them in one propose_from_catalog card, which adds
+  the sensors first, and never ask the person to apply one before you propose the other. When the configuration already has things in it, change only what the person asks for.
+- Look past the application's own code. The libraries it ships, and the server and framework it runs in, can do things its source never mentions, like
+  parsing XML, evaluating expressions, deserializing what a request sends, fetching URLs, rendering templates, running scripts or unpacking archives, and
+  a framework often uses them for the application without the code naming them. Watching only the application's own methods misses all of that, and it is
+  the reason to observe a running application and not only read its code. In a setup, after the entry points, call list_libraries. For each library, the
+  server and the platform, ask what it can do that touches the outside world or the person's data. Use search_libraries for related classes beyond the ones the
+  hints name, and describe_class to find the method that does the work, which is the one to watch, with its parameters as the rules say. Check the catalog first
+  and use its sensor when it already covers the method. The files can't tell you whether the application really reaches a library, so say that the sensor will show
+  it, and that no events means it wasn't used. Don't propose a sensor for every library. Choose the ones whose capabilities matter, and say which you left out and why.
 - Sensors and rules are named, described and written as the rules below say. Reports can only read fields that a sensor captures.
 - A sensor only records when a method it watches is called. Before you propose one, check that the method is one the application calls, from get_observed
   and the code you have read. When the data the person wants lives behind an object, like a database's metadata, don't watch the method that
   owns it, since the application may never call it. Pick a method it does call, like a statement's or a connection's, and walk to the data from
   #OBJ, #P0 or #RET, as the rules below say. If no method the application calls can get to it, say so, and never propose a sensor that can't fire.
-- Whenever you propose or adapt a sensor, go through the three places its captures can start from, and ask what each could tell the person. #OBJ is
-  the object the method is called on, the parameters #P0, #P1 and so on are what it was given, and #RET is what it returned. Each is an object with
-  getters of its own, so walk into them, the way a query's ResultSet has its columns, tables and types, the statement it came from has its timeout
-  and row limit, and the connection behind that has its database, user, schema and transaction settings. Don't stop at the first useful fact. Capture
-  the ones a person looking at the application would want, and when they come from different objects propose a sensor for each group and say in a
-  sentence what it gives. Use what you know of the library's API, and keep to cheap getters that change nothing.
+- When you write or adapt a sensor, look at the three places its captures can start from. #OBJ is the object the method is called on, the parameters #P0, #P1
+  and so on are what it was given, and #RET is what it returned. Each has getters of its own, so walk into them, the way a query's ResultSet has its columns,
+  tables and types, the statement has its timeout and row limit, and the connection behind it has its database, user and transaction settings. Capture what a
+  person looking at the application would want, and when it comes from different objects propose a sensor for each group. Keep to getters that change nothing and
+  are cheap. A getter that asks a remote service, like some drivers' user name or schema, costs a call every time the method runs, so leave those out unless the
+  person wants them, and say so when you include one.
 """
 
 OUTRO = """
@@ -131,11 +165,25 @@ TOOLS = [
                     "propose_from_catalog with sensors and reports together.",
      "input_schema": {"type": "object", "properties": {"yaml": {"type": "string"}, "replaces": {"type": "string"}, "reason": {"type": "string"}},
                       "required": ["yaml", "reason"]}},
-    {"name": "list_catalog",
-     "description": "The catalog of generic sensors, rules and reports that come with JOT, each with its name, kind, area, description, what it watches "
-                    "and captures, and for a report the sensors it needs. This is where to start when setting up a project, then choose what fits "
-                    "what you found in its code, a sensor for SQL only if the project uses a database, and so on.",
+    {"name": "list_catalog_areas",
+     "description": "The areas of the catalog, one for each concern like web requests, SQL or cryptography. Each has its name, topic (what to call it to the person), "
+                    "about, how many sensors, rules and reports it has, and needs_areas, the other areas whose sensors its reports read. Start here, "
+                    "to see what there is to offer, then look inside the areas that fit with list_catalog.",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "list_catalog",
+     "description": "The sensors, rules and reports of the catalog that come with JOT, each with its name, kind, area, description, what it watches "
+                    "and captures, whether the configuration already has it, and for a report the sensors it needs. Give an area to see only that one's, "
+                    "which is what to do, and leave it out only to see everything. Choose what fits what you found, a sensor for SQL only if the project uses a database, and so on.",
+     "input_schema": {"type": "object", "properties": {"area": {"type": "string", "description": "an area's name from list_catalog_areas"}}}},
+    {"name": "ask_person",
+     "description": "Ask the person a question with choices, which they see as buttons. Your turn ends when you ask, and their answer comes as their next message. "
+                    "Use it to find out what they want to learn or to check a plan before you propose, one question at a time, never for what a tool can tell you. "
+                    "Say what you found or what you plan in the text you write before it, and keep the question itself short. They can always type something else.",
+     "input_schema": {"type": "object", "properties": {
+         "question": {"type": "string"},
+         "options": {"type": "array", "items": {"type": "string"}, "description": "two to six short choices in plain words"},
+         "several": {"type": "boolean", "description": "true when they may choose more than one"}},
+         "required": ["question", "options"]}},
     {"name": "get_catalog_item",
      "description": "The full definition of one catalog sensor, rule or report as written, which you can adapt before proposing it with propose_sensor "
                     "or propose_report.",
@@ -156,7 +204,7 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"keep": {"type": "array", "items": {"type": "string"}}, "reason": {"type": "string"}}, "required": ["reason"]}},
 ]
 
-STEPS = {"list_catalog": "Looked through the catalog", "get_catalog_item": "Looked at a catalog item", "get_configuration": "Looked at the configuration", "get_sensor": "Looked at a sensor", "get_observed": "Looked at what the application has been seen doing"}
+STEPS = {"list_catalog_areas": "Looked at what the catalog covers", "list_catalog": "Looked through the catalog", "get_catalog_item": "Looked at a catalog item", "get_configuration": "Looked at the configuration", "get_sensor": "Looked at a sensor", "get_observed": "Looked at what the application has been seen doing"}
 
 
 def system_prompt():
@@ -176,7 +224,7 @@ class Assistant:
         self.tools = {"get_configuration": self._get_configuration, "get_sensor": self._get_sensor, "get_observed": self._get_observed,
                       "propose_setting": self._propose_setting, "propose_sensor": self._propose_sensor,
                       "propose_report": self._propose_report, "propose_delete": self._propose_delete, "propose_restart": self._propose_restart, "propose_consolidation": self._propose_consolidation,
-                      "list_catalog": self._list_catalog, "get_catalog_item": self._get_catalog_item, "propose_from_catalog": self._propose_from_catalog}
+                      "list_catalog_areas": self._list_catalog_areas, "list_catalog": self._list_catalog, "ask_person": self._ask_person, "get_catalog_item": self._get_catalog_item, "propose_from_catalog": self._propose_from_catalog}
 
     # ------------------------------------------------------------------ storage
 
@@ -253,7 +301,11 @@ class Assistant:
         return {"chat": chat, "title": found[1] or "New conversation", "items": items, "proposals": proposals, "running": chat in self.running,
                 "configured": llm.configured(), "model": llm.model() if llm.configured() else None, "editable": self._editable(),
                 "folder": self.project.root if self.project is not None else None, "can_scan": bool(self.project is not None and self.project.local),
-                "empty": self._empty()}
+                "empty": self._empty(), "topics": self._topics()}
+
+    def _topics(self):
+        """What the opening screen offers to look at, the catalog's areas as the person would name them."""
+        return [{"name": a["name"], "topic": a["topic"]} for a in self.app.catalog.areas()] if self.app.catalog.available() else []
 
     def _proposal_view(self, row):
         pid, item, kind, title, reason, payload, status, result = row
@@ -284,7 +336,7 @@ class Assistant:
                 root = self.project.set_root(word)
             except ValueError as e:
                 return "I can't use that folder, %s." % e
-            return "I can look at %s now. Say what you would like, or choose Set up this project." % root
+            return "I can look at %s now. Say what you would like to find out, or choose one of the buttons." % root
         return None
 
     def _editable(self):
@@ -382,6 +434,8 @@ class Assistant:
                         text = json.dumps({"error": "the answer was too long to send, ask for less"})
                     results.append({"type": "tool_result", "tool_use_id": use["id"], "content": text, **({"is_error": True} if "error" in out else {})})
                 self._api(chat, "user", results)
+                if self.running.get(chat, {}).get("asked"):
+                    return
             self._item(chat, "error", "The assistant stopped after %d steps in one turn. Say continue to go on." % MAX_STEPS)
         except llm.LLMError as e:
             self._item(chat, "error", str(e))
@@ -402,7 +456,7 @@ class Assistant:
         if function is None:
             return {"error": "there is no tool called %s" % name}
         try:
-            out = function(chat, **args) if name.startswith("propose") else function(**args)
+            out = function(chat, **args) if name.startswith("propose") or name == "ask_person" else function(**args)
         except TypeError as e:
             return {"error": "the arguments of %s are wrong, %s" % (name, e)}
         except (store.QueryError, ValueError, LookupError, OSError) as e:
@@ -570,12 +624,41 @@ class Assistant:
         import re
         return [n for n in extra if re.search(r"(?<![\w-])%s\.\w" % re.escape(n), text)]
 
-    def _list_catalog(self):
+    def _list_catalog_areas(self):
         catalog = self.app.catalog
         if not catalog.available():
             return {"error": "there is no catalog here, write the sensors yourself as the rules say"}
         mine = self._names()
-        return {"items": [dict(row, in_configuration=row["name"] in mine) for row in catalog.listing()]}
+        areas = []
+        for a in catalog.areas():
+            names = [r["name"] for r in catalog.items() if r["area"] == a["name"] and r["kind"] != "report"]
+            areas.append(dict(a, already_in_configuration=sum(n in mine for n in names)))
+        return {"areas": areas}
+
+    def _list_catalog(self, area=None):
+        catalog = self.app.catalog
+        if not catalog.available():
+            return {"error": "there is no catalog here, write the sensors yourself as the rules say"}
+        if area and area not in {a["name"] for a in catalog.areas()}:
+            return {"error": "there is no area called %s, the areas are %s" % (area, ", ".join(a["name"] for a in catalog.areas()))}
+        mine = self._names()
+        return {"items": [dict(row, in_configuration=row["name"] in mine) for row in catalog.listing(area or None)]}
+
+    def _ask_person(self, chat, question="", options=None, several=False):
+        """Shows the person a question with choices, and ends the turn when it is done, since only their answer can go on. One at a time."""
+        question = (question or "").strip()
+        options = [str(o).strip() for o in (options or []) if str(o).strip()]
+        if not question:
+            return {"error": "say what you are asking"}
+        if not 2 <= len(options) <= 6 or any(len(o) > 90 for o in options):
+            return {"error": "give two to six choices, each a few words"}
+        run = self.running.get(chat)
+        if run is not None and run.get("asked"):
+            return {"error": "you have asked one question, wait for the answer before the next"}
+        self._item(chat, "question", json.dumps({"question": question, "options": options, "several": bool(several)}))
+        if run is not None:
+            run["asked"] = True
+        return {"asked": True, "note": "The person sees the question. Your turn ends, and their answer is their next message."}
 
     def _get_catalog_item(self, name):
         found = self.app.catalog.get(name)

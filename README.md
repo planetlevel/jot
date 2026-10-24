@@ -62,10 +62,11 @@ Reports page has tables of exactly where encryption is used and what algorithm i
 
 ### The catalog
 
-`catalog/` holds the generic sensors, rules and reports that come with JOT, in files by area. `web` has the request, user, parameter, redirect and
-header sensors, `sensitive` finds sensitive data in requests by name and by value, `crypto` has ciphers, hashes and keys, `data` has SQL, files,
-sockets and serialized objects, `runtime` has threads, native libraries and expression evaluation, `ai` has the model call and tool sensors for Spring AI agents, `rules` has the rules that can stop a call, and `reports` has the reports
-that read them. Nothing in it belongs to one application. A project's configuration is one file, so the catalog is not loaded. The Assistant copies
+`catalog/` holds the generic sensors, rules and reports that come with JOT, in one file for each area of concern, so you can bring in the areas you
+want. `web` has the request, user, parameter, redirect and header sensors, `sensitive` finds sensitive data in requests by name and by value, `crypto` has ciphers,
+hashes and keys, `sql` has connections and statements, `file` has file paths, `network` has sockets and URLs, `deserialization` has serialized objects,
+`expression` has EL, Spring and `${...}` lookups, `runtime` has processes, native libraries, threads and ending the JVM, and `ai` has the model call and tool
+sensors for Spring AI agents. Each file has the sensors, the rules that can stop a call and the reports for its area, and a report that reads another area's sensors says which. Nothing in it belongs to one application. A project's configuration is one file, so the catalog is not loaded. The Assistant copies
 what fits into the project's own `jot.yaml`, where you can change it, and a rule is copied with `protect: false` so it only reports until you turn it on.
 You can also copy from it by hand, the files are ordinary `.jot` files.
 

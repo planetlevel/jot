@@ -1,11 +1,11 @@
-# JOT catalog, data
-# Data and resources. SQL, files, network connections and serialized objects.
+# JOT catalog, sql
+# SQL. The connections opened, the statements run, what they changed and what came back. The report reads http-route from the web area.
 # Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
 
 sensors:
 
 - name: sql-statement
-  description: Identifies unparameterized database queries
+  description: Identifies unparameterized database queries, the database they run against and the statement and connection settings they run with
   methods:
   - java.sql.Statement.execute
   - java.sql.Statement.addBatch
@@ -15,14 +15,34 @@ sensors:
   - java.sql.PreparedStatement   # these calls are harmless in PreparedStatement
   captures:
     sql: "#ARGS"
+    database: "#OBJ.getConnection().getMetaData().getDatabaseProductName()"
+    url: "#OBJ.getConnection().getMetaData().getURL()"
+    user: "#OBJ.getConnection().getMetaData().getUserName()"
+    schema: "#OBJ.getConnection().getSchema()"
+    auto_commit: "#OBJ.getConnection().getAutoCommit()"
+    isolation: "#OBJ.getConnection().getTransactionIsolation()"
+    read_only: "#OBJ.getConnection().isReadOnly()"
+    query_timeout: "#OBJ.getQueryTimeout()"
+    max_rows: "#OBJ.getMaxRows()"
+    fetch_size: "#OBJ.getFetchSize()"
 
 - name: sql-prepared
-  description: Identifies parameterized database queries
+  description: Identifies parameterized database queries, the database they are for, how many parameters they take and how they can be read
   methods:
   - java.sql.Connection.prepareCall
   - java.sql.Connection.prepareStatement
   captures:
-    sql: "#ARGS"
+    sql: "#P0"
+    database: "#OBJ.getMetaData().getDatabaseProductName()"
+    url: "#OBJ.getMetaData().getURL()"
+    user: "#OBJ.getMetaData().getUserName()"
+    schema: "#OBJ.getSchema()"
+    auto_commit: "#OBJ.getAutoCommit()"
+    isolation: "#OBJ.getTransactionIsolation()"
+    read_only: "#OBJ.isReadOnly()"
+    parameter_count: "#RET?.getParameterMetaData()?.getParameterCount()"
+    result_set_type: "#RET?.getResultSetType()"
+    result_set_concurrency: "#RET?.getResultSetConcurrency()"
 
 - name: sql-connection
   description: Identifies a database connection being opened, the JDBC URL it connects to and the database and driver behind it
@@ -80,58 +100,9 @@ sensors:
   captures:
     args: "#ARGS"
 
-- name: file-path
-  description: Identifies file and directory use
-  methods:
-  - java.io.File.<init>
-  captures:
-    path: "#OBJ.getCanonicalPath()"
-  # leaves out the JDK and servlet container files that are read all the time
-  matchers:
-    path:
-      - "!/apache-tomcat"
-      - "!/tomcat-base"
-      - "!/openjdk"
-      - "!/Cellar/"
-      - "!/candidates/java/"
+reports:
 
-- name: net-socket
-  description: Identifies a socket being opened
-  methods:
-  - java.net.Socket.<init>
-  captures:
-    host: "#P0"
-    port: "#P1"
-  matchers:
-    host:
-      - "!null"
-    port:
-      - "!^8080$"
-
-- name: net-url
-  description: Identifies the host and protocol of a URL being connected to
-  methods:
-  - java.net.URL.openConnection
-  captures:
-    host: "#OBJ.getHost()"
-    protocol: "#OBJ.getProtocol()"
-    port: "#OBJ.getPort() == -1 ? #OBJ.getDefaultPort() : #OBJ.getPort()"
-  matchers:
-    protocol:
-      - (?i)^(https?|ftp)$
-
-- name: object-class
-  description: Identifies the classes an ObjectInputStream turns bytes into
-  methods:
-  - java.io.ObjectInputStream.resolveClass
-  captures:
-    class: "#P0.getName()"
-
-# A web request must never deserialize objects.
-- name: object-deserialization
-  description: Identifies deserializing an object
-  methods:
-  - java.io.ObjectInputStream.readObject
-  - java.io.ObjectInputStream.readUnshared
-  captures:
-    args: "#ARGS"
+- name: Database Queries
+  type: table
+  rows: http-route.path
+  cols: sql-statement.sql

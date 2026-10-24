@@ -5,6 +5,19 @@
   const NODE_W = 200, NODE_H = 26, GAP_Y = 10, COL_GAP = 80, PAD = 16, HEADER = 0;
   // going down, boxes in a row are this far apart, and rows this far, which leaves room for the lines between them to bend
   const GAP_X = 28, ROW_GAP = 40;
+  // A box is its header, the method, with a stack of inner boxes under it for what the method's sensors saw, one for each sensor
+  const IN_H = 22, IN_GAP = 4, IN_PAD = 6, IN_INSET = 6;
+
+  // how tall a box is, the header and then a row for each sensor inside it
+  function heightOf(n) {
+    const k = (n.inner || []).length;
+    return k ? NODE_H - 2 + k * IN_H + (k - 1) * IN_GAP + IN_PAD : NODE_H;
+  }
+
+  // where the inner box i of a node is, from the top of the node
+  function innerAt(i) {
+    return { x: IN_INSET, y: NODE_H - 2 + i * (IN_H + IN_GAP), h: IN_H };
+  }
 
   // The picture is a main line with branches. The main line is the path through the busiest nodes, from the route to the last thing
   // that happened, one box after another along a row. Anything else sits next to where it leaves that line, one column on from
@@ -56,14 +69,14 @@
     // order the boxes happen. Without a count of requests for each kind it is the path from a route through the most events, the
     // busiest route if there are several
     const counts = options && options.lineCounts;
-    let spine = [];
+    let spine = [], topLine = null;
     if (counts) {
       let top = null;
       for (const key of Object.keys(counts)) {
         const mine = nodes.filter((n) => (n.lines || []).includes(Number(key))).length;
         if (top === null || counts[key] > counts[top.key] || (counts[key] === counts[top.key] && mine > top.mine)) top = { key, mine };
       }
-      if (top) spine = order.filter((id) => (byId.get(id).lines || []).includes(Number(top.key)));
+      if (top) topLine = Number(top.key);
     }
     const best = new Map(), next = new Map();
     for (const id of order.slice().reverse()) {
@@ -77,6 +90,19 @@
     const starts = nodes.filter((n) => !inn.get(n.id).length);
     const routes = starts.filter((n) => n.kind === "route");
     const first = (routes.length ? routes : starts).slice().sort((a, b) => best.get(b.id) - best.get(a.id) || a.label.localeCompare(b.label))[0];
+    // The main line is a path. A method that calls several others, which is what most of them do, has them side by side, and
+    // the line goes on through the one most of those requests went through, the busiest when they are level
+    if (topLine !== null) {
+      const mine = (id) => (byId.get(id).lines || []).includes(topLine);
+      const start = (routes.length ? routes : starts).filter((n) => mine(n.id)).sort((a, b) => best.get(b.id) - best.get(a.id) || a.label.localeCompare(b.label))[0];
+      const seenOnLine = new Set();
+      for (let id = start && start.id; id !== undefined && !seenOnLine.has(id); ) {
+        seenOnLine.add(id);
+        spine.push(id);
+        const ahead = out.get(id).filter(mine).sort((a, b) => best.get(b) - best.get(a) || byId.get(b).events - byId.get(a).events);
+        id = ahead[0];
+      }
+    }
     if (!spine.length) for (let id = first && first.id; id !== undefined; id = next.get(id)) spine.push(id);
     const onSpine = new Set(spine);
 
@@ -111,20 +137,54 @@
     const columns = nodes.length ? Math.max(...nodes.map((n) => col.get(n.id))) + 1 : 0;
     const across = high - low + 1;
 
+    const tall = new Map(nodes.map((n) => [n.id, heightOf(n)]));
     const pos = new Map();
     if (down) {
-      for (const n of nodes) pos.set(n.id, { x: PAD + (rowOf.get(n.id) - low) * (NODE_W + GAP_X), y: PAD + col.get(n.id) * (NODE_H + ROW_GAP), column: col.get(n.id), row: rowOf.get(n.id) });
+      // each level is as tall as its tallest box
+      const levelTall = [];
+      for (const n of nodes) levelTall[col.get(n.id)] = Math.max(levelTall[col.get(n.id)] || 0, tall.get(n.id));
+      const levelTop = [];
+      let at = PAD;
+      for (let c = 0; c < levelTall.length; c++) { levelTop[c] = at; at += (levelTall[c] || NODE_H) + ROW_GAP; }
+      for (const n of nodes) pos.set(n.id, { x: PAD + (rowOf.get(n.id) - low) * (NODE_W + GAP_X), y: levelTop[col.get(n.id)], h: tall.get(n.id), column: col.get(n.id), row: rowOf.get(n.id) });
       return {
         pos, closing, spine, columns, down: true, nodeW: NODE_W, nodeH: NODE_H,
         width: PAD * 2 + Math.max(1, across) * NODE_W + Math.max(0, across - 1) * GAP_X,
-        height: PAD * 2 + Math.max(1, columns) * NODE_H + Math.max(0, columns - 1) * ROW_GAP,
+        height: at - ROW_GAP + PAD,
       };
     }
-    for (const n of nodes) pos.set(n.id, { x: PAD + col.get(n.id) * (NODE_W + COL_GAP), y: PAD + HEADER + (rowOf.get(n.id) - low) * (NODE_H + GAP_Y), column: col.get(n.id), row: rowOf.get(n.id) });
+    // Down a column the boxes are stacked as tall as they are. The main line's box is at the top of its column's baseline, the branches
+    // below it, and the ones above it, so a row is as tall as what is in it and nothing is wasted on a box that is only one line
+    const y = new Map();
+    const byCol = new Map();
+    for (const n of nodes) { if (!byCol.has(col.get(n.id))) byCol.set(col.get(n.id), []); byCol.get(col.get(n.id)).push(n); }
+    for (const list of byCol.values()) {
+      list.sort((a, b) => rowOf.get(a.id) - rowOf.get(b.id));
+      const base = list.findIndex((n) => rowOf.get(n.id) >= 0);
+      const split = base < 0 ? list.length : base;
+      let at = 0;
+      for (let i = split; i < list.length; i++) {          // the row 0 box and the rows below it
+        if (i === split && rowOf.get(list[i].id) > 0) at = NODE_H + GAP_Y;       // nothing on the main line here, so leave its place
+        y.set(list[i].id, at);
+        at += tall.get(list[i].id) + GAP_Y;
+      }
+      at = 0;
+      for (let i = split - 1; i >= 0; i--) {               // the rows above it
+        at -= tall.get(list[i].id) + GAP_Y;
+        y.set(list[i].id, at);
+      }
+    }
+    const lowest = nodes.length ? Math.min(...nodes.map((n) => y.get(n.id))) : 0;
+    let bottom = 0;
+    for (const n of nodes) {
+      const top = PAD + HEADER + y.get(n.id) - lowest;
+      bottom = Math.max(bottom, top + tall.get(n.id));
+      pos.set(n.id, { x: PAD + col.get(n.id) * (NODE_W + COL_GAP), y: top, h: tall.get(n.id), column: col.get(n.id), row: rowOf.get(n.id) });
+    }
     return {
       pos, closing, spine, columns, down: false, nodeW: NODE_W, nodeH: NODE_H,
       width: PAD * 2 + Math.max(1, columns) * NODE_W + Math.max(0, columns - 1) * COL_GAP,
-      height: PAD * 2 + HEADER + Math.max(1, across) * NODE_H + Math.max(0, across - 1) * GAP_Y,
+      height: Math.max(PAD * 2 + NODE_H, bottom + PAD),
     };
   }
 
@@ -132,11 +192,15 @@
   // lines use each node and edge. What lights up with a node is what those lines use, a path through it. Following edges
   // out from the node instead would join requests that never met, because one that did A and then B and another that did
   // B and then A make a loop between the two, and everything on the loop is then reachable from everything else.
+  // A sensor is not a box of its own, it is inside every method that triggered it, and it is picked as effect:name. It lights the
+  // paths of all of them.
   function through(id, nodes, edges) {
     const node = nodes.find((x) => x.id === id);
     const mine = new Set(node && node.lines ? node.lines : []);
+    if (!node && id.startsWith("effect:")) for (const n of nodes) for (const i of n.inner || []) if (i.sensor === id.slice(7)) for (const l of i.lines || []) mine.add(l);
     const uses = (x) => (x.lines || []).some((l) => mine.has(l));
-    return { nodes: new Set([id, ...nodes.filter(uses).map((x) => x.id)]), edges: new Set(edges.filter(uses)) };
+    const holds = new Set(nodes.filter((n) => id.startsWith("effect:") && (n.inner || []).some((i) => i.sensor === id.slice(7))).map((n) => n.id));
+    return { nodes: new Set([id, ...nodes.filter(uses).map((x) => x.id), ...holds]), edges: new Set(edges.filter(uses)) };
   }
 
   const union = (a, b) => [...new Set([...(a || []), ...(b || [])])].sort((x, y) => x - y);
@@ -190,6 +254,7 @@
         full: run.map((m) => m.full).join("\n"),
         members: run.map((m) => m.id),
         lines: run.reduce((all, m) => union(all, m.lines), []),
+        inner: run.reduce((all, m) => all.concat(m.inner || []), []),
         firstUse: run.reduce((sum, m) => sum + (m.firstUse || 0), 0) || undefined,
       }));
     }
@@ -211,7 +276,7 @@
     const head = new Map();   // a dropped initializer to the node that stands for it
     const firstUse = new Map();
     for (const a of nodes) {
-      if (a.kind !== "code" || !a.full.endsWith(".<clinit>") || out.get(a.id).length !== 1) continue;
+      if (a.kind !== "code" || !a.full.endsWith(".<clinit>") || out.get(a.id).length !== 1 || (a.inner || []).length) continue;
       const b = byId.get(out.get(a.id)[0].to);
       if (b.kind !== "code" || b.id === a.id || classOf(b.full) !== classOf(a.full) || head.has(b.id)) continue;
       head.set(a.id, b.id);
@@ -265,13 +330,19 @@
       for (const edge of kept) { used.add(edge.from); used.add(edge.to); }
       return used;
     };
-    const effects = nodes.filter((n) => n.kind === "effect" && (n.lines || []).length);
+    // what a method's sensors saw is inside its box, and the lines that saw it are those of its inner boxes
+    const seenBy = (n) => (n.inner || []).reduce((all, i) => union(all, i.lines), []);
+    const effects = nodes.filter((n) => seenBy(n).length);
     for (const n of effects) {
-      if ((n.blocked || 0) > 0 || (n.monitored || 0) > 0) for (const line of n.lines) for (const edge of pathOf(line)) kept.add(edge);
+      if ((n.blocked || 0) > 0 || (n.monitored || 0) > 0) {
+        const marked = (n.inner || []).filter((i) => i.blocked > 0 || i.monitored > 0 || /-(blocked|monitored)$/.test(i.sensor)).reduce((all, i) => union(all, i.lines), []);
+        for (const line of marked.length ? marked : seenBy(n)) for (const edge of pathOf(line)) kept.add(edge);
+      }
     }
     for (const n of effects) {
       if (reached().has(n.id)) continue;
-      const commonest = n.lines.reduce((best, line) => ((counts[line] || 0) > (counts[best] || 0) ? line : best), n.lines[0]);
+      const lines = seenBy(n);
+      const commonest = lines.reduce((best, line) => ((counts[line] || 0) > (counts[best] || 0) ? line : best), lines[0]);
       for (const edge of pathOf(commonest)) kept.add(edge);
     }
     const keptEdges = edges.filter((edge) => kept.has(edge));
@@ -318,19 +389,20 @@
     const at = pos.get(from);
     if (!at) return null;
     const vertical = dir === "up" || dir === "down";
+    const cy = (p) => p.y + (p.h || NODE_H) / 2;             // boxes are as tall as what is inside them, so it is the centers that are compared
     const sign = dir === "right" || dir === "down" ? 1 : -1;
     let best = null, bestScore = Infinity;
     for (const [id, p] of pos) {
       if (id === from) continue;
-      const along = (vertical ? p.y - at.y : p.x - at.x) * sign;
+      const along = (vertical ? cy(p) - cy(at) : p.x - at.x) * sign;
       if (along <= 0) continue;
-      const score = along + 2.5 * Math.abs(vertical ? p.x - at.x : p.y - at.y);
+      const score = along + 2.5 * Math.abs(vertical ? p.x - at.x : cy(p) - cy(at));
       if (score < bestScore) { best = id; bestScore = score; }
     }
     return best;
   }
 
-  const api = { layout, through, curve, curveDown, collapse, prune, sensorFor, frameMethod, neighbor };
+  const api = { layout, through, curve, curveDown, collapse, prune, sensorFor, frameMethod, neighbor, heightOf, innerAt, IN_H, IN_INSET };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.JotGraph = api;
 })(typeof window !== "undefined" ? window : globalThis);

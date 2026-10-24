@@ -462,7 +462,14 @@ class App:
         # how many requests each route had, since a busy one is drawn from its newest and the graph should say so
         requests = dict(store.run_query(self.db_path, "SELECT route, COUNT(*) FROM (%s) WHERE route IS NOT NULL GROUP BY route"
                                         % self._route_per_request("events", ""), limit=5000)["rows"])
-        return build(rows["rows"], routes, self.ingestor.app_prefixes, bool(details), rows["truncated"], store.graph_methods(self.db_path), requests, entries)
+        built = build(rows["rows"], routes, self.ingestor.app_prefixes, bool(details), rows["truncated"], store.graph_methods(self.db_path), requests, entries)
+        # every entry is on the graph, with or without sensor events in it. One picked is the only one, and a method means the requests that used it,
+        # which aren't counted for an entry that had no events
+        if not method:
+            drawn = {g["route"] for g in built["graphs"]}
+            built["graphs"] += [store.empty_graph(r, requests.get(r, 0)) for r in routes if r not in drawn and (not route or r == route)]
+            built["graphs"].sort(key=lambda g: (g["route"] == store.NO_REQUEST, g["route"].lower()))
+        return built
 
     def reset_filters(self):
         """Take every filter off, the start time included, so every event shows again."""

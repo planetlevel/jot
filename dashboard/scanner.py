@@ -5,6 +5,9 @@ and which packages are its own. What it reads goes to the model, so there are li
 link. It never reads a file that can hold credentials, like .env files, private keys and keystores. It skips what is built or fetched rather than
 written, like target and node_modules, and files that are not text. And there is a limit on how much it reads in one turn.
 
+list_libraries, search_libraries and describe_class look at what the application's libraries can do, which its own code doesn't say. They are in
+libraries.py and read jar names and the public methods of a class, never the paths of the jars.
+
 find_entry_candidates is the exception to reading one file at a time. It looks for the signals of how Java applications start running, servlets,
 Spring and JAX-RS annotations, schedulers, listeners and main methods, and answers with where it found each, so the model can start from what
 the project says and read only what it needs to decide.
@@ -14,6 +17,8 @@ import fnmatch
 import os
 import re
 import time
+
+import libraries
 
 MAX_LIST = 300                   # entries of one listing
 MAX_READ_LINES = 400             # lines of one read
@@ -162,13 +167,31 @@ class Scanner:
                             "glob limits it to files like *.java." % MAX_MATCHES,
              "input_schema": {"type": "object", "properties": {"pattern": {"type": "string"}, "path": path, "glob": {"type": "string"},
                                                                   "ignore_case": {"type": "boolean"}}, "required": ["pattern"]}},
+            {"name": "list_libraries",
+             "description": "The libraries the application has, from its build files, the jars it ships and the local build caches. Declared ones, the ones those need in "
+                            "turn, and the ones built into a jar, as group:artifact:version. Also the application server and framework, and the libraries and platform "
+                            "calls that are worth a look because of what they can do, each with the methods to start from. This is how to find what the application can do "
+                            "that its own code doesn't say, like parsing XML, evaluating expressions, deserializing, fetching URLs or running scripts, which a library "
+                            "or the server may do for it. Call it after the entry points.",
+             "input_schema": {"type": "object", "properties": {}}},
+            {"name": "search_libraries",
+             "description": "Finds classes by a regular expression on their full name, in the jars of the project's libraries, like 'Deserializ|ObjectInput' or "
+                            "'(Template|Engine)$'. library narrows it to one, as group:artifact or part of its name. Use it to find the related capabilities of a library "
+                            "beyond the ones list_libraries mentions.",
+             "input_schema": {"type": "object", "properties": {"pattern": {"type": "string"}, "library": {"type": "string"}}, "required": ["pattern"]}},
+            {"name": "describe_class",
+             "description": "The public methods and fields of a class, so you can pick the method to watch and write its full name and parameters. It looks in the "
+                            "project's libraries, and in the JDK for java, javax and jdk classes. It needs javap, which comes with the JDK.",
+             "input_schema": {"type": "object", "properties": {"class_name": {"type": "string", "description": "with its package, like org.yaml.snakeyaml.Yaml"},
+                                                                  "library": {"type": "string"}}, "required": ["class_name"]}},
         ]
 
     def functions(self):
         if not self.root or not self.local:
             return {}
         return {"project_overview": self.project_overview, "find_entry_candidates": self.find_entry_candidates, "list_files": self.list_files,
-                "read_file": self.read_file, "search_files": self.search_files}
+                "read_file": self.read_file, "search_files": self.search_files, "list_libraries": self.list_libraries,
+                "search_libraries": self.search_libraries, "describe_class": self.describe_class}
 
     def describe(self, name, args, out):
         """What the page says about a tool call, so the person can see what is being looked at."""
@@ -184,6 +207,12 @@ class Scanner:
             return "Read %s, lines %d to %d" % (out["path"], out["start"], out["end"])
         if name == "search_files":
             return "Searched for %s, %d matches in %d files" % (args.get("pattern"), len(out["matches"]), len({m["file"] for m in out["matches"]}))
+        if name == "list_libraries":
+            return "Looked at the libraries, found %d" % (len(out.get("declared", [])) + len(out.get("needed_by_those", [])) + len(out.get("shipped", [])))
+        if name == "search_libraries":
+            return "Searched the libraries for %s, %d classes" % (args.get("pattern"), len(out["matches"]))
+        if name == "describe_class":
+            return "Looked at the methods of %s" % args.get("class_name")
         return name
 
     # ------------------------------------------------------------------ keeping inside the folder
@@ -249,6 +278,34 @@ class Scanner:
                         return
                     yield real
             stack.extend(reversed(dirs))
+
+    # ------------------------------------------------------------------ the libraries
+
+    def _libraries(self, fresh=False):
+        """The project's libraries, found again when asked and otherwise kept for the folder they were found in."""
+        if not self.root:
+            raise ScanError("no project folder is set")
+        have = getattr(self, "_libs", None)
+        if fresh or not have or have.root != self.root:
+            self._libs = libraries.Libraries(self.root)
+        return self._libs
+
+    def list_libraries(self):
+        out = self._libraries(fresh=True).listing()
+        self._spend(str(out))
+        return out
+
+    def search_libraries(self, pattern, library=None):
+        if not (pattern or "").strip():
+            raise ScanError("give a pattern for the class names")
+        out = self._libraries().search(pattern, library)
+        self._spend(str(out))
+        return out
+
+    def describe_class(self, class_name, library=None):
+        out = self._libraries().describe(class_name, library)
+        self._spend(out["declaration"])
+        return out
 
     # ------------------------------------------------------------------ the tools
 

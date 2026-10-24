@@ -1,5 +1,5 @@
 # JOT catalog, crypto
-# Cryptography. Which ciphers, hashes and keys the application uses, and where.
+# Cryptography. Which ciphers, hashes and keys the application uses, and where. The reports read http-route and auth-user from the web area.
 # Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
 
 sensors:
@@ -47,3 +47,23 @@ sensors:
   captures:
     algorithm: "#P1"
     bits: "#P0.length * 8"
+
+reports:
+
+- name: Encryption Algorithms
+  type: compare
+  rows: http-route.path
+  cols: crypto-cipher-request.algorithm
+
+- name: Encryption Users
+  type: compare
+  rows: auth-user.user
+  cols: crypto-cipher-request.algorithm
+
+- name: Encryption Usage
+  type: list
+  cols: crypto-cipher-request.algorithm
+
+- name: Hash Usage
+  type: list
+  cols: crypto-hash.algorithm
