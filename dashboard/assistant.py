@@ -68,7 +68,8 @@ find out what they want to learn about their application, and propose something 
 - After they apply something, say the one next step. For a new sensor that is restarting the application, using it, and looking at the Events or Graph
   page. Rules start as report only, so say that nothing is blocked yet.
 - Use plain words. Say what a thing does before you call it a sensor, a rule or an entry point, then use the word. Never lecture.
-- Keep replies to a few sentences, and a short list when you show choices. The cards say what is proposed and why, so don't repeat them in the reply.
+- Keep replies terse, one or two short sentences, and a short list only when you show choices. The cards say what is proposed, and their reason is hidden until
+  the person opens it, so write the reason as one plain sentence and never repeat it or the card in the reply. Explain more only when asked.
 
 Using the catalog
 - The catalog has an area for each concern, and an area is what a person brings in. Call list_catalog_areas to see them, then list_catalog with an area for
@@ -321,24 +322,6 @@ class Assistant:
         except (OSError, ValueError, LookupError):
             return True
 
-    def _folder_from(self, text):
-        """If all the person said is where their project is, sets the folder, and says what happened. Nothing else is done with the words."""
-        word = text.strip()
-        if " " in word or "\n" in word:
-            return None
-        if word.startswith(("http://", "https://", "git@", "ssh://")):
-            return "I can't fetch a repository for you. Clone it with git, then give me the folder it is in, like ~/git/%s." % (
-                word.rstrip("/").rsplit("/", 1)[-1].replace(".git", "") or "project")
-        if word.startswith(("/", "~")):
-            if self.project is None:
-                return None
-            try:
-                root = self.project.set_root(word)
-            except ValueError as e:
-                return "I can't use that folder, %s." % e
-            return "I can look at %s now. Say what you would like to find out, or choose one of the buttons." % root
-        return None
-
     def _editable(self):
         return bool(self.app.editable and self.app.jots_file)
 
@@ -357,11 +340,6 @@ class Assistant:
             if self.project is not None:
                 self.project.begin()
             self._item(chat, "user", text)
-            said = self._folder_from(text)
-            if said:
-                self._item(chat, "assistant", said)
-                self._write("UPDATE chats SET title = COALESCE(title, ?) WHERE id = ?", ("Project folder", chat))
-                return self.view(chat, 0)
             self._write("UPDATE chats SET title = COALESCE(title, ?) WHERE id = ?", (text.replace("\n", " ")[:TITLE], chat))
             self._api(chat, "user", [{"type": "text", "text": self._context(chat) + "\n\n" + text}])
             stop = threading.Event()

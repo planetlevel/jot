@@ -23,6 +23,7 @@ import yaml
 import control as control_module
 import assistant
 import catalog
+import autosetup as autosetup_module
 import launcher
 import scanner
 import llm
@@ -1059,11 +1060,6 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == "/api/assistant/new":
                 chat = self.app.assistant.new_chat()
                 return self._send(200, self.app.assistant.view(chat, 0))
-            if url.path == "/api/assistant/folder":
-                try:
-                    return self._send(200, {"folder": self.app.scanner.set_root(body.get("folder"))})
-                except scanner.ScanError as e:
-                    return self._send(400, {"error": str(e)})
             if url.path == "/api/assistant/send":
                 return self._send(200, self.app.assistant.send(int(body.get("chat")), body.get("text")))
             if url.path == "/api/assistant/stop":
@@ -1121,7 +1117,7 @@ def project_root(jots, folder):
     return os.path.dirname(here) if os.path.basename(here) == store.JOT_DIR else here
 
 
-def build_project(folder, jots=None, db=None, logs=None, apps=(), remote=False, create=False, say=print):
+def build_project(folder, jots=None, db=None, logs=None, apps=(), remote=False, create=False, say=print, autosetup=False):
     """Opens a project, the folder with its .jot folder, and returns the App for it, with its events being followed. The jots file is
     .jot/jot.yaml or jot.yaml in the folder. With neither, create makes .jot/jot.yaml for the assistant to fill and without create it raises
     NeedsSetup, so nothing is written into a folder until the person says so. The database, the events and the control file are in .jot."""
@@ -1137,6 +1133,8 @@ def build_project(folder, jots=None, db=None, logs=None, apps=(), remote=False, 
                 f.write(store.FRESH_CONFIG)
             say("  no jot.yaml yet, made %s for the assistant to fill" % os.path.relpath(jots))
     root = project_root(jots, folder)
+    if autosetup and jots and not remote and os.path.isdir(root):
+        autosetup_module.run(jots, root, say=say)
     where = store.make_jot_dir(store.jot_dir(jots, folder))
     db = db or os.path.join(where, "dashboard.db")
     logs = logs or [os.path.join(where, "events.jsonl")]
@@ -1159,8 +1157,11 @@ def build_project(folder, jots=None, db=None, logs=None, apps=(), remote=False, 
               editable=bool(jots) and not remote, local=not remote)
     app.project_dir, app.first, app.loaded, app.reports_loaded = root, first, loaded, reports
     app.cli_apps = list(apps or [])      # packages given on the command line, which are kept when the configuration's change
-    if not remote and app.scanner.root is None and os.path.isdir(root):
-        app.scanner.set_root(root)          # the assistant looks at the project it is for
+    if not remote and os.path.isdir(root):
+        try:
+            app.scanner.set_root(root)      # the assistant looks at the project that is open, which the project menu chooses
+        except scanner.ScanError:
+            pass                            # a folder too broad to read, like the home folder, so it can't look at code
     if not remote and jots and os.path.isdir(root):
         app.launcher = launcher.Launcher(root, os.path.abspath(jots))
     return app
@@ -1254,7 +1255,7 @@ class Host:
             try:
                 store.reset_project(jots, root, extra)
             finally:
-                self.handler.app = build_project(root, apps=self.apps, create=True, say=lambda *_: None)
+                self.handler.app = build_project(root, apps=self.apps, create=True, say=lambda *_: None, autosetup=True)
         return dict(self.info(), reset=True)
 
     def open(self, path, create=False):
@@ -1322,7 +1323,7 @@ def main(argv=None):
         print("  read %s from %s" % (", ".join(loaded_env), env_file))
 
     try:
-        app = build_project(os.getcwd(), jots=args.jots, db=args.db, logs=args.log, apps=args.app, remote=args.allow_remote, create=True)
+        app = build_project(os.getcwd(), jots=args.jots, db=args.db, logs=args.log, apps=args.app, remote=args.allow_remote, create=True, autosetup=True)
     except (OSError, store.QueryError) as e:
         p.error(str(e))
     ask_for_key(env_file)

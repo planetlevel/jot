@@ -3804,21 +3804,19 @@ class ScannerTests(unittest.TestCase):
         self.assertTrue({"a servlet class", "a Spring controller", "a main method"} <= kinds)
         self.assertNotIn("built", str(found))
 
-    def test_a_path_said_in_the_chat_sets_the_folder_and_a_url_is_declined(self):
-        self.s.set_root("")
+    def test_a_path_said_in_the_chat_is_only_a_message_and_the_open_project_is_the_folder(self):
         a = self.app.assistant
+        self.assertEqual(self.s.root, a.view(a.new_chat())["folder"])
+        other = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, other, True)
+        app = server.build_project(other, create=True, say=lambda *_: None)
+        self.addCleanup(app.close)
+        self.assertEqual(os.path.realpath(other), app.scanner.root, "the assistant looks at the project that is open")
+        self.s.set_root("")
         chat = a.new_chat()
-        self.assertEqual((a.view(chat)["folder"], a.view(chat)["empty"]), (None, True))
         said = a.send(chat, self.root)
-        self.assertEqual(self.s.root, self.root)
-        self.assertIn("I can look at", said["items"][-1]["text"])
-        self.assertEqual(said["folder"], self.root)
-        self.assertFalse(said["running"])
-        said = a.send(chat, "https://github.com/acme/shop.git")
-        self.assertIn("Clone it", said["items"][-1]["text"])
-        said = a.send(chat, "/")
-        self.assertIn("can't use that folder", said["items"][-1]["text"])
-        self.assertEqual(self.s.root, self.root)
+        self.assertIsNone(self.s.root, "a path typed in the chat doesn't choose the folder, the project menu does")
+        self.assertNotIn("I can look at", " ".join(i["text"] for i in said["items"]))
 
     def test_the_assistant_offers_the_tools_and_shows_what_it_read(self):
         sent = []
@@ -3954,7 +3952,7 @@ class AssistantTests(unittest.TestCase):
 
     def test_the_instructions_start_with_what_the_person_wants_and_use_the_catalog_by_area(self):
         prompt = assistant.system_prompt()
-        for phrase in ("ask_person", "list_catalog_areas", "general understanding", "security vulnerabilities", "needs_areas", "a few sentences"):
+        for phrase in ("ask_person", "list_catalog_areas", "general understanding", "security vulnerabilities", "needs_areas", "one or two short sentences"):
             self.assertIn(phrase, prompt)
 
     # ------------------------------------------------------------------ a plain conversation
@@ -4425,8 +4423,8 @@ class AssistantPageTests(unittest.TestCase):
       const out = {};
       try {
         location.hash = "#assistant";
-        await until(() => q("#assistantLog .tips button"));
-        out.tips = all("#assistantLog .tips button").map((b) => b.textContent);
+        await until(() => q("#assistantLog select.start"));
+        out.tips = all("#assistantLog select.start option").filter((o) => o.value !== "").map((b) => b.textContent);
         out.model = q("#assistantStatus").textContent;
         out.nav = q("#navAssistant").className;
         out.sendEnabled = !q("#assistantSend").disabled;
@@ -4520,17 +4518,17 @@ class AssistantPageTests(unittest.TestCase):
       const out = {};
       try {
         location.hash = "#assistant";
-        await until(() => q("#assistantLog .tips button"));
+        await until(() => q("#assistantLog select.start"));
         out.welcome = q("#assistantLog .bot").textContent;
-        out.goals = all("#assistantLog .tips button").slice(0, 3).map((b) => b.textContent);
-        out.topics = all("#assistantLog .tips button").slice(3).map((b) => b.textContent);
-        all("#assistantLog .tips button").find((b) => /security/.test(b.textContent)).click();
+        out.goals = all("#assistantLog select.start option").filter((o) => o.value !== "").slice(0, 3).map((b) => b.textContent);
+        out.topics = all("#assistantLog select.start option").filter((o) => o.value !== "").slice(3).map((b) => b.textContent);
+        const menu = q("#assistantLog select.start"); menu.value = all("#assistantLog select.start option").filter((o) => o.value !== "").find((o) => /security/.test(o.textContent)).value; menu.dispatchEvent(new Event("change"));
         await until(() => q("#assistantLog .question .choices button"));
         out.you = q("#assistantLog .you").textContent;
         out.ask = q("#assistantLog .question .ask").textContent;
         out.choices = all("#assistantLog .question .choices button").map((b) => b.textContent);
         out.answeredBefore = !!q("#assistantLog .question.answered");
-        out.welcomeGone = all("#assistantLog .tips").length === 0;
+        out.welcomeGone = all("#assistantLog select.start").length === 0;
         all("#assistantLog .question .choices button")[0].click();
         await until(() => q("#assistantLog .question.answered") && all("#assistantLog .bot").length === 2 && !q("#assistantLog .typing"));
         out.answeredAfter = !!q("#assistantLog .question.answered");
@@ -4543,7 +4541,7 @@ class AssistantPageTests(unittest.TestCase):
     """
         out = self.serve(app, script)
         self.assertNotIn("error", out, out)
-        self.assertEqual("What would you like to find out about this application?", out["welcome"])
+        self.assertTrue(out["welcome"].startswith("Hi, I'm Jot!") and out["welcome"].endswith("What are you interested in?"))
         self.assertEqual(["Get a general understanding", "Look for security vulnerabilities", "I'm not sure where to start"], out["goals"])
         self.assertIn("SQL", out["topics"])
         self.assertEqual("I want to look for security vulnerabilities in this application.", out["you"])
@@ -7041,6 +7039,17 @@ class ResetTests(unittest.TestCase):
         for gone in ("control.yaml", "agent.log", "run.json", "sub", "link"):
             self.assertFalse(os.path.lexists(os.path.join(self.where, gone)), gone)
 
+    def test_a_reset_finds_the_entry_points_packages_and_route_sensor_again(self):
+        src = os.path.join(self.project, "src", "main", "java", "com", "acme")
+        os.makedirs(src)
+        with open(os.path.join(src, "Hello.java"), "w") as f:
+            f.write("package com.acme;\npublic class Hello extends HttpServlet {}\n")
+        self.host.reset()
+        app = self.handler.app
+        self.assertEqual(list(store.DEFAULT_ENTRY), app.entry()["entry"])
+        self.assertEqual(["com.acme"], store.read_settings(app.jots_file)["packages"])
+        self.assertEqual(["http-route"], [s["name"] for s in app.jots()["sensors"]])
+
     def test_a_symbolic_link_is_removed_and_never_followed(self):
         self.host.reset()
         self.assertTrue(os.path.isfile(self.keep))
@@ -7262,6 +7271,55 @@ class GraphKeysTests(unittest.TestCase):
         self.assertEqual((True, out["first"][1]), tuple(out["nothingLeft"]), "nothing is left of the entry, so the pick stays and the key is still taken")
         self.assertEqual((False, out["first"][1]), tuple(out["inSelect"]), "a key typed in a field or a menu belongs to it")
         self.assertFalse(out["withShift"][0], "a key with a modifier is left to the browser")
+
+
+class AutoSetupTests(unittest.TestCase):
+    def setUp(self):
+        self.project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.project, True)
+        self.write("src/main/java/com/acme/app/Hello.java",
+                   "package com.acme.app;\npublic class Hello extends HttpServlet {}\n")
+        self.write("src/test/java/com/other/T.java", "package com.other;\npublic class T extends HttpServlet {}\n")
+
+    def write(self, name, text):
+        path = os.path.join(self.project, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+        return path
+
+    def start(self):
+        app = server.build_project(self.project, create=True, autosetup=True, say=lambda *_: None)
+        self.addCleanup(app.close)
+        return app
+
+    def test_a_new_project_gets_entry_points_packages_and_the_route_sensor(self):
+        app = self.start()
+        settings = store.read_settings(app.jots_file)
+        self.assertEqual(list(store.DEFAULT_ENTRY), settings["entry"])
+        self.assertEqual(["com.acme"], settings["packages"], "test sources aren't the application")
+        self.assertEqual(["http-route"], [s["name"] for s in app.jots()["sensors"]])
+
+    def test_it_is_off_unless_asked_for(self):
+        app = server.build_project(self.project, create=True, say=lambda *_: None)
+        self.addCleanup(app.close)
+        self.assertEqual({"entry": None, "ignore": None, "packages": None}, store.read_settings(app.jots_file))
+
+    def test_what_the_file_already_says_is_kept_and_a_second_start_changes_nothing(self):
+        os.makedirs(os.path.join(self.project, ".jot"))
+        path = self.write(".jot/jot.yaml", "app:\n  packages:\n    - com.mine\n")
+        self.start().close()
+        settings = store.read_settings(path)
+        self.assertEqual(["com.mine"], settings["packages"])
+        self.assertEqual(list(store.DEFAULT_ENTRY), settings["entry"])
+        before = open(path).read()
+        self.start().close()
+        self.assertEqual(before, open(path).read())
+
+    def test_a_folder_without_java_is_left_alone(self):
+        shutil.rmtree(os.path.join(self.project, "src"))
+        app = self.start()
+        self.assertEqual(store.FRESH_CONFIG, open(app.jots_file).read())
 
 
 if __name__ == "__main__":

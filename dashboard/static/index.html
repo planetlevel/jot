@@ -230,7 +230,8 @@
   .alog .oops { align-self: flex-start; max-width: 92%; padding: 8px 12px; border-radius: 12px; background: var(--blocked-bg); color: var(--blocked); overflow-wrap: anywhere; }
   .alog .proposal { align-self: stretch; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel); }
   .alog .proposal h3 { margin: 0 0 4px; font-size: 14px; }
-  .alog .proposal .why { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+  .alog .proposal .whybox { margin: 0 0 6px; } .alog .proposal .whybox summary { font-size: 12.5px; }
+  .alog .proposal .why { color: var(--muted); font-size: 13px; margin: 4px 0 8px; }
   .alog .proposal .lists { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 13px; margin-bottom: 8px; }
   .alog .proposal .lists b { color: var(--muted); font-weight: 600; }
   .alog .proposal pre.value { max-height: 260px; overflow: auto; margin: 6px 0; }
@@ -239,9 +240,7 @@
   .alog .proposal .state { font-size: 13px; color: var(--muted); }
   .alog .proposal .state.bad { color: var(--blocked); }
   .alog .typing { color: var(--muted); font-size: 13px; padding-left: 4px; }
-  .alog .tips { display: flex; flex-wrap: wrap; gap: 8px; }
-  .alog .tips + .tipshead { margin-top: 6px; }
-  .alog .tipshead { color: var(--muted); font-size: 13px; padding-left: 4px; }
+  .alog select.start { align-self: flex-start; max-width: 100%; }
   .alog .question { align-self: flex-start; max-width: 92%; display: flex; flex-direction: column; gap: 8px; }
   .alog .question .ask { font-weight: 600; padding-left: 4px; }
   .alog .question .choices { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -402,12 +401,12 @@
     </div>
   </div>
   <nav aria-label="Pages">
+    <a href="#assistant" id="navAssistant">Assistant</a>
     <a href="#run" id="navRun">Run</a>
     <a href="#events" id="navEvents" class="active">Events</a>
     <a href="#graph" id="navGraph">Graph</a>
-    <a href="#jots" id="navJots">JOTs</a>
     <a href="#reports" id="navReports">Reports</a>
-    <a href="#assistant" id="navAssistant">Assistant</a>
+    <a href="#jots" id="navJots">Sensors</a>
   </nav>
   <div class="menu" id="recentMenu">
     <button type="button" id="recentBtn" aria-haspopup="true" aria-expanded="false">Recent questions &#9662;</button>
@@ -536,7 +535,7 @@
     </details>
 
     <div class="card wide" id="sensorsCard">
-      <h2 class="section">JOTs</h2>
+      <h2 class="section">Sensors</h2>
       <div class="jotbar" style="margin-top:8px">
         <input type="text" id="jotFilter" autocomplete="off" aria-label="Filter JOTs" placeholder="Filter by name, method, file or description">
         <button type="button" class="primary" id="newJot" title="Describe what you want and get a JOT drafted for you to review">New JOT</button>
@@ -598,12 +597,6 @@
         <button type="button" class="small" id="assistantNew">New conversation</button>
       </div>
       <div id="assistantNotice"></div>
-      <div class="assistantbar" id="assistantFolderRow" hidden>
-        <label for="assistantFolder">Project folder</label>
-        <input type="text" id="assistantFolder" size="48" placeholder="/path/to/your/project, so the assistant can look at its code">
-        <button type="button" class="small" id="assistantFolderSet">Set</button>
-        <span class="hint" id="assistantFolderHint">The assistant reads files under it, never credential files, and you see each one it reads.</span>
-      </div>
       <div class="alog" id="assistantLog" aria-live="polite"></div>
       <div class="acompose">
         <textarea id="assistantInput" rows="3" aria-label="Message to the assistant" placeholder="Say what you want, like: what is configured, or add a sensor that records file reads"></textarea>
@@ -877,7 +870,7 @@ async function openReset() {
     const list = [plural(r.events, "event"), plural(r.sensors, "sensor"), plural(r.reports, "report"), plural(r.entry, "entry point"),
       "the Assistant conversations, the protection settings and the logs"];
     panel.replaceChildren(el("div", { class: "notice" },
-      el("p", { text: "This deletes everything JOT has for " + r.folder.split("/").pop() + " and leaves an empty configuration, as if JOT had never run here. "
+      el("p", { text: "This deletes everything JOT has for " + r.folder.split("/").pop() + " and starts again from a fresh configuration, as if JOT had just started here, with the entry points, packages and route sensor found again from your source. "
         + "That is " + list.join(", ") + ". It can't be undone. Your application's own files aren't touched." }),
       r.kept.length ? el("p", { text: "Files the configuration points at from elsewhere are yours and stay: " + r.kept.join(", ") + "." }) : null,
       r.running || blocked ? el("p", { text: r.running ? "The application you started here will be stopped first."
@@ -1069,6 +1062,7 @@ let assistantItems = [];       // every item of the open conversation
 let assistantTimer = null;
 let assistantDrawn = "";
 
+const GREETING = "Hi, I'm Jot! I'm here to help you investigate how your software works. I can automatically create sensors and collect telemetry when your software runs. I can also make reports that pull together data from multiple sensors. What are you interested in?";
 const ASSISTANT_TIPS = ["What is configured?", "Combine my configuration into one file", "Which of my sensors have recorded nothing?", "Add a sensor that records files being written"];
 
 function inlineText(text) {
@@ -1093,8 +1087,6 @@ function renderReply(text) {
 async function openAssistant() {
   try {
     const home = await api("/api/assistant");
-    $("assistantFolderRow").hidden = !home.can_scan;
-    $("assistantFolder").value = home.folder || "";
     let chats = home.chats;
     if (!chats.length) { const made = await api("/api/assistant/new", {}); chats = [{ id: made.chat, title: made.title }]; }
     let wanted = assistantChat;
@@ -1172,19 +1164,6 @@ document.addEventListener("click", (ev) => { if (!$("projectMenu").contains(ev.t
 $("projectForm").addEventListener("submit", (ev) => { ev.preventDefault(); if ($("projectInput").value.trim()) openProject($("projectInput").value); });
 loadProject();
 
-async function setAssistantFolder() {
-  try {
-    const out = await api("/api/assistant/folder", { folder: $("assistantFolder").value });
-    $("assistantFolder").value = out.folder || "";
-    if (assistantChat) loadChat(assistantChat);
-    $("assistantFolderHint").textContent = out.folder ? "The assistant can now look at this folder." : "No folder is set, the assistant can't look at code.";
-  } catch (e) {
-    $("assistantFolderHint").textContent = e.message;
-  }
-}
-$("assistantFolderSet").addEventListener("click", setAssistantFolder);
-$("assistantFolder").addEventListener("keydown", (e) => { if (e.key === "Enter") setAssistantFolder(); });
-
 function drawChatPicker(chats, selected) {
   $("assistantChats").replaceChildren(...chats.map((c) => el("option", { value: String(c.id), text: c.title + (c.running ? " (working)" : "") })));
   $("assistantChats").value = String(selected);
@@ -1241,9 +1220,8 @@ function drawAssistant() {
     if (i.kind === "question") return questionCard(i, assistantItems.find((x) => x.n > i.n && x.kind === "user"), v);
     return null;
   }).filter(Boolean);
-  if (v.can_scan && document.activeElement !== $("assistantFolder")) $("assistantFolder").value = v.folder || "";
   if (!rows.length && v.can_scan && !v.folder) {
-    rows.push(el("div", { class: "bot" }, el("p", { text: "To get started, tell me where your project is. Paste its folder path below or in the Project folder field. If it is a repository URL, clone it first and give me the folder." })));
+    rows.push(el("div", { class: "bot" }, el("p", { text: "To get started, open your project from the menu at the top." })));
   } else if (!rows.length) {
     rows.push(...welcome(v));
   }
@@ -1259,17 +1237,21 @@ function welcome(v) {
   const goals = [["Get a general understanding", "I'd like a general understanding of what this application does and what it touches."],
     ["Look for security vulnerabilities", "I want to look for security vulnerabilities in this application."],
     ["I'm not sure where to start", "I'm not sure where to start."]];
-  const out = [el("div", { class: "bot" }, el("p", { text: "What would you like to find out about this application?" })),
-    el("div", { class: "tips" }, ...goals.map(([label, text]) => el("button", { type: "button", class: "small primary", text: label, onclick: () => say(text) })))];
+  // one pulldown holds every way to begin. A choice is run when it is picked, and the menu goes back to its prompt
+  const actions = [];
+  const group = (label, items) => ({ label, items: items.map(([text, run]) => { actions.push(run); return { text, i: actions.length - 1 }; }) });
+  const groups = [group("Find out", goals.map(([label, text]) => [label, () => say(text)]))];
   if (v.topics && v.topics.length) {
-    out.push(el("div", { class: "tipshead", text: "Or pick something to look at" }),
-      el("div", { class: "tips" }, ...v.topics.map((t) => el("button", { type: "button", class: "small", text: t.topic, onclick: () => say("I'd like to look at " + t.topic.charAt(0).toLowerCase() + t.topic.slice(1) + ".") }))));
+    groups.push(group("Look at", v.topics.map((t) => [t.topic, () => say("I'd like to look at " + t.topic.charAt(0).toLowerCase() + t.topic.slice(1) + ".")])));
   }
   const more = [];
-  if (v.can_scan && v.empty) more.push(el("button", { type: "button", class: "small", text: "Just set it up for me", onclick: () => say("Set up this project. Find the entry points and packages, then suggest sensors.") }));
-  if (!v.empty) more.push(...ASSISTANT_TIPS.map((t) => el("button", { type: "button", class: "small", text: t, onclick: () => { $("assistantInput").value = t; $("assistantInput").focus(); } })));
-  if (more.length) out.push(el("div", { class: "tipshead", text: v.empty ? "Or" : "Or ask about what is there" }), el("div", { class: "tips" }, ...more));
-  return out;
+  if (v.can_scan && v.empty) more.push(["Just set it up for me", () => say("Set up this project. Find the entry points and packages, then suggest sensors.")]);
+  if (!v.empty) more.push(...ASSISTANT_TIPS.map((t) => [t, () => { $("assistantInput").value = t; $("assistantInput").focus(); }]));
+  if (more.length) groups.push(group(v.empty ? "Or" : "Ask about what is there", more));
+  const menu = el("select", { class: "start", "aria-label": "Choose where to start" }, el("option", { value: "", text: "Choose where to start…" }),
+    ...groups.map((g) => el("optgroup", { label: g.label }, ...g.items.map((x) => el("option", { value: String(x.i), text: x.text })))));
+  menu.onchange = () => { const run = actions[Number(menu.value)]; menu.value = ""; if (run) run(); };
+  return [el("div", { class: "bot" }, el("p", { text: GREETING })), menu];
 }
 
 // a question the assistant asked, as buttons. Choosing sends the words as the person's reply, and once something was said after it, it is shown as answered
@@ -1301,7 +1283,7 @@ function listLine(label, values) {
 
 // a proposal as a card. What would be written is shown, and nothing is written until Apply
 function proposalCard(p, editable) {
-  const body = [el("h3", { text: p.title }), p.reason ? el("div", { class: "why", text: p.reason }) : null];
+  const body = [el("h3", { text: p.title }), p.reason ? el("details", { class: "whybox" }, el("summary", { text: "Why" }), el("div", { class: "why", text: p.reason })) : null];
   const d = p.payload;
   let file = null;
   if (p.kind === "setting") {
