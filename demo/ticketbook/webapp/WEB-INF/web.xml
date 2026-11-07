@@ -15,6 +15,16 @@
         <url-pattern>/profile</url-pattern>
     </servlet-mapping>
 
+    <servlet>
+        <servlet-name>idor</servlet-name>
+        <servlet-class>com.acme.ticketbook.idor.IdorServlet</servlet-class>
+    </servlet>
+
+    <servlet-mapping>
+        <servlet-name>idor</servlet-name>
+        <url-pattern>/idor/*</url-pattern>
+    </servlet-mapping>
+
 	<!-- Session Configuration -->
 	<session-config>
 	        <session-timeout>120</session-timeout>

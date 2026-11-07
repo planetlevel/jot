@@ -14,7 +14,7 @@
 	</properties>
 
 	<!-- Every library here is deliberately old, and several have known vulnerabilities. That is the point of the demo,
-		the CVE microsandboxes in ../../cves and the pages in webapp/ each go with one of them. Do not upgrade them.
+		the CVE microsandboxes in ../../catalog/cve and the pages in webapp/ each go with one of them. Do not upgrade them.
 		build.sh converts them from javax to jakarta for Tomcat 11, and they are not meant to be reused. -->
 	<dependencies>
 		<dependency>

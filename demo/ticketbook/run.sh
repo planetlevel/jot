@@ -39,7 +39,7 @@ cat > "$BASE/conf/Catalina/localhost/ticketbook.xml" <<XML
 <Context docBase="$HERE/webapp" reloadable="false"/>
 XML
 
-# The configuration is .jot/jot.yaml, and what JOT writes while it runs goes in .jot/ too. It holds the sensors and the rules that can stop a call, and lists ../../cves, the CVE microsandboxes. Everything in it is always
+# The configuration is .jot/jot.yaml, and what JOT writes while it runs goes in .jot/ too. It holds the sensors and the rules that can stop a call, and the CVE microsandboxes, one rule for each vulnerable library. Everything in it is always
 # loaded. The agent and the dashboard both read that file. MODE is only the state the run starts in. The dashboard's Monitor and Protect toggle changes it while the
 # app runs, nothing here locks it.
 #   MODE=protect   (default) the rules stop the call

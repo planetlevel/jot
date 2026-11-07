@@ -51,8 +51,8 @@ to capture and "reports" tell the dashboard how to tabulate it.
 
 Basically all you have to do is add JOT to the JVM
 - Download the latest jot.jar from https://github.com/planetlevel/jot/tags
-- Start the dashboard in your project's folder (`python3 dashboard/server.py`) and open the Assistant page. Give it the folder of your project
-  and it looks through the code for how the application starts, then proposes the entry points, packages, sensors, rules and reports that fit, from
+- Start the dashboard in your project's folder (`bin/jot`, or `python3 dashboard/server.py`). It opens on the Assistant page and fills in the entry points
+  and packages it finds in your source. Ask the Assistant what you want to find out and it looks through the code for how the application starts, then proposes the entry points, packages, sensors, rules and reports that fit, from
   the `catalog/` folder of this repository. You apply each proposal, and they are written to `.jot/jot.yaml` in your project.
 - Launch your app with "java -javaagent:jot.jar=.jot/jot.yaml", or with no argument if it starts in the project folder. Events go to `.jot/events.jsonl` beside it.
 
@@ -194,6 +194,29 @@ settings stay in force. Each change is logged as an event from the sensor `jot-c
 this file can switch protection off, keep it writable only by the account that manages JOT. The agent warns at startup if
 group or other users can write it.
 
+### Changing sensors and entry points while the application runs
+The agent also watches the jots file and the `.jot` files it lists, once a second, so adding, editing or removing a sensor or
+rule takes effect without a restart. It acts on a change once the files have stayed the same for a second, so a file that is
+still being saved is not read half done. Then it reads and checks every file before it touches anything, and compares the
+sensors by name with the ones that are running. A new name is added, a name that is gone is removed, and a name whose
+definition changed is replaced. A replacement goes on before the old one comes off, so there is no gap in coverage.
+
+The `app: entry:` list in the jots file follows too. A call already inside an entry point when the list changes finishes as
+it began, and only the calls that begin afterwards are held to the new list. A rule that applies to the application can
+therefore keep applying to a request that was already running, until that request ends.
+
+It fails safe, like the control file. A file that can't be read, isn't valid YAML, or whose `sensors` isn't a list changes
+nothing. A single sensor with a mistake is left out, logged, and the running version of it stays on. A wrong `entry` list
+leaves the running entry points as they are, and the sensors in the same edit still apply. The first definition of a name
+wins, as at startup. Only sensors that came from the files are managed. The Monitor and Protect state in the control file is
+applied to a new sensor before it goes on. The `packages` and `ignore` settings are still read only at startup.
+
+Each change is an event from the sensor `jot-control`, such as `NAME=added`, `NAME=replaced`, `NAME=removed` and
+`entry=changed`, and a problem is a `warning`. The sensor `jot-config` says `loaded=NAME` and `unloaded=NAME`. Anyone who can
+write these files can now change what is watched and blocked while the application runs, so keep them writable only by the
+account that manages JOT. `-Djot.reload=false` turns this off. With `-Djot.retransform=false`, a change only reaches classes
+that load after it.
+
 ## Servlet Applications
 JOT works with both `javax` (Tomcat 9 and earlier) and `jakarta` (Tomcat 10 and later) applications. Jakarta EE 9
 renamed packages such as `servlet`, `el`, `websocket`, `persistence`, `mail`, `jms` and `validation` from `javax.*` to
@@ -208,8 +231,21 @@ The same goes for scopes. Packages that belong to the JDK, such as `javax.crypto
 renamed, so they are listed once. A negative scope such as `!javax.servlet.Servlet.service` applies to the name it lists
 and nothing else.
 
-The `demo/ticketbook` directory runs a sample servlet application under Tomcat 11 with JOT attached, for use with
-the dashboard. See `demo/ticketbook/run.sh`.
+### Try the TicketBook demo
+
+The `demo/ticketbook` directory runs a deliberately vulnerable servlet application under Tomcat 11 with JOT attached. You need Java 17 or newer, Maven and Python 3. Only run it on a machine you control.
+
+Start the application in one terminal. The first run builds the agent and the application, and downloads Tomcat.
+
+    demo/ticketbook/run.sh                 # the rules block attacks
+    MODE=monitor demo/ticketbook/run.sh    # the rules only report, so the attacks still work
+
+Start the dashboard in a second terminal, from the demo folder, and open http://127.0.0.1:8765.
+
+    cd demo/ticketbook && ../../bin/jot
+
+Then browse http://localhost:8080/ticketbook, click around, and try the expression injection on `el.jsp`. The Events and Graph pages show what the application did, Reports tabulates it, and Sensors lists the sensors and rules and lets you switch each between monitor and protect while the application runs. The Assistant page can suggest more to watch.
+Click "Start over" only if you want to wipe the demo. It resets `demo/ticketbook/.jot/jot.yaml`, and `git checkout demo/ticketbook/.jot/jot.yaml` brings it back. See [demo/ticketbook/README.md](demo/ticketbook/README.md) for the sensors, rules and attacks.
 
 ## Classes the JVM loaded before JOT
 JOT instruments a class when it is loaded. A few classes in the JDK are loaded before any agent starts, among them

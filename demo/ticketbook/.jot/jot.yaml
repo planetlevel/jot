@@ -1,24 +1,12 @@
-jots:
-  - ../../../cves
-control: control.yaml
+# The configuration of this project. The Assistant page can set it up, and this file is the one place it lives.
 app:
+  packages:
+    - com.acme
   entry:
     - javax.servlet.Servlet.service
     - jakarta.servlet.Servlet.service
-  packages:
-    - com.acme
-    - org.apache.jsp
-ignore:
-  - java.lang.ClassLoader
-  - java.net.URLClassLoader
-  - jdk.internal.loader
-  - org.apache.catalina.loader
-  - org.apache.jasper.compiler
-  - org.apache.jasper.JspCompilationContext.compile
-  - org.eclipse.jdt
 
 sensors:
-
 - name: http-route
   description: Identifies the route a request came in at
   methods:
@@ -156,6 +144,282 @@ sensors:
     name:
       - (?i)^(Content-Security-Policy|Strict-Transport-Security|X-Frame-Options|X-Content-Type-Options|Referrer-Policy|Permissions-Policy|X-XSS-Protection|Cross-Origin-[\w-]+)$
 
+- # Something sensitive in a request, found two ways that are kept apart, since they mean different things. A name that says password is
+  # a field that probably holds one, and a value that is an SSN or a card number is the thing itself. The value sensors say which kind of
+  # value it was, in kinds, one for each name and in the same order. Only names and kinds are recorded, never a value.
+  # Each way is its own sensor because a list with nothing in it records nothing, so each stays quiet for a request it has nothing to report on.
+  # A parameter is reported for a token too, by name or by value, since a token in a form field is worth knowing about. A cookie is not. A
+  # session id, a csrf token and a login token are in a cookie on purpose, and the browser sends them with every request, so reporting them
+  # would make every request an event. A cookie is reported for what it should never hold, a password, a secret, an SSN or a card number.
+  name: http-parameter-sensitive-name
+  description: Identifies a request parameter whose name says it holds something sensitive, such as a password, a secret, a token or an SSN
+  methods:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
+  captures:
+    names: '#P0.parameterMap.keySet().?[#matches(#this, "(?i)password|passwd|token|secret|api[_-]?key|(^|[^a-z])ssn([^a-z]|$)|credit[_-]?card|(^|[^a-z])card([^a-z]|$)|card[_-]?(num|no)")]'
+
+- name: http-parameter-sensitive-value
+  description: Identifies a request parameter whose value looks sensitive, such as an SSN, a credit card number, a web token or a long token, and says which
+  methods:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
+  captures:
+    names: '#P0.parameterMap.entrySet().?[#kind(value) != null].![key]'
+    kinds: '#P0.parameterMap.entrySet().?[#kind(value) != null].![#kind(value)]'
+
+- name: http-cookie-sensitive-name
+  description: Identifies a request cookie whose name says it holds something it should not, such as a password, a secret, an SSN or a credit card number
+  methods:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
+  captures:
+    names: '#list(#P0.cookies).?[#matches(name, "(?i)password|passwd|secret|(^|[^a-z])ssn([^a-z]|$)|credit[_-]?card|(^|[^a-z])card([^a-z]|$)|card[_-]?(num|no)")].![name]'
+
+- name: http-cookie-sensitive-value
+  description: Identifies a request cookie whose value is an SSN or a credit card number, and says which
+  methods:
+  - javax.servlet.Servlet.service
+  - jakarta.servlet.Servlet.service
+  captures:
+    names: '#list(#P0.cookies).?[#kind(value) == "ssn" or #kind(value) == "card"].![name]'
+    kinds: '#list(#P0.cookies).?[#kind(value) == "ssn" or #kind(value) == "card"].![#kind(value)]'
+
+- name: sql-statement
+  description: Identifies unparameterized database queries, the database they run against and the statement and connection settings they run with
+  methods:
+  - java.sql.Statement.execute
+  - java.sql.Statement.addBatch
+  - java.sql.Statement.executeQuery
+  - java.sql.Statement.executeUpdate
+  excludes:
+  - java.sql.PreparedStatement   # these calls are harmless in PreparedStatement
+  captures:
+    sql: "#ARGS"
+    command: "#toUpper(#P0.trim().split(' ')[0])"
+    database: "#OBJ.getConnection().getMetaData().getDatabaseProductName()"
+    url: "#OBJ.getConnection().getMetaData().getURL()"
+    user: "#OBJ.getConnection().getMetaData().getUserName()"
+    schema: "#OBJ.getConnection().getSchema()"
+    auto_commit: "#OBJ.getConnection().getAutoCommit()"
+    isolation: "#OBJ.getConnection().getTransactionIsolation()"
+    read_only: "#OBJ.getConnection().isReadOnly()"
+    query_timeout: "#OBJ.getQueryTimeout()"
+    max_rows: "#OBJ.getMaxRows()"
+    fetch_size: "#OBJ.getFetchSize()"
+
+- name: sql-prepared
+  description: Identifies parameterized database queries, the database they are for, how many parameters they take and how they can be read
+  methods:
+  - java.sql.Connection.prepareCall
+  - java.sql.Connection.prepareStatement
+  captures:
+    sql: "#P0"
+    command: "#toUpper(#P0.trim().split(' ')[0])"
+    database: "#OBJ.getMetaData().getDatabaseProductName()"
+    url: "#OBJ.getMetaData().getURL()"
+    user: "#OBJ.getMetaData().getUserName()"
+    schema: "#OBJ.getSchema()"
+    auto_commit: "#OBJ.getAutoCommit()"
+    isolation: "#OBJ.getTransactionIsolation()"
+    read_only: "#OBJ.isReadOnly()"
+    parameter_count: "#RET?.getParameterMetaData()?.getParameterCount()"
+    result_set_type: "#RET?.getResultSetType()"
+    result_set_concurrency: "#RET?.getResultSetConcurrency()"
+
+- name: sql-connection
+  description: Identifies a database connection being opened, the JDBC URL it connects to and the database and driver behind it
+  methods:
+  - java.sql.DriverManager.getConnection
+  captures:
+    url: "#P0"
+    product: "#RET?.getMetaData()?.getDatabaseProductName()"
+    version: "#RET?.getMetaData()?.getDatabaseProductVersion()"
+    driver: "#RET?.getMetaData()?.getDriverName()"
+    user: "#RET?.getMetaData()?.getUserName()"
+
+- name: sql-update
+  description: Identifies a database update being run and how many rows it changed
+  methods:
+  - java.sql.Statement.executeUpdate
+  - java.sql.Statement.executeLargeUpdate
+  captures:
+    sql: "#P0"
+    rows: "#RET"
+    database: "#OBJ.getConnection().getMetaData().getDatabaseProductName()"
+    auto_commit: "#OBJ.getConnection().getAutoCommit()"
+
+- name: sql-result
+  description: Identifies the shape of what a query returned, its columns, their types and the tables they came from
+  methods:
+  - java.sql.Statement.executeQuery
+  captures:
+    sql: "#P0"
+    column_count: "#RET.getMetaData().getColumnCount()"
+    columns: "{1,2,3,4,5,6,7,8}.?[#this <= #RET.getMetaData().getColumnCount()].![#RET.getMetaData().getColumnLabel(#this)]"
+    types: "{1,2,3,4,5,6,7,8}.?[#this <= #RET.getMetaData().getColumnCount()].![#RET.getMetaData().getColumnTypeName(#this)]"
+    tables: "{1,2,3,4,5,6,7,8}.?[#this <= #RET.getMetaData().getColumnCount()].![#RET.getMetaData().getTableName(#this)]"
+    result_set_type: "#RET.getType()"
+    fetch_size: "#RET.getFetchSize()"
+
+- name: sql-metadata
+  description: Identifies result set metadata being requested, with the number of columns and the table of the first column
+  methods:
+  - java.sql.ResultSet.getMetaData
+  captures:
+    column_count: "#RET?.getColumnCount()"
+    first_table: "#RET?.getTableName(1)"
+    first_column: "#RET?.getColumnName(1)"
+
+- name: sql-schema-lookup
+  description: Identifies the database schema being inspected for its tables, columns, keys or indexes, and the names it was asked about
+  methods:
+  - java.sql.DatabaseMetaData.getTables
+  - java.sql.DatabaseMetaData.getColumns
+  - java.sql.DatabaseMetaData.getPrimaryKeys
+  - java.sql.DatabaseMetaData.getImportedKeys
+  - java.sql.DatabaseMetaData.getExportedKeys
+  - java.sql.DatabaseMetaData.getIndexInfo
+  captures:
+    args: "#ARGS"
+
+- name: file-path
+  description: Identifies file and directory use
+  methods:
+  - java.io.File.<init>
+  captures:
+    path: "#OBJ.getCanonicalPath()"
+  # leaves out the JDK and servlet container files that are read all the time
+  matchers:
+    path:
+      - "!/apache-tomcat"
+      - "!/tomcat-base"
+      - "!/openjdk"
+      - "!/Cellar/"
+      - "!/candidates/java/"
+
+- name: net-socket
+  description: Identifies a socket being opened
+  methods:
+  - java.net.Socket.<init>
+  captures:
+    host: "#P0"
+    port: "#P1"
+  matchers:
+    host:
+      - "!null"
+    port:
+      - "!^8080$"
+
+- name: net-url
+  description: Identifies the host and protocol of a URL being connected to
+  methods:
+  - java.net.URL.openConnection
+  captures:
+    host: "#OBJ.getHost()"
+    protocol: "#OBJ.getProtocol()"
+    port: "#OBJ.getPort() == -1 ? #OBJ.getDefaultPort() : #OBJ.getPort()"
+  matchers:
+    protocol:
+      - (?i)^(https?|ftp)$
+
+- name: object-class
+  description: Identifies the classes an ObjectInputStream turns bytes into
+  methods:
+  - java.io.ObjectInputStream.resolveClass
+  captures:
+    class: "#P0.getName()"
+
+- # A web request must never deserialize objects.
+  name: object-deserialization
+  description: Identifies deserializing an object
+  methods:
+  - java.io.ObjectInputStream.readObject
+  - java.io.ObjectInputStream.readUnshared
+  captures:
+    args: "#ARGS"
+
+- name: expression-el-create
+  description: Identifies an expression language expression being created, and its text
+  methods:
+  - jakarta.el.ExpressionFactory.createValueExpression
+  - javax.el.ExpressionFactory.createValueExpression
+  - jakarta.el.ExpressionFactory.createMethodExpression
+  - javax.el.ExpressionFactory.createMethodExpression
+  captures:
+    expression: "#P1.toString()"
+
+- name: expression-el-evaluate
+  description: Identifies an expression language expression being evaluated, and its text
+  methods:
+  - jakarta.el.ValueExpression.getValue
+  - javax.el.ValueExpression.getValue
+  - jakarta.el.ValueExpression.setValue
+  - javax.el.ValueExpression.setValue
+  - jakarta.el.MethodExpression.invoke
+  - javax.el.MethodExpression.invoke
+  captures:
+    expression: "#OBJ.getExpressionString()"
+    literal: "#OBJ.isLiteralText()"
+
+- name: expression-spel
+  description: Identifies a Spring expression being evaluated, which can run any code in the JVM when the text comes from outside
+  methods:
+  - org.springframework.expression.spel.standard.SpelExpression.getValue
+  captures:
+    expression: "#OBJ.expressionString"
+
+- name: expression-lookup
+  description: Identifies a ${...} lookup being resolved by commons-text or commons-configuration, and which lookup resolved it
+  methods:
+  - org.apache.commons.text.lookup.StringLookup.lookup
+  - org.apache.commons.configuration.interpol.ConfigurationInterpolator.lookup
+  captures:
+    key: "#P0"
+    lookup: "#OBJ.getClass().getName()"
+
+- name: expression-lookup-log4j
+  description: Identifies a ${...} lookup being resolved by log4j, such as jndi, env or sys, and which lookup resolved it
+  methods:
+  - org.apache.logging.log4j.core.lookup.StrLookup.lookup
+  captures:
+    key: "#list(#ARGS).?[#this.getClass().getName() == 'java.lang.String']"
+    lookup: "#OBJ.getClass().getName()"
+
+- # The microsandbox for expression injection. Evaluating an expression is allowed, but while one is being
+  # evaluated it can't start a process or open a socket.
+  name: expression
+  description: Identifies an expression being evaluated starting a process or opening a socket
+  methods:
+  - java.lang.ProcessBuilder.<init>
+  - java.net.Socket.<init>
+  scopes:
+  - javax.el.ValueExpression.getValue
+  - jakarta.el.ValueExpression.getValue
+  captures:
+    expression: "#ARGS"
+  block-when: true
+  protect: false
+
+- # The pattern based alternative, which looks for attack text in the expression itself. It is easier to get
+  # around than the sandbox above. Add "protect: false" to stage it as report only, and the dashboard can then
+  # promote it to block.
+  name: expression-suspicious
+  description: Identifies an expression that contains reflection or process APIs
+  methods:
+  - javax.el.ExpressionFactory.createValueExpression
+  - jakarta.el.ExpressionFactory.createValueExpression
+  captures:
+    expression: "#P1"
+  matchers:
+    expression:
+      - \.class
+      - getRuntime
+      - ProcessBuilder
+      - forName
+  block-when: true
+  protect: false
+
 - name: crypto-cipher
   description: Identifies a cipher being initialized, its algorithm, whether it encrypts or decrypts, and the algorithm and size in bits of its key
   methods:
@@ -200,83 +464,42 @@ sensors:
     algorithm: "#P1"
     bits: "#P0.length * 8"
 
-- name: object-class
-  description: Identifies the classes an ObjectInputStream turns bytes into
+- # A web request must never start an operating system process.
+  name: native-process
+  description: Identifies starting a native process
   methods:
-  - java.io.ObjectInputStream.resolveClass
+  - java.lang.ProcessBuilder.<init>
   captures:
-    class: "#P0.getName()"
+    command: "#ARGS"
+  block-when: true
+  protect: false
 
-- name: sql-statement
-  description: Identifies unparameterized database queries
+- # Native code loaded by a web request can do anything the JVM can. Libraries are loaded once, often on first use inside the
+  # first request (a JDBC driver extracting its native part, for example), so run in monitor for a while, see what loads, then
+  # move to protect.
+  name: native-library
+  description: Identifies loading a native library
   methods:
-  - java.sql.Statement.execute
-  - java.sql.Statement.addBatch
-  - java.sql.Statement.executeQuery
-  - java.sql.Statement.executeUpdate
-  excludes:
-  - java.sql.PreparedStatement   # these calls are harmless in PreparedStatement
+  - java.lang.System.load
+  - java.lang.System.loadLibrary
+  - java.lang.Runtime.load
+  - java.lang.Runtime.loadLibrary
   captures:
-    sql: "#ARGS"
-
-- name: sql-prepared
-  description: Identifies parameterized database queries
-  methods:
-  - java.sql.Connection.prepareCall
-  - java.sql.Connection.prepareStatement
-  captures:
-    sql: "#ARGS"
-
-- name: sql-connection
-  description: Identifies a database connection being opened, the JDBC URL it connects to and the database and driver behind it
-  methods:
-  - java.sql.DriverManager.getConnection
-  captures:
-    url: "#P0"
-    product: "#RET?.getMetaData()?.getDatabaseProductName()"
-    version: "#RET?.getMetaData()?.getDatabaseProductVersion()"
-    driver: "#RET?.getMetaData()?.getDriverName()"
-    user: "#RET?.getMetaData()?.getUserName()"
-
-- name: file-path
-  description: Identifies file and directory use
-  methods:
-  - java.io.File.<init>
-  captures:
-    path: "#OBJ.getCanonicalPath()"
+    name: "#P0"
   matchers:
-    path:
-      - "!/ticketbook"
-      - "!/apache-tomcat"
-      - "!/tomcat-base"
-      - "!/openjdk"
-      - "!/Cellar/"
-      - "!/candidates/java/"
-
-- name: net-socket
-  description: Identifies a socket being opened
-  methods:
-  - java.net.Socket.<init>
-  captures:
-    host: "#P0"
-    port: "#P1"
-  matchers:
-    host:
+    name:
       - "!null"
-    port:
-      - "!^8080$"
 
-- name: net-url
-  description: Identifies the host and protocol of a URL being connected to
+- # The JVM must never be shut down by a web request.
+  name: jvm-exit
+  description: Identifies ending the JVM
   methods:
-  - java.net.URL.openConnection
+  - java.lang.Runtime.exit
+  - java.lang.Runtime.halt
   captures:
-    host: "#OBJ.getHost()"
-    protocol: "#OBJ.getProtocol()"
-    port: "#OBJ.getPort() == -1 ? #OBJ.getDefaultPort() : #OBJ.getPort()"
-  matchers:
-    protocol:
-      - (?i)^(https?|ftp)$
+    args: "#ARGS"
+  block-when: true
+  protect: false
 
 - name: thread-runnable
   description: Identifies a thread being created with a Runnable and the code that created it
@@ -289,159 +512,298 @@ sensors:
     runnable_classes:
     - '!^java\.lang\.(String|ThreadGroup|Long|Boolean)$'
 
-- name: http-parameter-sensitive-name
-  description: Identifies a request parameter whose name says it holds something sensitive, such as a password, a secret, a token or an SSN. Only the names are recorded, never a value
+- name: ai-model-call
+  description: Identifies a call to an AI model, with the provider, the model and the parameters it was given, how many tools it was offered and how many tokens it used
   methods:
-  - javax.servlet.Servlet.service
-  - jakarta.servlet.Servlet.service
+  - org.springframework.ai.anthropic.AnthropicChatModel.internalCall
+  - org.springframework.ai.openai.OpenAiChatModel.internalCall
+  - org.springframework.ai.ollama.OllamaChatModel.internalCall
+  scopes: []
   captures:
-    names: '#P0.parameterMap.keySet().?[#matches(#this, "(?i)password|passwd|token|secret|api[_-]?key|(^|[^a-z])ssn([^a-z]|$)|credit[_-]?card|(^|[^a-z])card([^a-z]|$)|card[_-]?(num|no)")]'
+    provider: "#OBJ.getClass().getSimpleName().replace('ChatModel', '').toLowerCase()"
+    model: "#P0.options?.model"
+    temperature: "#P0.options?.temperature"
+    max_tokens: "#P0.options?.maxTokens"
+    top_p: "#P0.options?.topP"
+    top_k: "#P0.options?.topK"
+    tools: "#P0.options?.toolCallbacks?.size()"
+    messages: "#P0.instructions.size()"
+    input_tokens: "#RET?.metadata?.usage?.promptTokens"
+    output_tokens: "#RET?.metadata?.usage?.completionTokens"
+    finish_reason: "#RET?.result?.metadata?.finishReason"
 
-- name: http-parameter-sensitive-value
-  description: Identifies a request parameter whose value looks sensitive, such as an SSN, a credit card number, a web token or a long token, and says which. A token counts here, since a token in a form field is worth knowing about. Only the names and kinds are recorded, never a value
+- name: ai-tool-request
+  description: Identifies the model asking for a tool to be run, with the name of the tool and the arguments the model chose
   methods:
-  - javax.servlet.Servlet.service
-  - jakarta.servlet.Servlet.service
+  - org.springframework.ai.tool.method.MethodToolCallback.call
+  scopes: []
   captures:
-    names: '#P0.parameterMap.entrySet().?[#kind(value) != null].![key]'
-    kinds: '#P0.parameterMap.entrySet().?[#kind(value) != null].![#kind(value)]'
+    tool: "#OBJ.toolDefinition.name()"
+    arguments: "#P0"
 
-- name: http-cookie-sensitive-name
-  description: Identifies a request cookie whose name says it holds something it should not, such as a password, a secret, an SSN or a credit card number. Only the names are recorded, never a value
+- name: ai-tool-invoked
+  description: Identifies a tool of the agent being run, with the tool's name, the class it is in and the arguments it was given
   methods:
-  - javax.servlet.Servlet.service
-  - jakarta.servlet.Servlet.service
+  - "@org.springframework.ai.tool.annotation.Tool"
   captures:
-    names: '#list(#P0.cookies).?[#matches(name, "(?i)password|passwd|secret|(^|[^a-z])ssn([^a-z]|$)|credit[_-]?card|(^|[^a-z])card([^a-z]|$)|card[_-]?(num|no)")].![name]'
+    tool: "#ANNOTATION.name"
+    class: "#OBJ.getClass().getSimpleName()"
+    arguments: "#ARGS"
 
-- name: http-cookie-sensitive-value
-  description: Identifies a request cookie whose value is an SSN or a credit card number, and says which. Session ids and other tokens are left out on purpose, since a cookie is where they belong and the browser sends them with every request. Only the names and kinds are recorded, never a value
+- name: regex-pattern
+  description: Identifies a regular expression being compiled
   methods:
-  - javax.servlet.Servlet.service
-  - jakarta.servlet.Servlet.service
+  - java.util.regex.Pattern.compile
   captures:
-    names: '#list(#P0.cookies).?[#kind(value) == "ssn" or #kind(value) == "card"].![name]'
-    kinds: '#list(#P0.cookies).?[#kind(value) == "ssn" or #kind(value) == "card"].![#kind(value)]'
+    pattern: "#P0"
+    pattern_length: "#P0.length()"
 
-- name: native-process
-  description: Identifies starting a native process, which a web request must never do
-  methods:
-  - java.lang.ProcessBuilder.<init>
-  captures:
-    command: "#ARGS"
-  block-when: true
-
-- name: object-deserialization
-  description: Identifies deserializing an object, which a web request must never do
-  methods:
-  - java.io.ObjectInputStream.readObject
-  - java.io.ObjectInputStream.readUnshared
-  captures:
-    args: "#ARGS"
-
-- name: expression
-  description: Identifies an expression being evaluated starting a process or opening a socket. Evaluating an expression is allowed, but while one is being evaluated it can't do either, which makes this the microsandbox for expression injection
-  methods:
-  - java.lang.ProcessBuilder.<init>
-  - java.net.Socket.<init>
-  scopes:
-  - javax.el.ValueExpression.getValue
-  - jakarta.el.ValueExpression.getValue
-  captures:
-    expression: "#ARGS"
-  block-when: true
-
-- name: expression-suspicious
-  description: Identifies an expression that contains reflection or process APIs, which is the pattern based alternative to the expression microsandbox, easier to get around since it only looks for attack text in the expression
+# CVE-2019-12384 Deserialization of Untrusted Data in FasterXML jackson-databind
+# com.fasterxml.jackson.core:jackson-databind >= 2.9.0, < 2.9.9.1
+- name: cve-2019-12384
+  description: Identifies an attack on CVE-2019-12384, when its vulnerable code does something an exploit needs, like starting a process or running a script
   methods:
   - javax.el.ExpressionFactory.createValueExpression
   - jakarta.el.ExpressionFactory.createValueExpression
-  captures:
-    expression: "#P1"
-  matchers:
-    expression:
-      - \.class
-      - getRuntime
-      - ProcessBuilder
-      - forName
-  block-when: true
-
-- name: jvm-exit
-  description: Identifies ending the JVM, which a web request must never do
-  methods:
-  - java.lang.Runtime.exit
-  - java.lang.Runtime.halt
+  - javax.el.MethodExpression.invoke
+  - jakarta.el.MethodExpression.invoke
+  - javax.el.ValueExpression.getValue
+  - jakarta.el.ValueExpression.getValue
+  - ognl.Ognl.getValue
+  - ognl.Ognl.setValue
+  - org.springframework.expression.ExpressionParser.parseExpression
+  - org.springframework.expression.spel.standard.SpelExpression.getValue
+  - javax.naming.Context.lookup
+  - javax.naming.InitialContext.lookup
+  - javax.naming.directory.DirContext.search
+  - java.lang.ProcessBuilder.start
+  - java.lang.Runtime.exec
+  - com.sun.tools.javac.Main.compile
+  - groovy.lang.GroovyShell.evaluate
+  - groovy.lang.GroovyShell.parse
+  - javax.script.ScriptEngine.eval
+  - javax.tools.JavaCompiler.getTask
+  - javax.tools.JavaCompiler.run
+  - javax.tools.ToolProvider.getSystemJavaCompiler
+  - net.openhft.compiler.CompilerUtils.compile
+  - org.codehaus.commons.compiler.ICompiler.compile
+  - org.codehaus.janino.ScriptEvaluator.evaluate
+  - org.codehaus.janino.SimpleCompiler.cook
+  - org.mozilla.javascript.Context.evaluateString
+  scopes:
+  - com.fasterxml.jackson.databind.ser.DefaultSerializerProvider.serializeValue
+  - com.fasterxml.jackson.databind.ObjectMapper.readValue
   captures:
     args: "#ARGS"
   block-when: true
 
-- name: native-library
-  description: Identifies loading a native library, which gives the code that loaded it the power of the JVM itself. Libraries load once, often inside the first request, as a JDBC driver does with its native part, so watch this in monitor for a while before blocking
+# Edited by hand, the jndi methods are added to what vulnpoint says. Regenerating this file removes them.
+# CVE-2021-44228 Remote code injection in Log4j
+# org.apache.logging.log4j:log4j-core >= 2.13.0, < 2.15.0
+- name: cve-2021-44228
+  description: Identifies an attack on CVE-2021-44228, when its vulnerable code does something an exploit needs, like starting a process or running a script
   methods:
-  - java.lang.System.load
-  - java.lang.System.loadLibrary
-  - java.lang.Runtime.load
-  - java.lang.Runtime.loadLibrary
+  - javax.el.ExpressionFactory.createValueExpression
+  - jakarta.el.ExpressionFactory.createValueExpression
+  - javax.el.MethodExpression.invoke
+  - jakarta.el.MethodExpression.invoke
+  - javax.el.ValueExpression.getValue
+  - jakarta.el.ValueExpression.getValue
+  - ognl.Ognl.getValue
+  - ognl.Ognl.setValue
+  - org.springframework.expression.ExpressionParser.parseExpression
+  - org.springframework.expression.spel.standard.SpelExpression.getValue
+  - java.lang.ProcessBuilder.start
+  - java.lang.Runtime.exec
+  - com.sun.tools.javac.Main.compile
+  - groovy.lang.GroovyShell.evaluate
+  - groovy.lang.GroovyShell.parse
+  - javax.script.ScriptEngine.eval
+  - javax.tools.JavaCompiler.getTask
+  - javax.tools.JavaCompiler.run
+  - javax.tools.ToolProvider.getSystemJavaCompiler
+  - net.openhft.compiler.CompilerUtils.compile
+  - org.codehaus.commons.compiler.ICompiler.compile
+  - org.codehaus.janino.ScriptEvaluator.evaluate
+  - org.codehaus.janino.SimpleCompiler.cook
+  - org.mozilla.javascript.Context.evaluateString
+  - javax.naming.Context.lookup
+  - javax.naming.InitialContext.lookup
+  - javax.naming.directory.DirContext.search
+  scopes:
+  - org.apache.logging.log4j.core.lookup.JndiLookup.lookup
   captures:
-    name: "#P0"
-  matchers:
-    name:
-      - "!null"
+    args: "#ARGS"
+  block-when: true
+
+# CVE-2022-1471 SnakeYaml Constructor Deserialization Remote Code Execution
+# org.yaml:snakeyaml >= 0, < 2.0
+- name: cve-2022-1471
+  description: Identifies an attack on CVE-2022-1471, when its vulnerable code does something an exploit needs, like starting a process or running a script
+  methods:
+  - javax.el.ExpressionFactory.createValueExpression
+  - jakarta.el.ExpressionFactory.createValueExpression
+  - javax.el.MethodExpression.invoke
+  - jakarta.el.MethodExpression.invoke
+  - javax.el.ValueExpression.getValue
+  - jakarta.el.ValueExpression.getValue
+  - ognl.Ognl.getValue
+  - ognl.Ognl.setValue
+  - org.springframework.expression.ExpressionParser.parseExpression
+  - org.springframework.expression.spel.standard.SpelExpression.getValue
+  - javax.naming.Context.lookup
+  - javax.naming.InitialContext.lookup
+  - javax.naming.directory.DirContext.search
+  - java.lang.ProcessBuilder.start
+  - java.lang.Runtime.exec
+  - com.sun.tools.javac.Main.compile
+  - groovy.lang.GroovyShell.evaluate
+  - groovy.lang.GroovyShell.parse
+  - javax.script.ScriptEngine.eval
+  - javax.tools.JavaCompiler.getTask
+  - javax.tools.JavaCompiler.run
+  - javax.tools.ToolProvider.getSystemJavaCompiler
+  - net.openhft.compiler.CompilerUtils.compile
+  - org.codehaus.commons.compiler.ICompiler.compile
+  - org.codehaus.janino.ScriptEvaluator.evaluate
+  - org.codehaus.janino.SimpleCompiler.cook
+  - org.mozilla.javascript.Context.evaluateString
+  scopes:
+  - org.yaml.snakeyaml.constructor.Constructor$ConstructYamlObject.construct
+  - org.yaml.snakeyaml.constructor.Constructor$ConstructMapping.constructJavaBean2ndStep
+  captures:
+    args: "#ARGS"
+  block-when: true
+
+# CVE-2022-22965 Remote Code Execution in Spring Framework
+# org.springframework:spring-beans >= 0, < 5.2.20.RELEASE
+- name: cve-2022-22965
+  description: Identifies an attack on CVE-2022-22965, when its vulnerable code does something an exploit needs, like starting a process or running a script
+  methods:
+  - javax.el.ExpressionFactory.createValueExpression
+  - jakarta.el.ExpressionFactory.createValueExpression
+  - javax.el.MethodExpression.invoke
+  - jakarta.el.MethodExpression.invoke
+  - javax.el.ValueExpression.getValue
+  - jakarta.el.ValueExpression.getValue
+  - ognl.Ognl.getValue
+  - ognl.Ognl.setValue
+  - org.springframework.expression.ExpressionParser.parseExpression
+  - org.springframework.expression.spel.standard.SpelExpression.getValue
+  - javax.naming.Context.lookup
+  - javax.naming.InitialContext.lookup
+  - javax.naming.directory.DirContext.search
+  - java.lang.ProcessBuilder.start
+  - java.lang.Runtime.exec
+  - com.sun.tools.javac.Main.compile
+  - groovy.lang.GroovyShell.evaluate
+  - groovy.lang.GroovyShell.parse
+  - javax.script.ScriptEngine.eval
+  - javax.tools.JavaCompiler.getTask
+  - javax.tools.JavaCompiler.run
+  - javax.tools.ToolProvider.getSystemJavaCompiler
+  - net.openhft.compiler.CompilerUtils.compile
+  - org.codehaus.commons.compiler.ICompiler.compile
+  - org.codehaus.janino.ScriptEvaluator.evaluate
+  - org.codehaus.janino.SimpleCompiler.cook
+  - org.mozilla.javascript.Context.evaluateString
+  scopes:
+  - org.springframework.beans.CachedIntrospectionResults.introspectInterfaces
+  captures:
+    args: "#ARGS"
+  block-when: true
+
+# CVE-2022-42889 Arbitrary code execution in Apache Commons Text
+# org.apache.commons:commons-text >= 1.5, < 1.10.0
+- name: cve-2022-42889
+  description: Identifies an attack on CVE-2022-42889, when its vulnerable code does something an exploit needs, like starting a process or running a script
+  methods:
+  - javax.el.ExpressionFactory.createValueExpression
+  - jakarta.el.ExpressionFactory.createValueExpression
+  - javax.el.MethodExpression.invoke
+  - jakarta.el.MethodExpression.invoke
+  - javax.el.ValueExpression.getValue
+  - jakarta.el.ValueExpression.getValue
+  - ognl.Ognl.getValue
+  - ognl.Ognl.setValue
+  - org.springframework.expression.ExpressionParser.parseExpression
+  - org.springframework.expression.spel.standard.SpelExpression.getValue
+  - com.sun.tools.javac.Main.compile
+  - groovy.lang.GroovyShell.evaluate
+  - groovy.lang.GroovyShell.parse
+  - javax.script.ScriptEngine.eval
+  - javax.tools.JavaCompiler.getTask
+  - javax.tools.JavaCompiler.run
+  - javax.tools.ToolProvider.getSystemJavaCompiler
+  - net.openhft.compiler.CompilerUtils.compile
+  - org.codehaus.commons.compiler.ICompiler.compile
+  - org.codehaus.janino.ScriptEvaluator.evaluate
+  - org.codehaus.janino.SimpleCompiler.cook
+  - org.mozilla.javascript.Context.evaluateString
+  scopes:
+  - org.apache.commons.text.StringSubstitutor.replace
+  - org.apache.commons.text.StringSubstitutor.replaceIn
+  - org.apache.commons.text.StringSubstitutor.createInterpolator
+  captures:
+    args: "#ARGS"
+  block-when: true
+
+
+
 
 reports:
-
 - name: Test Coverage Matrix
   type: compare
   rows: http-route.path
   cols: auth-user.user
-  
+
 - name: Access Control Matrix
   type: compare
   rows: http-route.path
   cols: auth-role-check.role
   value: auth-role-check.allowed
   by: auth-role-check.user
-  
+
 - name: Role Membership
   type: compare
   rows: auth-role-check.user
   cols: auth-role-check.role
   value: auth-role-check.allowed
-  
+
 - name: Cache Headers
   type: table
   rows: http-route.path
   cols: http-cache-header.cache_control
-  
-- name: Encryption Algorithms
-  type: compare
-  rows: http-route.path
-  cols: crypto-cipher-request.algorithm
-  
-- name: Unauthorized Files
-  type: table
-  rows: http-route.path
-  cols: file-path.path
-  
-- name: Database Queries
-  type: table
-  rows: http-route.path
-  cols: sql-statement.sql
-  
-- name: Encryption Users
-  type: compare
-  rows: auth-user.user
-  cols: crypto-cipher-request.algorithm
-     
+
 - name: HTTP Parameters
   type: table
   rows: http-route.path
   cols: http-parameter-read.name, http-parameter-received.name
-  
+
 - name: Request Forwards
   type: table
   rows: http-route.path
   cols: http-forward.path
+
+- name: Database Queries
+  type: table
+  rows: http-route.path
+  cols: sql-statement.sql
+
+- name: Unauthorized Files
+  type: table
+  rows: http-route.path
+  cols: file-path.path
+
+- name: Encryption Algorithms
+  type: compare
+  rows: http-route.path
+  cols: crypto-cipher-request.algorithm
+
+- name: Encryption Users
+  type: compare
+  rows: auth-user.user
+  cols: crypto-cipher-request.algorithm
 
 - name: Encryption Usage
   type: list
@@ -450,3 +812,57 @@ reports:
 - name: Hash Usage
   type: list
   cols: crypto-hash.algorithm
+
+- name: Regex Usage
+  type: list
+  cols: regex-pattern.pattern
+
+- name: Models and Parameters
+  type: table
+  rows: ai-model-call.model
+  cols: ai-model-call.provider, ai-model-call.temperature, ai-model-call.max_tokens, ai-model-call.top_p, ai-model-call.tools, ai-model-call.messages
+
+- name: Token Use by Model
+  type: table
+  rows: ai-model-call.model
+  cols: "#count(ai-model-call), #total(ai-model-call.input_tokens), #total(ai-model-call.output_tokens), ai-model-call.finish_reason"
+
+- name: What the Model Asked For
+  type: table
+  rows: ai-tool-request.tool
+  cols: ai-tool-request.arguments
+
+- name: Tools Used
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: ai-tool-invoked.class
+
+- name: Tool Arguments
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: ai-tool-invoked.arguments
+
+- name: Tool Behavior
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: sql-statement.sql, file-path.path, native-process.command, net-url.host, expression-spel.expression, object-deserialization.args, crypto-cipher.algorithm, crypto-hash.algorithm
+
+- name: Data Access by Tool
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: sql-statement.sql, file-path.path
+
+- name: Reaching Out by Tool
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: net-url.host, net-url.protocol, native-process.command
+
+- name: Code Execution by Tool
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: native-process.command, expression-spel.expression, object-deserialization.args
+
+- name: Encryption by Tool
+  type: table
+  rows: ai-tool-invoked.tool
+  cols: crypto-cipher.algorithm, crypto-cipher.key_algorithm, crypto-cipher.bits, crypto-cipher-request.algorithm

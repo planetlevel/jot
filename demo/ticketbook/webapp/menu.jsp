@@ -73,7 +73,10 @@
 		{ "Access B", "/ticketbook/accessB.jsp", "accessB" },
 		{ "Access C", "/ticketbook/accessC.jsp", "accessC" },
 		{ "Access D", "/ticketbook/accessD.jsp", "accessD" },
-		{ "Access E", "/ticketbook/accessE.jsp", "accessE" }
+		{ "Access E", "/ticketbook/accessE.jsp", "accessE" },
+		{ "-", "Object access" },
+		{ "IDOR", "/ticketbook/idor.jsp", "idor" },
+		{ "Outbox", "/ticketbook/outbox.jsp", "outbox" }
 	};
 	for ( String[] menuLink : menuLinks ) {
 		if ( menuLink[0].equals( "-" ) ) {
