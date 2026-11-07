@@ -5,6 +5,7 @@ import java.lang.instrument.Instrumentation;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.openolly.config.ConfigReader;
 import org.openolly.config.ControlFile;
+import org.openolly.config.SensorReloader;
 import org.openolly.config.StartupReport;
 import org.openolly.reporting.EventBus;
 
@@ -37,6 +38,7 @@ public class JOTAgent {
 			ConfigReader.init(yaml);
 			Instrumenter.instrument(inst, Sensor.getSensors());
 			ControlFile.startFromSystemProperties();
+			SensorReloader.startFromSystemProperties();
 			StartupReport.publish( yaml );
 		} catch (Exception e) {
 			//e.printStackTrace();

@@ -37,17 +37,26 @@ public final class AppScope {
 	public static final List<String> DEFAULT_ENTRY = List.of( "javax.servlet.Servlet.service", "jakarta.servlet.Servlet.service" );
 
 	private static volatile List<MethodLocator> entries = List.of();
+	private static volatile List<String> signatures = List.of();
 	private static final BinaryScope depth = new BinaryScope();
 
 	private AppScope() {}
 
 	/** Sets the entry points, from the jots file. Null is the default and an empty list means there is no application scope. */
 	public static void configure(List<String> entry) {
+		List<String> wanted = List.copyOf( entry == null ? DEFAULT_ENTRY : entry );
 		List<MethodLocator> made = new ArrayList<MethodLocator>();
-		for ( String signature : entry == null ? DEFAULT_ENTRY : entry ) {
+		for ( String signature : wanted ) {
 			made.add( new MethodLocator( signature ) );
 		}
+		// both are swapped only once every entry was made, so one that can't be made leaves the entry points as they were
 		entries = List.copyOf( made );
+		signatures = wanted;
+	}
+
+	/** The entry points as they were written, which is how a reload tells whether they changed. */
+	public static List<String> signatures() {
+		return signatures;
 	}
 
 	public static List<MethodLocator> entries() {

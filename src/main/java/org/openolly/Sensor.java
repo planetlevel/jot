@@ -48,10 +48,23 @@ import net.bytebuddy.matcher.ElementMatchers;
 public class Sensor {
 
 	private static final FluentLogger logger = FluentLogger.forEnclosingClass();
-	private static List<Sensor> sensors = new ArrayList<Sensor>();
+	// The sensors that are loaded now. Sensors come and go while the application runs, see Instrumenter, and the app's
+	// threads and the reload thread both look at this, so it is copy on write and a reader never sees it half changed.
+	private static final List<Sensor> sensors = new java.util.concurrent.CopyOnWriteArrayList<Sensor>();
+	// Every sensor ever made, by id, including the ones that were removed. Instrumented code names a sensor by its id, and
+	// a method that was already running, or a class that was never transformed back, can still call it after it was removed.
+	// A removed sensor stays here, inert, so that call finds it and does nothing, where a lookup that came back empty would
+	// throw inside the application.
+	private static final java.util.Map<Integer, Sensor> byId = new java.util.concurrent.ConcurrentHashMap<Integer, Sensor>();
+	// ids go up and are never used again, so an id in old bytecode can never reach a different sensor
+	private static final java.util.concurrent.atomic.AtomicInteger nextId = new java.util.concurrent.atomic.AtomicInteger();
 
-	// an index to use to look up the right Sensor from within an instrumented method
-	private int index;
+	// the id to use to look up the right Sensor from within an instrumented method
+	private final int index;
+	// the definition this sensor was made from, which is how a reload tells that a sensor from a file changed. Null for one that didn't come from a file
+	private volatile String fingerprint = null;
+	// set when the sensor is removed. It stops it from doing anything, its counters stay as they were so calls in flight stay balanced
+	private volatile boolean retired = false;
 	
 	private String name = null;
 	private String description = null;
@@ -90,8 +103,9 @@ public class Sensor {
 	private Pattern capturePattern = Pattern.compile( "^.*$");
 
 	public Sensor() {
+		this.index = nextId.getAndIncrement();
+		byId.put( index, this );
 		sensors.add( this );
-		this.index = sensors.indexOf(this);
 	}
 	
 	public static boolean exists(String name) {
@@ -103,16 +117,41 @@ public class Sensor {
 		return false;
 	}
 
+	/** The sensor with this id, which may have been removed. Only ids that were never handed out give null. */
 	public static Sensor getSensor(int sensorIndex) {
-		return sensors.get( sensorIndex );
+		return byId.get( sensorIndex );
 	}
 
 	public static List<Sensor> getSensors() {
 		return Collections.unmodifiableList(sensors);
 	}
 
+	/** Removes every sensor, the same as retiring each. Ids are not reused. */
 	public static void clearSensors() {
+		for ( Sensor s : sensors ) s.retired = true;
 		sensors.clear();
+	}
+
+	/**
+	 * Takes this sensor out of the loaded list and switches it off for good. The instrumentation that names it has to be
+	 * removed separately, see Instrumenter. Returns false if it was not loaded, so removing twice is harmless.
+	 */
+	public boolean retire() {
+		retired = true;
+		return sensors.remove( this );
+	}
+
+	public Sensor fingerprint( String value ) {
+		fingerprint = value;
+		return this;
+	}
+
+	public String getFingerprint() {
+		return fingerprint;
+	}
+
+	public boolean isRetired() {
+		return retired;
 	}
 
 	// a sensor that blocks reports the block, not each thing it captured on the way
@@ -574,7 +613,7 @@ public class Sensor {
 	 * on while the application runs.
 	 */
 	public boolean isProtected() {
-		if ( !protectAll || !controlMaster ) return false;
+		if ( retired || !protectAll || !controlMaster ) return false;
 		if ( controlProtect != null ) return controlProtect;
 		return !Boolean.FALSE.equals( protect );
 	}
@@ -590,6 +629,7 @@ public class Sensor {
 	 * enabled: false can be switched on while the application runs, and one that is on can be switched off.
 	 */
 	public boolean isEnabled() {
+		if ( retired ) return false;
 		if ( controlEnabled != null ) return controlEnabled;
 		return !Boolean.FALSE.equals( enabled );
 	}
@@ -772,11 +812,12 @@ public class Sensor {
 	
 
 	/** By class, which includes its subtypes, or for @the.Annotation the classes that carry it or have a method that does. */
-	static ElementMatcher<TypeDescription> typeMatcher(MethodLocator method) {
-		if ( !method.isAnnotation() ) return hasGenericSuperType(failSafe(named(method.className())));
+	static AgentBuilder.RawMatcher typeMatcher(MethodLocator method) {
+		if ( !method.isAnnotation() ) return TypeHierarchy.extending( method.className() );
 		ElementMatcher<TypeDescription> marked = named(method.annotationName());
 		ElementMatcher.Junction<TypeDescription> typeCarries = ElementMatchers.<TypeDescription>isAnnotatedWith(marked);
-		return failSafe(typeCarries.or(declaresMethod(ElementMatchers.<MethodDescription>isAnnotatedWith(marked))));
+		return new AgentBuilder.RawMatcher.ForElementMatchers(
+			failSafe(typeCarries.or(declaresMethod(ElementMatchers.<MethodDescription>isAnnotatedWith(marked)))), ElementMatchers.any(), ElementMatchers.any());
 	}
 
 	/** By method name, or for @the.Annotation the methods that carry it and the methods of a class that does. */
@@ -788,32 +829,63 @@ public class Sensor {
 			.and(ElementMatchers.<MethodDescription>isAnnotatedWith(marked).or(isDeclaredBy(typeCarries))));
 	}
 
+	/**
+	 * The names of the classes this sensor can apply to, which are those and their subtypes, or null if that can't be said by name,
+	 * which is when it watches an annotation. It lets the instrumenter look at the classes that can match instead of every one.
+	 */
+	public java.util.Set<String> targetClassNames() {
+		java.util.Set<String> names = new java.util.LinkedHashSet<String>();
+		for ( MethodLocator loc : methods ) {
+			if ( loc.isAnnotation() ) return null;
+			names.add( loc.className() );
+		}
+		for ( MethodLocator loc : scopes ) {
+			if ( loc.isAnnotation() ) return null;
+			names.add( loc.className() );
+		}
+		return names;
+	}
+
+	/** The classes no sensor ever touches. */
+	static AgentBuilder globalIgnores(AgentBuilder builder) {
+		return globalIgnores( builder, null );
+	}
+
+	/**
+	 * The classes that are never instrumented, and with them any that a sensor excludes. A builder has one ignore matcher, and ignore()
+	 * replaces it, so these are joined into one. Chaining them leaves only the last.
+	 */
+	static AgentBuilder globalIgnores(AgentBuilder builder, ElementMatcher<TypeDescription> more) {
+		ElementMatcher.Junction<TypeDescription> ignored = ElementMatchers.<TypeDescription>nameContains( "maven" )
+			.or( nameContains( "codehaus" ) )
+			.or( nameStartsWith( "shaded" ) )
+			.or( nameStartsWith( "org.eclipse.osgi" ) )
+			.or( nameStartsWith( "org.eclipse.jdt." ) );   // the compiler Tomcat uses for JSPs, hundreds of classes that no sensor is on
+		if ( more != null ) ignored = ignored.or( more );
+		return builder.ignore( ignored );
+	}
+
 	public AgentBuilder instrument(AgentBuilder builder ) {
 				
-		// global class ignores
-		builder = builder
-		.ignore(nameContains("maven"))
-		.ignore(nameContains("codehaus"))
-		.ignore(nameStartsWith("shaded"))
-		.ignore(nameStartsWith("org.eclipse.osgi"));
-		
+		// leave out the types listed as excludes in the JOT rule, which is the types that are, or extend or implement, one of them
+		ElementMatcher.Junction<TypeDescription> excluded = null;
+		for ( MethodLocator eloc : this.getExcludes() ) {
+			logger.atInfo().log( "EXCLUDING: " + eloc.className() + " from " + getName() );
+			ElementMatcher.Junction<TypeDescription> one = ElementMatchers.<TypeDescription>nameStartsWith( eloc.className() )
+				.or( hasGenericSuperType( failSafe( named( eloc.className() ) ) ) );
+			excluded = excluded == null ? one : excluded.or( one );
+		}
+		builder = globalIgnores( builder, excluded );
+
 		// add advice to "methods"
 		for ( MethodLocator method : this.getMethods() ) {
 			//System.err.println( "INSTRUMENTING " + method.className() + " -> " + method.methodName() );
 			logger.atFine().log("INSTRUMENTING " + method.className() + " -> " + method.methodName() );
 			try {
 
-				final ElementMatcher<TypeDescription> typeMatcher = typeMatcher( method );
+				final AgentBuilder.RawMatcher typeMatcher = typeMatcher( method );
 				final ElementMatcher<MethodDescription> methodMatcher = methodMatcher( method );
 
-				// ignore methods listed as excludes in JOT rule
-				for ( MethodLocator eloc : this.getExcludes() ) {
-					//System.out.println ( "EXCLUDING: " + eloc.className() + " from " + method );
-					logger.atInfo().log( "EXCLUDING: " + eloc.className() + " from " + method );
-					builder.ignore(nameStartsWith(eloc.className()) );
-					builder.ignore(hasGenericSuperType(failSafe(named(eloc.className()))));
-				}
-				
 				// transform constructors that are rules (CE)
 				if ( method.isConstructor() && isRule() ) {
 					builder = builder
@@ -891,13 +963,13 @@ public class Sensor {
 				// that scopes the constructor body (see ScopeCtorWrapper)
 				if ( scope.isConstructor() ) {
 					builder = builder
-					.type(hasGenericSuperType(failSafe(named(scope.className()))))
+					.type(TypeHierarchy.extending(scope.className()))
 					.transform((b, td, cl, m, pd) -> b.visit( new AsmVisitorWrapper.ForDeclaredMethods()
 						.constructor(isConstructor(), new ScopeCtorWrapper(this.getIndex(), scope.getIndex()))));
 				}
 				else {
 					builder = builder
-					.type(hasGenericSuperType(failSafe(named(scope.className()))))
+					.type(TypeHierarchy.extending(scope.className()))
 					.transform((b, td, cl, m, pd) -> b.visit( Advice
 						.withCustomMapping()
 						.bind(SensorIndexValue.class, this.getIndex() )

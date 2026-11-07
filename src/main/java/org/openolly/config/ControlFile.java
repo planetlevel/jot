@@ -52,6 +52,9 @@ public final class ControlFile {
 	private static final int MAX_BYTES = 64 * 1024;
 	private static final long POLL_MILLIS = 1000;
 
+	// the one the agent follows, so a reload can give new sensors what it says
+	static volatile ControlFile current = null;
+
 	private final Path path;
 	private String lastText = null;
 	private boolean master = true;
@@ -69,10 +72,21 @@ public final class ControlFile {
 		String name = System.getProperty( "jot.control" );
 		if ( name == null || name.trim().isEmpty() ) return;
 		ControlFile control = new ControlFile( Paths.get( name.trim() ) );
+		current = control;
 		control.poll();
 		Thread t = new Thread( control::run, "jot-control" );
 		t.setDaemon( true );
 		t.start();
+	}
+
+	/** Gives every sensor what the control file last said, which a sensor made after that hasn't had yet. Does nothing with no control file. */
+	static void reapplyCurrent() {
+		ControlFile control = current;
+		if ( control != null ) control.reapply();
+	}
+
+	private synchronized void reapply() {
+		Sensor.applyControl( master, rules, enabled );
 	}
 
 	private void run() {

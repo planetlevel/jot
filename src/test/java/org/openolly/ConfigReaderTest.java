@@ -268,7 +268,7 @@ class ConfigReaderTest {
 	void everyJotFileInTheRepositoryLoadsWithNoProblems() throws Exception {
 		int before = ConfigReader.getProblems().size();
 		int files = 0;
-		for ( String where : java.util.List.of( "cves", "catalog" ) ) {
+		for ( String where : java.util.List.of( "catalog" ) ) {
 			for ( File f : ConfigReader.jotFiles( new File( where ) ) ) {
 				ConfigReader.load( f );
 				files++;

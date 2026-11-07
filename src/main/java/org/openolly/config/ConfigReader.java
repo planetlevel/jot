@@ -24,6 +24,8 @@ public class ConfigReader {
 	
 	private static File yaml = null;
 	private static long lastModified = 0;
+	// the jots file the agent started with, which a reload reads again
+	private static volatile File jotsFile = null;
 	
 	private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 	
@@ -65,6 +67,7 @@ public class ConfigReader {
 				+ "the .jot files and directories, like -javaagent:jot.jar=jot.yaml" );
 			return;
 		}
+		jotsFile = jots;
 		List<String> entries = readJotsFile( jots );
 		// the jots file can hold sensors and reports itself, which is all the configuration in one file. It is read first, so what it
 		// defines is used over what a file it lists defines, the first definition of a name winning
@@ -84,6 +87,29 @@ public class ConfigReader {
 	}
 
 	/**
+	 * The entry points a jots file lists, or null if it doesn't say, which means the defaults. Throws IllegalArgumentException,
+	 * saying what is wrong, if the app section or its entry list can't be used. The agent reads it at startup and again on a reload.
+	 */
+	static List<String> entryPoints( JsonNode root ) {
+		if ( root == null || !root.has( "app" ) ) return null;
+		JsonNode app = root.get( "app" );
+		if ( !app.isObject() ) throw new IllegalArgumentException( "app must be a mapping with packages and entry" );
+		if ( !app.has( "entry" ) ) return null;
+		JsonNode entry = app.get( "entry" );
+		List<String> entries = new ArrayList<String>();
+		boolean fine = entry.isArray();
+		if ( fine ) {
+			for ( JsonNode item : entry ) {
+				String text = item.isTextual() ? item.asText().trim() : "";
+				if ( text.isEmpty() || ( !text.startsWith( "@" ) && text.lastIndexOf( '.' ) < 1 ) ) fine = false;
+				else entries.add( text );
+			}
+		}
+		if ( !fine ) throw new IllegalArgumentException( "app entry must be a list of methods like javax.servlet.Servlet.service or annotations like @org.example.Tool" );
+		return entries;
+	}
+
+	/**
 	 * Reads a jots file, shared by the agent and the dashboard.
 	 *
 	 *   jots:
@@ -98,17 +124,10 @@ public class ConfigReader {
 		ObjectMapper mapper = new ObjectMapper( new YAMLFactory() );
 		JsonNode root = mapper.readTree( jotsFile );
 		File base = jotsFile.getAbsoluteFile().getParentFile();
-		List<String> paths = new ArrayList<>();
 		if ( root == null || !( root.has( "jots" ) || root.has( "sensors" ) ) ) {
 			logger.atWarning().log( "[JOT] " + jotsFile + " has no jots list and no sensors" );
 		}
-		if ( root != null && root.has( "jots" ) ) {
-			for ( JsonNode item : root.get( "jots" ) ) {
-				String path = item.isTextual() ? item.asText() : item.path( "path" ).asText( null );
-				if ( path == null ) continue;
-				paths.add( new File( path ).isAbsolute() ? path : new File( base, path ).getPath() );
-			}
-		}
+		List<String> paths = listedPaths( root, base );
 		if ( root != null && root.isObject() ) {
 			java.util.Iterator<String> keys = root.fieldNames();
 			while ( keys.hasNext() ) {
@@ -128,19 +147,11 @@ public class ConfigReader {
 					String key = names.next();
 					if ( !key.equals( "packages" ) && !key.equals( "entry" ) ) problem( jotsFile, null, "app has " + key + ", which is not a setting, the settings are packages and entry" );
 				}
-				if ( app.has( "entry" ) ) {
-					JsonNode entry = app.get( "entry" );
-					List<String> entries = new ArrayList<String>();
-					boolean fine = entry.isArray();
-					if ( fine ) {
-						for ( JsonNode item : entry ) {
-							String text = item.isTextual() ? item.asText().trim() : "";
-							if ( text.isEmpty() || ( !text.startsWith( "@" ) && text.lastIndexOf( '.' ) < 1 ) ) fine = false;
-							else entries.add( text );
-						}
-					}
-					if ( fine ) AppScope.configure( entries );
-					else problem( jotsFile, null, "app entry must be a list of methods like javax.servlet.Servlet.service or annotations like @org.example.Tool, so the default entry points are used" );
+				try {
+					List<String> entries = entryPoints( root );
+					if ( entries != null ) AppScope.configure( entries );
+				} catch ( IllegalArgumentException e ) {
+					problem( jotsFile, null, e.getMessage() + ", so the default entry points are used" );
 				}
 			}
 		}
@@ -163,6 +174,24 @@ public class ConfigReader {
 			System.setProperty( "jot.control", new File( control ).isAbsolute() ? control : new File( base, control ).getPath() );
 		}
 		return paths;
+	}
+
+	/** The files and directories a jots file lists, as absolute paths where it gave relative ones. Reads nothing else, and changes nothing. */
+	static List<String> listedPaths( JsonNode root, File base ) {
+		List<String> paths = new ArrayList<>();
+		if ( root != null && root.has( "jots" ) ) {
+			for ( JsonNode item : root.get( "jots" ) ) {
+				String path = item.isTextual() ? item.asText() : item.path( "path" ).asText( null );
+				if ( path == null ) continue;
+				paths.add( new File( path ).isAbsolute() ? path : new File( base, path ).getPath() );
+			}
+		}
+		return paths;
+	}
+
+	/** The jots file the agent started with, or null if it didn't start with one. */
+	static File jotsFile() {
+		return jotsFile;
 	}
 
 	// A file is used as given. A directory contributes every .jot file under it.
@@ -194,7 +223,7 @@ public class ConfigReader {
 		return problems;
 	}
 
-	private static void problem( File file, String name, String text ) {
+	static void problem( File file, String name, String text ) {
 		logger.atSevere().log( "[JOT] ERROR: %s in %s %s.%s", name == null ? "the file" : name, file, text, name == null ? "" : " It was not loaded." );
 		problems.add( file.getName() + " " + ( name == null ? "" : name + " " ) + text );
 	}
@@ -246,21 +275,29 @@ public class ConfigReader {
 					logger.atWarning().log("[JOT] WARNING: " + name + " from " + yaml + " already loaded. Skipping." );
 					continue;
 				}
-				YAMLSensor entry = mapper.treeToValue( node, YAMLSensor.class );
-				new Sensor()
-					.name( entry.name )
-					.description( entry.description )
-					.methods( entry.methods )
-					.scopes( entry.scopes )
-					.excludes( entry.excludes )
-					.captures( entry.captures )
-					.matchers( entry.matchers )
-					.blockWhen( entry.blockWhen )
-					.protect( entry.protect )
-					.enabled( entry.enabled )
-					.debug( entry.debug );
+				create( node );
 			}
 		}
+	}
+
+	/** Makes a sensor from its definition in a file, which has been checked already. It is loaded as soon as it is made. */
+	static Sensor create( JsonNode node ) throws IOException {
+		YAMLSensor entry = new ObjectMapper( new YAMLFactory() )
+				.configure( DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false )
+				.treeToValue( node, YAMLSensor.class );
+		return new Sensor()
+			.name( entry.name )
+			.description( entry.description )
+			.methods( entry.methods )
+			.scopes( entry.scopes )
+			.excludes( entry.excludes )
+			.captures( entry.captures )
+			.matchers( entry.matchers )
+			.blockWhen( entry.blockWhen )
+			.protect( entry.protect )
+			.enabled( entry.enabled )
+			.debug( entry.debug )
+			.fingerprint( node.toString() );
 	}
 	
 	private static class YAML {

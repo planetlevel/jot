@@ -46,6 +46,11 @@ public final class PlatformWork {
 		return work;
 	}
 
+	/** True if the jots file gave no ignore list, so the default is in force. */
+	public static boolean isDefault() {
+		return work == DEFAULT_IGNORE;
+	}
+
 	/** True if the call at the start of this stack was made by class loading or page compiling and nothing the application did. */
 	public static boolean inside(StackTraceElement[] stack) {
 		if ( stack == null ) return false;
