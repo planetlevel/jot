@@ -401,9 +401,9 @@
     </div>
   </div>
   <nav aria-label="Pages">
-    <a href="#assistant" id="navAssistant">Assistant</a>
+    <a href="#assistant" id="navAssistant" class="active">Assistant</a>
     <a href="#run" id="navRun">Run</a>
-    <a href="#events" id="navEvents" class="active">Events</a>
+    <a href="#events" id="navEvents">Events</a>
     <a href="#graph" id="navGraph">Graph</a>
     <a href="#reports" id="navReports">Reports</a>
     <a href="#jots" id="navJots">Sensors</a>
@@ -733,7 +733,7 @@ function showPage(address) {
     if (selected) { pendingSelect = decodeURIComponent(selected); pendingEdit = mode === "edit"; }
   }
   const before = currentPage;
-  currentPage = ["jots", "graph", "reports", "assistant", "run"].includes(name) ? name : "events";
+  currentPage = ["jots", "graph", "reports", "assistant", "run"].includes(name) ? name : name ? "events" : "assistant";   // no address is the home page, the Assistant
   $("eventsPage").hidden = currentPage !== "events";
   $("runPage").hidden = currentPage !== "run";
   $("graphPage").hidden = currentPage !== "graph";
@@ -919,15 +919,6 @@ $("runCommand").addEventListener("input", () => { runEdited = true; });
 $("runStop").addEventListener("click", runStop);
 $("runRestart").addEventListener("click", async () => { await runStop(); await runStart(); });
 
-// A console with nothing in it yet opens on Run, where the way in is. Anything already recorded opens on Events as before.
-async function chooseFirstPage() {
-  if (location.hash.slice(1)) return;
-  try {
-    const [status, run] = await Promise.all([api("/api/status"), api("/api/run")]);
-    if (!status.events && !status.hidden && !location.hash.slice(1) && run) location.hash = "#run";
-  } catch (e) { /* no launcher here, the Events page stays */ }
-}
-
 // ---- protection. Agents read a control file, nothing here reaches an agent.
 let controlState = null;
 
@@ -995,17 +986,19 @@ async function refreshControl() {
 // ---- status
 let lastStatus = null;
 
-// The agent reads the configuration when the application starts, so a change made while it runs doesn't reach it until it is restarted. The banner
-// says so on every page, and restarts it with the command last used on the Run page, or takes the person there when that isn't known yet.
+// An agent that follows its files takes new sensors, rules and entry points while it runs, and only reads the ignore list at startup. An older
+// agent reads everything at startup. The banner says which, on every page, and restarts the application with the command last used on the Run
+// page, or takes the person there when that isn't known yet.
 function drawRestart(r) {
   const bar = $("restartBanner");
   const show = !!(r && r.needed);
   const changed = show === bar.hidden;
   bar.hidden = !show;
   if (show && !restartBusy) {
+    const what = r.why === "ignore" ? "the new ignore list, which the agent reads only when the application starts" : "the configuration changes";
     $("restartText").textContent = restartError || (r.command
-      ? "Restart your application to load the configuration changes. It is still running the old one."
-      : "Restart your application to load the configuration changes. Start it once from the Run page and the console can restart it for you.");
+      ? "Restart your application to load " + what + ". It is still running the old one."
+      : "Restart your application to load " + what + ". Start it once from the Run page and the console can restart it for you.");
     $("restartNow").hidden = !r.command;
     $("restartNow").disabled = false;
     $("restartNow").textContent = "Restart now";
@@ -1084,7 +1077,13 @@ function renderReply(text) {
   return out;
 }
 
-async function openAssistant() {
+// the page opens on the Assistant, so a second call while the first is still asking must not make a second empty conversation
+let assistantOpening = null;
+function openAssistant() {
+  if (!assistantOpening) assistantOpening = openAssistantNow().finally(() => { assistantOpening = null; });
+  return assistantOpening;
+}
+async function openAssistantNow() {
   try {
     const home = await api("/api/assistant");
     let chats = home.chats;
@@ -3249,7 +3248,6 @@ document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && shownE
 showPage(location.hash.slice(1));
 runSql(PRESETS[0].sql, PRESETS[0]);
 tick();
-chooseFirstPage();
 </script>
 </body>
 </html>

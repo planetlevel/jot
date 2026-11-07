@@ -30,7 +30,7 @@ def _mapping(item):
 
 
 # the order areas are offered in, the common ones first, and any other area after them by name
-ORDER = ["web", "sensitive", "sql", "file", "network", "deserialization", "expression", "crypto", "runtime", "ai"]
+ORDER = ["web", "sensitive", "sql", "file", "network", "deserialization", "expression", "regex", "crypto", "runtime", "ai"]
 
 
 class Catalog:
@@ -49,13 +49,15 @@ class Catalog:
         sensors a report reads, or the fields of a sensor) and text, which is the definition as written. Read again when a file changes."""
         if not self.available():
             return []
-        files = sorted(glob.glob(os.path.join(self.path, "*.jot")))
+        flat = sorted(glob.glob(os.path.join(self.path, "*.jot")))
+        nested = sorted(glob.glob(os.path.join(self.path, "*", "*.jot")))     # a folder is one area too, for areas with many files, like cve
+        files = flat + nested
         signature = [(f, os.path.getmtime(f)) for f in files]
         if signature == self._seen:
             return self._items
         out, names = [], {}
         for f in files:
-            area = os.path.splitext(os.path.basename(f))[0]
+            area = os.path.basename(os.path.dirname(f)) if f in nested else os.path.splitext(os.path.basename(f))[0]
             with open(f, encoding="utf-8") as fh:
                 text = fh.read()
             try:
@@ -68,6 +70,7 @@ class Catalog:
                         continue
                     row = {"name": name, "kind": "report" if kind == "report" else "rule" if "block-when" in definition else "sensor", "area": area,
                            "description": definition.get("description") or definition.get("title") or "", "text": _mapping(body), "definition": definition}
+                    row["note"] = " ".join(l.lstrip("#").strip() for l in row["text"].split("\n") if l.startswith("#")).strip()
                     names[name] = row
                     out.append(row)
         sensors = [n for n, r in names.items() if r["kind"] != "report"]
@@ -105,7 +108,22 @@ class Catalog:
 
     def _about(self, area):
         """What the comments at the top of an area's file say it is, without the first line, which names it, and the last, which says how to copy."""
+        folder = os.path.join(self.path, area)
         try:
+            if os.path.isdir(folder):
+                # a folder says what it is in its README.md, the words under the heading up to the first blank line
+                with open(os.path.join(folder, "README.md"), encoding="utf-8") as fh:
+                    lines, started = [], False
+                    for line in fh:
+                        if line.startswith("#"):
+                            continue
+                        if not line.strip():
+                            if started:
+                                break
+                            continue
+                        started = True
+                        lines.append(line.strip())
+                return " ".join(lines)
             with open(os.path.join(self.path, area + ".jot"), encoding="utf-8") as fh:
                 lines = []
                 for line in fh:
@@ -127,6 +145,35 @@ class Catalog:
                 row["needs_sensors"] = r["needs"]
             else:
                 row["methods"] = (r["definition"].get("methods") or [])[:3]
+                row["fields"] = r.get("fields", [])
+            out.append(row)
+        return out
+
+    def search(self, query, limit=15):
+        """The sensors, rules and reports that fit some words, like a library's name or a method, so what applies to an application is found
+        without reading whole areas. Every word has to be in the name, description, area, methods, scopes or the comment above the item, which is
+        where a CVE rule says its library and versions. Best first, the names before the rest."""
+        words = [w for w in re.split(r"[\s,]+", (query or "").lower()) if w]
+        if not words:
+            return []
+        found = []
+        for r in self.items():
+            d = r["definition"]
+            methods, scopes = d.get("methods") or [], d.get("scopes") or []
+            hay = " ".join([r["name"], r["description"], r["area"], r["note"], " ".join(methods), " ".join(scopes)]).lower()
+            if all(w in hay for w in words):
+                rank = 0 if all(w in r["name"].lower() for w in words) else 1 if all(w in (r["note"] + " " + r["description"]).lower() for w in words) else 2
+                found.append((rank, r))
+        found.sort(key=lambda x: (x[0], x[1]["name"]))
+        out = []
+        for _, r in found[:limit]:
+            row = {"name": r["name"], "kind": r["kind"], "area": r["area"], "description": r["description"]}
+            if r["note"]:
+                row["note"] = r["note"][:300]
+            if r["kind"] == "report":
+                row["needs_sensors"] = r["needs"]
+            else:
+                row["scopes"] = (r["definition"].get("scopes") or [])[:3]
                 row["fields"] = r.get("fields", [])
             out.append(row)
         return out

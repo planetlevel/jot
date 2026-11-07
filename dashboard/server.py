@@ -555,11 +555,24 @@ class App:
 
     RESTART_MARGIN = 2          # seconds, a change this soon after the application started is read by it
 
+    def _ignore_differs(self, agent):
+        """True if the ignore list in the jots file is not the one the running agent says it started with, which it reads once. The sensors,
+        the rules and the entry points are followed while it runs, and packages are the console's own, so none of those count."""
+        try:
+            written = store.read_settings(self.jots_file)["ignore"] if self.jots_file else None
+            said = agent["ignore"]
+            started = None if said in (None, "default") else json.loads(said)
+        except (OSError, ValueError, yaml.YAMLError):
+            return False        # a file that can't be read now is not a change the agent could load either
+        return written != started
+
     def restart_state(self):
-        """Whether the application that is running was started before the configuration last changed, which the agent reads only when the
-        application starts. Every process that is running counts, the one the console started and one that was started some other way.
-        None when the console can't start applications. The protection settings are not part of it, the agents read those while they run.
-        It is worked out at most every few seconds, since it looks at the processes."""
+        """Whether the application that is running needs restarting to load the configuration. An agent that follows its files while it runs, which
+        says so in its startup events, takes new and changed sensors, rules and entry points without one, and only the ignore list it read at
+        startup is left, so that is the one thing compared. An agent that doesn't say it follows its files reads everything once, so for it
+        the configuration changing after the application started is the test. Every process that is running counts, the one the console
+        started and one that was started some other way. None when the console can't start applications. The protection settings are not
+        part of it, the agents read those while they run. It is worked out at most every few seconds, since it looks at the processes."""
         run = self.launcher
         if not run:
             return None
@@ -572,8 +585,12 @@ class App:
             starts = [(run.started or 0) / 1000]
         else:
             starts = [f["started"] for f in launcher.running_elsewhere(self.db_path)]
-        state = {"needed": any(changed > started + self.RESTART_MARGIN for started in starts), "command": run.command, "running": bool(starts),
-                 "changed": int(changed * 1000)}
+        agent = self.agent_state()
+        if starts and agent.get("reload") == "on":
+            needed, why = self._ignore_differs(agent), "ignore"
+        else:
+            needed, why = any(changed > started + self.RESTART_MARGIN for started in starts), "all"
+        state = {"needed": needed, "command": run.command, "running": bool(starts), "changed": int(changed * 1000), "why": why}
         self._restart_cache = (time.time(), state)
         return state
 
@@ -744,7 +761,8 @@ class App:
             return [c[len(key) + 1:] for c in said if c.startswith(key + "=")]
         return {"known": True, "run": run, "host": host, "app": app, "started": ts,
                 "locked": "monitor" in values("lock"), "jots": (values("jots") or [None])[0],
-                "control": (values("control") or [None])[0], "loaded": values("loaded"), "problems": values("problem")}
+                "control": (values("control") or [None])[0], "loaded": values("loaded"), "problems": values("problem"),
+                "reload": (values("reload") or [None])[0], "ignore": (values("ignore") or [None])[0]}
 
     def control_state(self):
         """What the Protection panel shows. Each rule's setting is what the control file says, or else what its

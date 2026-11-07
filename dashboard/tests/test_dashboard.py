@@ -3288,6 +3288,20 @@ class CatalogTests(unittest.TestCase):
     def setUp(self):
         self.catalog = catalog.Catalog(self.PATH)
 
+    def test_cve_rules_are_an_area_in_a_folder_and_found_by_the_library_they_are_for(self):
+        areas = {a["name"]: a for a in self.catalog.areas()}
+        self.assertEqual(5, areas["cve"]["rules"], "one rule for each CVE file in the folder")
+        self.assertEqual("Known vulnerabilities", areas["cve"]["topic"])
+        found = self.catalog.search("snakeyaml")
+        self.assertEqual(["cve-2022-1471"], [r["name"] for r in found])
+        self.assertIn("org.yaml:snakeyaml", found[0]["note"], "the note says the library and the vulnerable versions")
+        self.assertEqual("cve", found[0]["area"])
+        self.assertEqual("cve-2021-44228", self.catalog.search("log4j core")[0]["name"], "the CVE rule for the library comes first, and other log4j items follow")
+        self.assertIn("cve-2022-42889", [r["name"] for r in self.catalog.search("commons-text")])
+        self.assertEqual([], self.catalog.search("no-such-library"))
+        self.assertEqual([], self.catalog.search("  "))
+        self.assertIn("sql-statement", [r["name"] for r in self.catalog.search("java.sql.Statement.executeQuery")], "methods are searched too")
+
     def test_the_catalog_has_generic_sensors_rules_and_reports(self):
         kinds = {}
         for item in self.catalog.items():
@@ -3297,7 +3311,7 @@ class CatalogTests(unittest.TestCase):
         self.assertGreaterEqual(kinds["report"], 10)
         names = [i["name"] for i in self.catalog.items()]
         self.assertEqual(len(names), len(set(names)))
-        self.assertEqual({"web", "sensitive", "crypto", "sql", "file", "network", "deserialization", "expression", "runtime", "ai"}, {i["area"] for i in self.catalog.items()})
+        self.assertEqual({"web", "sensitive", "crypto", "sql", "file", "network", "deserialization", "expression", "regex", "runtime", "ai", "cve"}, {i["area"] for i in self.catalog.items()})
 
     def test_every_sensor_and_rule_passes_the_checks_as_written(self):
         taken = set()
@@ -3907,7 +3921,7 @@ class AssistantTests(unittest.TestCase):
         view = self.say("what can I look at", self.reply(self.use("list_catalog_areas"), stop="tool_use"), self.reply(self.text("These.")))
         result = json.loads(self.sent[1]["messages"][-1]["content"][0]["content"])
         areas = {a["name"]: a for a in result["areas"]}
-        self.assertEqual({"web", "sensitive", "crypto", "sql", "file", "network", "deserialization", "expression", "runtime", "ai"}, set(areas))
+        self.assertEqual({"web", "sensitive", "crypto", "sql", "file", "network", "deserialization", "expression", "regex", "runtime", "ai", "cve"}, set(areas))
         self.assertEqual("Web requests", areas["web"]["topic"])
         self.assertEqual(1, areas["web"]["already_in_configuration"], "http-route is already there")
         self.assertIn("web", areas["sql"]["needs_areas"], "its report reads the route")
@@ -3974,7 +3988,7 @@ class AssistantTests(unittest.TestCase):
         self.assertIn("Reaching data the watched method doesn't hand you", body["system"][0]["text"], "it is taught to walk from #OBJ, #P0 and #RET")
         self.assertIn("never propose a sensor that can't fire", body["system"][0]["text"])
         self.assertNotIn("Always answer by calling the draft tool", body["system"][0]["text"], "this is not drafting")
-        self.assertEqual({"get_configuration", "get_sensor", "get_observed", "propose_setting", "propose_sensor", "propose_report", "propose_delete", "propose_restart", "propose_consolidation", "list_catalog_areas", "list_catalog", "ask_person", "get_catalog_item", "propose_from_catalog"},
+        self.assertEqual({"get_configuration", "get_sensor", "get_observed", "propose_setting", "propose_sensor", "propose_report", "propose_delete", "propose_restart", "propose_consolidation", "list_catalog_areas", "list_catalog", "search_catalog", "ask_person", "get_catalog_item", "propose_from_catalog"},
                          {t["name"] for t in body["tools"]})
         first = body["messages"][0]
         self.assertEqual("user", first["role"])
@@ -4995,7 +5009,8 @@ class ConsolidateTests(unittest.TestCase):
         self.assertEqual(original, self.read(), "the jots file is not touched when the result goes elsewhere")
         self.assertEqual(4, yaml.safe_load(self.read("one.yaml")) and len(yaml.safe_load(self.read("one.yaml"))["sensors"]))
         done = store.consolidate(self.main)
-        self.assertEqual(self.main + ".bak", done["backup"])
+        self.assertEqual(os.path.join(self.dir, ".jot", "jot.yaml.bak"), done["backup"], "the copy goes in .jot with everything else JOT writes")
+        self.assertFalse(os.path.exists(self.main + ".bak"), "and nothing is left beside the jots file")
         with open(done["backup"]) as f:
             self.assertEqual(original, f.read())
         for name, text in files.items():
@@ -5005,7 +5020,7 @@ class ConsolidateTests(unittest.TestCase):
         original = self.read()
         done = store.consolidate(self.main, write=False)
         self.assertEqual(original, self.read())
-        self.assertFalse(os.path.exists(self.main + ".bak"))
+        self.assertFalse(os.path.exists(os.path.join(self.dir, ".jot")), "a dry run makes no folder either")
         self.assertIn("name: lib-l", done["text"])
 
     def test_doing_it_again_changes_nothing(self):
@@ -5716,7 +5731,7 @@ class CheckJotTests(unittest.TestCase):
 
     def test_every_real_jot_passes_as_it_is_shown_and_as_a_file(self):
         found = 0
-        real = [p for where in ("cves", "src/main/resources") for p in glob.glob(os.path.join(self.ROOT, where, "*.jot"))]
+        real = [p for where in ("catalog/cve", "src/main/resources") for p in glob.glob(os.path.join(self.ROOT, where, "*.jot"))]
         real.append(os.path.join(self.ROOT, "demo", "ticketbook", ".jot", "jot.yaml"))      # the demo's configuration is one file
         for path in real:
             with open(path) as fh:
@@ -6955,6 +6970,66 @@ class RunTests(unittest.TestCase):
         self.assertNotEqual(old, run.state()["pid"])
         self.assertFalse(app.restart_state()["needed"], "restarting cleared it, the new process started after the change")
 
+    def _agent_says(self, app, *lines):
+        """What an agent says about itself when it starts, as jot-config events."""
+        with app.ingestor.lock:
+            for n, line in enumerate(lines):
+                app.ingestor.db.execute("INSERT INTO events_raw (ts, run, host, pid, id, sensor, capture) VALUES (?, 'r1', 'h', 1, ?, 'jot-config', ?)",
+                                        (int(time.time() * 1000), n, line))
+            app.ingestor.db.commit()
+
+    def test_an_agent_that_follows_its_files_needs_a_restart_only_for_the_ignore_list(self):
+        app = server.build_project(self.project, say=lambda *_: None)
+        self.addCleanup(app.close)
+        run = app.launcher
+        run.agent = self.agent
+        run.start(self.script("run.sh", "sleep 30\n"))
+        self._agent_says(app, "reload=on", "ignore=default")
+        run.started -= 30000                # it has been running for half a minute, and the configuration is saved now
+        os.utime(self.jots)
+        app._restart_cache = None
+        self.assertFalse(app.restart_state()["needed"], "the agent follows its files, so a new sensor needs no restart")
+        store.write_ignore(self.jots, ["org.example.work"])
+        app._restart_cache = None
+        state = app.restart_state()
+        self.assertEqual((True, "ignore"), (state["needed"], state["why"]), "the ignore list is read once, at startup")
+        store.write_ignore(self.jots, None)
+        app._restart_cache = None
+        self.assertFalse(app.restart_state()["needed"], "back to what the agent started with")
+
+    def test_an_agent_that_started_with_an_ignore_list_is_compared_with_it(self):
+        app = server.build_project(self.project, say=lambda *_: None)
+        self.addCleanup(app.close)
+        run = app.launcher
+        run.agent = self.agent
+        store.write_ignore(self.jots, ["org.example.work"])
+        run.start(self.script("run.sh", "sleep 30\n"))
+        self._agent_says(app, "reload=on", 'ignore=["org.example.work"]')
+        app._restart_cache = None
+        self.assertFalse(app.restart_state()["needed"])
+        store.write_ignore(self.jots, ["org.example.other"])
+        app._restart_cache = None
+        self.assertTrue(app.restart_state()["needed"])
+
+    def _any_change_needs_a_restart(self, *said):
+        app = server.build_project(self.project, say=lambda *_: None)
+        self.addCleanup(app.close)
+        run = app.launcher
+        run.agent = self.agent
+        run.start(self.script("run.sh", "sleep 30\n"))
+        self._agent_says(app, *said)
+        run.started -= 30000
+        os.utime(self.jots)
+        app._restart_cache = None
+        state = app.restart_state()
+        self.assertEqual((True, "all"), (state["needed"], state["why"]), said)
+
+    def test_an_agent_told_not_to_follow_its_files_needs_a_restart_for_any_change(self):
+        self._any_change_needs_a_restart("reload=off")
+
+    def test_an_older_agent_that_never_says_needs_a_restart_for_any_change(self):
+        self._any_change_needs_a_restart("jots=x")
+
     def test_an_application_started_some_other_way_counts_too(self):
         app = server.build_project(self.project, say=lambda *_: None)
         self.addCleanup(app.close)
@@ -6972,12 +7047,14 @@ class RunTests(unittest.TestCase):
         self.addCleanup(app.close)
         self.assertIsNone(app.launcher)
 
-    def test_the_run_page_is_there_and_a_new_console_opens_on_it(self):
+    def test_the_run_page_is_there_and_the_console_opens_on_the_assistant(self):
         with open(os.path.join(os.path.dirname(__file__), "..", "static", "index.html"), encoding="utf-8") as f:
             html = f.read()
-        for needle in ('id="runPage"', 'href="#run"', '"/api/run/start"', '"/api/run/stop"', "chooseFirstPage();", 'id="restartBanner"', 'id="restartNow"',
+        for needle in ('id="runPage"', 'href="#run"', '"/api/run/start"', '"/api/run/stop"', 'id="restartBanner"', 'id="restartNow"',
                        '"/api/run/restart"'):
             self.assertIn(needle, html)
+        self.assertNotIn("chooseFirstPage", html, "no page is chosen for a new console, the home page is the Assistant")
+        self.assertIn('id="navAssistant" class="active"', html)
 
 
 class ResetTests(unittest.TestCase):

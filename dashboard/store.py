@@ -1420,7 +1420,7 @@ def consolidate(path, out=None, keep=(), write=True):
     out, or left with the entries named in keep, which are libraries that stay where they are. A name is defined by the first place that
     defines it, as the agent reads them, so a sensor or report a file defines that an earlier one already did is left out and said so.
     Nothing is written until the result has been read back and every sensor and report in it is exactly what was in its file. The files
-    that were listed are not touched, and the jots file is copied to a .bak beside it when it is rewritten in place. With write false nothing
+    that were listed are not touched, and the jots file is copied to a .bak in the .jot folder when it is rewritten in place. With write false nothing
     is written, and the result is in the text of what is returned. Returns what was done."""
     path = os.path.abspath(path)
     out = os.path.abspath(out) if out else path
@@ -1498,7 +1498,7 @@ def consolidate(path, out=None, keep=(), write=True):
                 "skipped": skipped, "missing": missing, "kept": list(keep), "text": result}
     backup = None
     if out == path and result != text:
-        backup = path + ".bak"
+        backup = os.path.join(make_jot_dir(jot_dir(path)), os.path.basename(path) + ".bak")     # in .jot with everything else JOT writes
         shutil.copy2(path, backup)
     tmp = out + ".saving"
     with open(tmp, "w", encoding="utf-8") as fh:

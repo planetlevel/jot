@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Combines a jots file and the files it lists into one jots file, so all the configuration is in one place.
 
-    python3 consolidate.py demo/ticketbook/.jot/jot.yaml --keep ../../cves
+    python3 consolidate.py demo/ticketbook/.jot/jot.yaml --keep ../../catalog/cve
 
 The sensors, rules and reports of every listed file are added to the jots file, with the comments that were in the files. --keep names an
 entry of the jots: list that stays a separate file or directory, like a library shared by several projects. The listed files are not
-touched, and the jots file is copied to jot.yaml.bak first when it is rewritten in place. Nothing is written until the result has been read
+touched, and the jots file is copied to jot.yaml.bak in the .jot folder first when it is rewritten in place. Nothing is written until the result has been read
 back and every sensor and report in it is exactly what was in its file. --dry-run says what would happen and writes nothing.
 """
 

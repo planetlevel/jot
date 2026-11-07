@@ -65,8 +65,9 @@ find out what they want to learn about their application, and propose something 
   renders pages with JSPs", then offer two or three directions with ask_person.
 - Before you propose across more than two areas, or when you have assumed something, say the plan in a sentence or two and check it with ask_person.
   Don't ask when it is one sensor or one report. A person who says to set everything up has answered already, so go ahead and don't ask.
-- After they apply something, say the one next step. For a new sensor that is restarting the application, using it, and looking at the Events or Graph
-  page. Rules start as report only, so say that nothing is blocked yet.
+- After they apply something, say the one next step. A new or changed sensor, rule or entry point is on the running application within a few seconds with no
+  restart, so the next step is using the application and looking at the Events or Graph page. Only a change to the ignore list, or an application whose
+  agent doesn't follow its files, needs a restart. Rules start as report only, so say that nothing is blocked yet.
 - Use plain words. Say what a thing does before you call it a sensor, a rule or an entry point, then use the word. Never lecture.
 - Keep replies terse, one or two short sentences, and a short list only when you show choices. The cards say what is proposed, and their reason is hidden until
   the person opens it, so write the reason as one plain sentence and never repeat it or the card in the reply. Explain more only when asked.
@@ -76,9 +77,13 @@ Using the catalog
   the ones that fit, and not the whole catalog. Offer areas with a sentence on what each would show, and not a list of sensors. Look at the configuration first, so you don't offer what is there.
 - Which areas fit. web is the base, since reports are by route. sensitive finds personal data in requests. sql when the application uses a database. file for paths it
   opens. network for connections it makes. deserialization for objects read from bytes. expression for EL, Spring expressions and ${} lookups, which the libraries often bring.
+  regex for the regular expressions it compiles.
   runtime for operating system processes, native code, threads and shutting the JVM down. crypto for ciphers, hashes and keys. ai for Spring AI agents.
 - A report may read sensors from another area (needs_areas). propose_from_catalog adds the sensors a report needs, so say so when that brings in more than they chose.
   Put what belongs together in one propose_from_catalog card, and use several cards when the areas are separate choices.
+- Known vulnerabilities are in the cve area, one rule for each CVE in one library, and they only matter when the application uses the vulnerable version. Never list the
+  whole area. In a setup, after list_libraries, call search_catalog with the name of each library that has a version and look at the note, which says the library and the
+  vulnerable versions. Offer a rule when the library's version is in that range, or when you can't tell the version, and say which. Say what the rule blocks in plain words.
 - Adapt a definition with get_catalog_item and propose_sensor only when the catalog's doesn't fit.
 
 How to work
@@ -154,7 +159,8 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["sensor", "report"]}, "name": {"type": "string"},
                                                        "reason": {"type": "string"}}, "required": ["kind", "name", "reason"]}},
     {"name": "propose_restart",
-     "description": "Propose restarting the application, which the agent needs for a new or changed sensor or setting to take effect. The person sees a card and "
+     "description": "Propose restarting the application. A new or changed sensor, rule or entry point does not need one, the agent follows its files while the application runs. "
+                    "Use it for a change to the ignore list, which the agent reads only at startup, or when overview says the agent does not follow its files. The person sees a card and "
                     "nothing is restarted until they apply it. It restarts with the command the person last started the application with from the Run page, "
                     "you never give a command. If the console doesn't know how the application starts you are told, and should ask the person to start it "
                     "once from the Run page.",
@@ -176,6 +182,13 @@ TOOLS = [
                     "and captures, whether the configuration already has it, and for a report the sensors it needs. Give an area to see only that one's, "
                     "which is what to do, and leave it out only to see everything. Choose what fits what you found, a sensor for SQL only if the project uses a database, and so on.",
      "input_schema": {"type": "object", "properties": {"area": {"type": "string", "description": "an area's name from list_catalog_areas"}}}},
+    {"name": "search_catalog",
+     "description": "Find catalog sensors, rules and reports that fit some words, like the name of a library the application uses (snakeyaml, log4j-core), "
+                    "a class or a method. Every word has to match the name, description, methods, scopes or the note above the item, which for a CVE rule says "
+                    "the library and the versions that are vulnerable. Use it after list_libraries for each library worth a look, and whenever you want what "
+                    "applies and not a whole area. Each result has its name, kind, area, description, note and whether the configuration already has it.",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "words to look for, like a library name"}},
+                      "required": ["query"]}},
     {"name": "ask_person",
      "description": "Ask the person a question with choices, which they see as buttons. Your turn ends when you ask, and their answer comes as their next message. "
                     "Use it to find out what they want to learn or to check a plan before you propose, one question at a time, never for what a tool can tell you. "
@@ -205,7 +218,7 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"keep": {"type": "array", "items": {"type": "string"}}, "reason": {"type": "string"}}, "required": ["reason"]}},
 ]
 
-STEPS = {"list_catalog_areas": "Looked at what the catalog covers", "list_catalog": "Looked through the catalog", "get_catalog_item": "Looked at a catalog item", "get_configuration": "Looked at the configuration", "get_sensor": "Looked at a sensor", "get_observed": "Looked at what the application has been seen doing"}
+STEPS = {"list_catalog_areas": "Looked at what the catalog covers", "list_catalog": "Looked through the catalog", "search_catalog": "Searched the catalog", "get_catalog_item": "Looked at a catalog item", "get_configuration": "Looked at the configuration", "get_sensor": "Looked at a sensor", "get_observed": "Looked at what the application has been seen doing"}
 
 
 def system_prompt():
@@ -225,7 +238,7 @@ class Assistant:
         self.tools = {"get_configuration": self._get_configuration, "get_sensor": self._get_sensor, "get_observed": self._get_observed,
                       "propose_setting": self._propose_setting, "propose_sensor": self._propose_sensor,
                       "propose_report": self._propose_report, "propose_delete": self._propose_delete, "propose_restart": self._propose_restart, "propose_consolidation": self._propose_consolidation,
-                      "list_catalog_areas": self._list_catalog_areas, "list_catalog": self._list_catalog, "ask_person": self._ask_person, "get_catalog_item": self._get_catalog_item, "propose_from_catalog": self._propose_from_catalog}
+                      "list_catalog_areas": self._list_catalog_areas, "list_catalog": self._list_catalog, "search_catalog": self._search_catalog, "ask_person": self._ask_person, "get_catalog_item": self._get_catalog_item, "propose_from_catalog": self._propose_from_catalog}
 
     # ------------------------------------------------------------------ storage
 
@@ -621,6 +634,15 @@ class Assistant:
             return {"error": "there is no area called %s, the areas are %s" % (area, ", ".join(a["name"] for a in catalog.areas()))}
         mine = self._names()
         return {"items": [dict(row, in_configuration=row["name"] in mine) for row in catalog.listing(area or None)]}
+
+    def _search_catalog(self, query=""):
+        catalog = self.app.catalog
+        if not catalog.available():
+            return {"error": "there is no catalog here, write the sensors yourself as the rules say"}
+        if not (query or "").strip():
+            return {"error": "give the words to look for, like a library's name"}
+        mine = self._names()
+        return {"items": [dict(row, in_configuration=row["name"] in mine) for row in catalog.search(query)]}
 
     def _ask_person(self, chat, question="", options=None, several=False):
         """Shows the person a question with choices, and ends the turn when it is done, since only their answer can go on. One at a time."""
