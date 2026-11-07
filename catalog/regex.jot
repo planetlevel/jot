@@ -1,0 +1,19 @@
+# JOT catalog, regex
+# Regular expressions. The patterns the application compiles, which shows what it matches and where an expensive pattern could be set off by text from outside.
+# Copy what fits your application into its .jot/jot.yaml. The Assistant page does that for you.
+
+sensors:
+
+- name: regex-pattern
+  description: Identifies a regular expression being compiled
+  methods:
+  - java.util.regex.Pattern.compile
+  captures:
+    pattern: "#P0"
+    pattern_length: "#P0.length()"
+
+reports:
+
+- name: Regex Usage
+  type: list
+  cols: regex-pattern.pattern

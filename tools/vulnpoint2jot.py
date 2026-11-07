@@ -21,7 +21,7 @@ is active, once, as cve-...-active, and that is how to tell whether a CVE is act
 disallowed capabilities and no policy has nothing to sandbox. With --observe it becomes a sensor on the vulnerable
 methods instead.
 
-    tools/vulnpoint2jot.py CVE-2021-44228 CVE-2019-12384 -o cves
+    tools/vulnpoint2jot.py CVE-2021-44228 CVE-2019-12384 -o catalog/cve
     tools/vulnpoint2jot.py --all -o /tmp/all-cves
     tools/vulnpoint2jot.py CVE-2022-42889 --deny process,scripting     # a policy vulnpoint doesn't have yet
 """
@@ -150,7 +150,7 @@ def rule(shield, catalog, deny, observe, policy=()):
             text += "# scope from the vulnpoint policy, its shield doesn't list this method\n"
         text += "- name: %s\n" % q(name)
         short = sorted({jot_method(m).rsplit(".", 2)[-2] + "." + jot_method(m).rsplit(".", 1)[-1] for m in methods})
-        text += "  description: %s\n" % q("Creates a microsandbox around %s" % shield["cve"])
+        text += "  description: %s\n" % q("Identifies an attack on %s, when its vulnerable code does something an exploit needs, like starting a process or running a script" % shield["cve"])
         text += "  methods:\n" + lines(sinks)
         text += "  scopes:\n" + lines(jot_method(m) for m in methods)
         text += "  captures:\n    args: \"#ARGS\"\n"
@@ -186,7 +186,7 @@ def main():
     p.add_argument("cves", nargs="*", help="CVE ids, like CVE-2021-44228")
     p.add_argument("--all", action="store_true", help="every CVE in vulnpoint")
     p.add_argument("--vulnpoint", default=DEFAULT_VULNPOINT, help="the vulnpoint checkout, default ../vulnpoint")
-    p.add_argument("-o", "--out", default="cves", help="where to write the .jot files")
+    p.add_argument("-o", "--out", default="catalog/cve", help="where to write the .jot files")
     p.add_argument("--observe", action="store_true", help="also write a sensor for shields that have nothing to sandbox")
     p.add_argument("--deny", default="", help="capabilities to disallow for a shield that has none, comma separated")
     args = p.parse_args()

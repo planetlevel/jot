@@ -44,7 +44,7 @@ class Vulnpoint2JotTests(unittest.TestCase):
         self.assertIn("javax.script.ScriptEngine.eval", s["methods"])
         self.assertNotIn("javax.naming.Context.lookup", s["methods"], "jndi was not disallowed, so it stays allowed")
         self.assertIn("CVE-2021-44228", s["description"])
-        self.assertEqual("Creates a microsandbox around CVE-2021-44228", s["description"])
+        self.assertEqual("Identifies an attack on CVE-2021-44228, when its vulnerable code does something an exploit needs, like starting a process or running a script", s["description"])
         self.assertIs(True, s["block-when"], "a rule that blocks every call that gets that far")
         self.assertNotIn("exception", s)
         self.assertNotIn("protect", s)

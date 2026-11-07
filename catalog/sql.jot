@@ -15,6 +15,7 @@ sensors:
   - java.sql.PreparedStatement   # these calls are harmless in PreparedStatement
   captures:
     sql: "#ARGS"
+    command: "#toUpper(#P0.trim().split(' ')[0])"
     database: "#OBJ.getConnection().getMetaData().getDatabaseProductName()"
     url: "#OBJ.getConnection().getMetaData().getURL()"
     user: "#OBJ.getConnection().getMetaData().getUserName()"
@@ -33,6 +34,7 @@ sensors:
   - java.sql.Connection.prepareStatement
   captures:
     sql: "#P0"
+    command: "#toUpper(#P0.trim().split(' ')[0])"
     database: "#OBJ.getMetaData().getDatabaseProductName()"
     url: "#OBJ.getMetaData().getURL()"
     user: "#OBJ.getMetaData().getUserName()"
